@@ -1,0 +1,681 @@
+"""Smoke tests for the FastAPI admin endpoints."""
+from __future__ import annotations
+
+import io
+from datetime import datetime, timezone
+
+import pytest
+from fastapi.testclient import TestClient
+
+
+@pytest.fixture()
+def api_client(app_env, monkeypatch):
+    """Build a FastAPI TestClient with the test SessionLocal wired in."""
+    from app.api import deps as api_deps
+    from app.api.main import create_app
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "admin_token", "", raising=True)
+    monkeypatch.setattr("app.proxies.pool.health_check", lambda *a, **kw: {"ip": "203.0.113.5"})
+    monkeypatch.setattr(
+        "app.api.routes.accounts.ensure_fingerprint_and_proxy",
+        lambda username, country="US": object(),
+    )
+
+    app = create_app()
+
+    def _override_get_db():
+        db = app_env.SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[api_deps.get_db] = _override_get_db
+    return TestClient(app)
+
+
+@pytest.fixture()
+def auth_client(app_env, monkeypatch):
+    """Same as ``api_client`` but with ADMIN_TOKEN configured."""
+    from app.api import deps as api_deps
+    from app.api.main import create_app
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "admin_token", "secret-token", raising=True)
+    monkeypatch.setattr("app.proxies.pool.health_check", lambda *a, **kw: {"ip": "203.0.113.5"})
+    monkeypatch.setattr(
+        "app.api.routes.accounts.ensure_fingerprint_and_proxy",
+        lambda username, country="US": object(),
+    )
+
+    app = create_app()
+
+    def _override_get_db():
+        db = app_env.SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[api_deps.get_db] = _override_get_db
+    return TestClient(app)
+
+
+def test_health_endpoint_open_mode(api_client):
+    res = api_client.get("/api/health")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["auth_required"] is False
+    assert "version" in body
+
+
+def test_dashboard_open_mode_returns_summary(api_client):
+    res = api_client.get("/api/dashboard")
+    assert res.status_code == 200
+    body = res.json()
+    for key in (
+        "accounts_total",
+        "accounts_active",
+        "proxies_total",
+        "jobs_queued",
+        "jobs_running",
+        "daily_stats",
+        "recent_events",
+    ):
+        assert key in body
+
+
+def test_auth_required_when_token_set(auth_client):
+    res = auth_client.get("/api/dashboard")
+    assert res.status_code == 401
+
+    res = auth_client.get("/api/dashboard", headers={"Authorization": "Bearer wrong"})
+    assert res.status_code == 401
+
+    res = auth_client.get(
+        "/api/dashboard", headers={"Authorization": "Bearer secret-token"}
+    )
+    assert res.status_code == 200
+
+
+def test_health_is_unauth_even_with_token(auth_client):
+    res = auth_client.get("/api/health")
+    assert res.status_code == 200
+    assert res.json()["auth_required"] is True
+
+
+def test_proxies_create_and_list(api_client):
+    payload = {
+        "label": "res-eu-1",
+        "url": "http://u:p@example.com:8000",
+        "country": "DE",
+        "timezone": "Europe/Berlin",
+        "skip_health_check": True,
+    }
+    res = api_client.post("/api/proxies", json=payload)
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["label"] == "res-eu-1"
+    assert body.get("accounts_count", 0) == 0
+
+    res = api_client.get("/api/proxies")
+    assert res.status_code == 200
+    items = res.json()
+    assert any(p["label"] == "res-eu-1" and p.get("accounts_count", 0) == 0 for p in items)
+
+
+def test_proxies_update(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-upd", "url": "http://a:b@old:1", "skip_health_check": True},
+    )
+    res = api_client.put(
+        "/api/proxies/px-upd",
+        json={
+            "url": "http://a:b@new:2",
+            "country": "US",
+            "timezone": "America/New_York",
+            "notes": "n",
+            "skip_health_check": True,
+        },
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["url"] == "http://a:b@new:2"
+    assert data["country"] == "US"
+    assert data["timezone"] == "America/New_York"
+
+
+def test_proxies_delete(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-del", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    res = api_client.delete("/api/proxies/px-del")
+    assert res.status_code == 200
+    assert res.json() == {"ok": True}
+    res = api_client.get("/api/proxies")
+    assert not any(p["label"] == "px-del" for p in res.json())
+
+
+def test_proxies_delete_blocked_when_in_use(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-busy", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/accounts",
+        json={"username": "u1", "password": "p", "proxy_label": "px-busy"},
+    )
+    res = api_client.delete("/api/proxies/px-busy")
+    assert res.status_code == 409
+    assert "account" in res.json()["detail"].lower()
+
+
+def test_accounts_create_pause_resume(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "res-1", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+
+    res = api_client.post(
+        "/api/accounts",
+        json={
+            "username": "alice",
+            "password": "secret",
+            "proxy_label": "res-1",
+            "timezone": "UTC",
+        },
+    )
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body["username"] == "alice"
+    assert body["status"] == "active"
+    assert body["proxy_label"] == "res-1"
+
+    res = api_client.post("/api/accounts/alice/pause")
+    assert res.status_code == 200
+    assert res.json()["status"] == "paused"
+
+    res = api_client.post("/api/accounts/alice/resume")
+    assert res.status_code == 200
+    assert res.json()["status"] == "active"
+
+    res = api_client.get("/api/accounts")
+    assert res.status_code == 200
+    assert any(a["username"] == "alice" for a in res.json())
+
+
+def test_accounts_update_proxy_reassigns_account_and_counts(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-old", "url": "http://u:p@old:1", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-new", "url": "http://u:p@new:1", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/accounts",
+        json={"username": "alice", "password": "secret", "proxy_label": "px-old"},
+    )
+
+    res = api_client.put("/api/accounts/alice/proxy", json={"proxy_label": "px-new"})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["username"] == "alice"
+    assert body["proxy_label"] == "px-new"
+
+    proxies = api_client.get("/api/proxies").json()
+    counts = {p["label"]: p["accounts_count"] for p in proxies}
+    assert counts["px-old"] == 0
+    assert counts["px-new"] == 1
+
+    res = api_client.delete("/api/proxies/px-old")
+    assert res.status_code == 200
+
+
+def test_accounts_update_proxy_rejects_missing_account(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-one", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    res = api_client.put("/api/accounts/missing/proxy", json={"proxy_label": "px-one"})
+    assert res.status_code == 404
+    assert "not found" in res.json()["detail"].lower()
+
+
+def test_accounts_create_with_session_id_sets_has_session_id(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-sid", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    session_id = "a" * 40
+    res = api_client.post(
+        "/api/accounts",
+        json={
+            "username": "siduser",
+            "password": "secret",
+            "proxy_label": "px-sid",
+            "session_id": session_id,
+        },
+    )
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body["has_session_id"] is True
+    assert "session_id" not in body
+
+
+def test_accounts_update_session_success(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-sess", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/accounts",
+        json={"username": "bob", "password": "secret", "proxy_label": "px-sess"},
+    )
+    session_id = "b" * 40
+    res = api_client.put("/api/accounts/bob/session", json={"session_id": session_id})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["username"] == "bob"
+    assert body["has_session_id"] is True
+    assert "session_id" not in body
+
+
+def test_accounts_update_session_rejects_missing_account(api_client):
+    res = api_client.put(
+        "/api/accounts/missing/session",
+        json={"session_id": "c" * 40},
+    )
+    assert res.status_code == 404
+    assert "not found" in res.json()["detail"].lower()
+
+
+def test_accounts_get_session_from_database(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-get", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    session_id = "e" * 40
+    api_client.post(
+        "/api/accounts",
+        json={
+            "username": "getter",
+            "password": "secret",
+            "proxy_label": "px-get",
+            "session_id": session_id,
+        },
+    )
+    res = api_client.get("/api/accounts/getter/session")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["session_id"] == session_id
+    assert body["source"] == "database"
+
+    listed = api_client.get("/api/accounts").json()
+    alice = next(a for a in listed if a["username"] == "getter")
+    assert "session_id" not in alice
+
+
+def test_accounts_get_session_from_file(api_client, app_env):
+    import json
+
+    from app.accounts.session_manager import session_path
+
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-file", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/accounts",
+        json={"username": "fileuser", "password": "secret", "proxy_label": "px-file"},
+    )
+    sid = "g" * 40
+    path = session_path("fileuser")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"authorization_data": {"sessionid": sid}}), encoding="utf-8")
+
+    res = api_client.get("/api/accounts/fileuser/session")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["session_id"] == sid
+    assert body["source"] == "session_file"
+    assert body["session_file_exists"] is True
+
+
+def test_accounts_get_session_404_when_empty(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-empty", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/accounts",
+        json={"username": "empty", "password": "secret", "proxy_label": "px-empty"},
+    )
+    res = api_client.get("/api/accounts/empty/session")
+    assert res.status_code == 404
+
+
+def test_accounts_list_includes_proxy_metadata(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={
+            "label": "px-meta",
+            "url": "http://u:p@h:1",
+            "country": "US",
+            "skip_health_check": True,
+        },
+    )
+    api_client.post(
+        "/api/accounts",
+        json={"username": "metauser", "password": "secret", "proxy_label": "px-meta"},
+    )
+    res = api_client.get("/api/accounts")
+    body = next(a for a in res.json() if a["username"] == "metauser")
+    assert body["proxy_country"] == "US"
+    assert body["proxy_label"] == "px-meta"
+    assert body["proxy_is_healthy"] is True
+
+
+def test_accounts_update_session_clears_session_file(api_client, app_env):
+    from app.accounts.session_manager import session_path
+
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-clear", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/accounts",
+        json={"username": "clearuser", "password": "secret", "proxy_label": "px-clear"},
+    )
+    path = session_path("clearuser")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"cookies": {"sessionid": "old"}}', encoding="utf-8")
+
+    session_id = "h" * 40
+    res = api_client.put("/api/accounts/clearuser/session", json={"session_id": session_id})
+    assert res.status_code == 200, res.text
+    assert not path.exists()
+
+
+def test_accounts_update_proxy_rejects_missing_proxy(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-one", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/accounts",
+        json={"username": "alice", "password": "secret", "proxy_label": "px-one"},
+    )
+
+    res = api_client.put("/api/accounts/alice/proxy", json={"proxy_label": "ghost"})
+    assert res.status_code == 400
+    assert "proxy" in res.json()["detail"].lower()
+
+
+def test_accounts_create_rejects_missing_proxy(api_client):
+    res = api_client.post(
+        "/api/accounts",
+        json={"username": "x", "password": "y", "proxy_label": "ghost"},
+    )
+    assert res.status_code == 400
+
+
+def test_accounts_create_rejects_invalid_active_hours(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "res-3", "url": "http://u:p@h:3", "skip_health_check": True},
+    )
+    res = api_client.post(
+        "/api/accounts",
+        json={
+            "username": "alice2",
+            "password": "secret",
+            "proxy_label": "res-3",
+            "active_hour_start": 22,
+            "active_hour_end": 22,
+        },
+    )
+    assert res.status_code == 422
+    assert "active_hour_end must be greater than active_hour_start" in res.text
+
+
+def test_accounts_create_rejects_unknown_caption_profile(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "res-4", "url": "http://u:p@h:4", "skip_health_check": True},
+    )
+    res = api_client.post(
+        "/api/accounts",
+        json={
+            "username": "alice3",
+            "password": "secret",
+            "proxy_label": "res-4",
+            "caption_profile": "unknown-profile",
+        },
+    )
+    assert res.status_code == 422
+    assert "caption_profile must be one of" in res.text
+
+
+def test_video_upload_list_and_enqueue(api_client, app_env):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "res-2", "url": "http://u:p@h:2", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/accounts",
+        json={"username": "bob", "password": "secret", "proxy_label": "res-2"},
+    )
+
+    payload = b"\x00" * 2048
+    res = api_client.post(
+        "/api/videos",
+        files={"file": ("clip.mp4", io.BytesIO(payload), "video/mp4")},
+    )
+    assert res.status_code == 201, res.text
+    upload = res.json()
+    assert upload["filename"].endswith(".mp4")
+    assert upload["size_bytes"] == len(payload)
+    assert upload["media_type"] == "video"
+
+    res = api_client.get("/api/videos")
+    assert res.status_code == 200
+    assert any(v["filename"] == upload["filename"] for v in res.json())
+
+    when = datetime.now(timezone.utc).isoformat()
+    res = api_client.post(
+        "/api/jobs",
+        json={
+            "username": "bob",
+            "media_filename": upload["filename"],
+            "post_type": "reel",
+            "when": when,
+        },
+    )
+    assert res.status_code == 201, res.text
+    job = res.json()
+    assert job["status"] == "queued"
+    assert job["account_username"] == "bob"
+    assert job["post_type"] == "reel"
+
+    res = api_client.get("/api/jobs", params={"username": "bob"})
+    assert res.status_code == 200
+    jobs = res.json()
+    assert len(jobs) == 1
+    assert jobs[0]["id"] == job["id"]
+
+    res = api_client.post(f"/api/jobs/{job['id']}/cancel")
+    assert res.status_code == 200
+    assert res.json()["status"] == "cancelled"
+
+
+def test_image_upload_and_feed_photo_enqueue(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "res-img", "url": "http://u:p@h:2", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/accounts",
+        json={"username": "imguser", "password": "secret", "proxy_label": "res-img"},
+    )
+    res = api_client.post(
+        "/api/videos",
+        files={"file": ("photo.jpg", io.BytesIO(b"jpg"), "image/jpeg")},
+    )
+    assert res.status_code == 201, res.text
+    upload = res.json()
+    assert upload["media_type"] == "image"
+
+    res = api_client.post(
+        "/api/jobs",
+        json={
+            "username": "imguser",
+            "media_filename": upload["filename"],
+            "post_type": "feed_photo",
+        },
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["post_type"] == "feed_photo"
+
+
+def test_enqueue_rejects_wrong_media_type(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "res-wrong", "url": "http://u:p@h:2", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/accounts",
+        json={"username": "wronguser", "password": "secret", "proxy_label": "res-wrong"},
+    )
+    res = api_client.post(
+        "/api/videos",
+        files={"file": ("photo.png", io.BytesIO(b"png"), "image/png")},
+    )
+    upload = res.json()
+    res = api_client.post(
+        "/api/jobs",
+        json={
+            "username": "wronguser",
+            "media_filename": upload["filename"],
+            "post_type": "reel",
+        },
+    )
+    assert res.status_code == 400
+    assert "requires a video" in res.json()["detail"]
+
+
+def test_publications_list_and_refresh_stats(api_client, db_session, make_account, monkeypatch):
+    from app.db import PostJob, PostJobStatus, PostLog
+    from app.publisher.reels_publisher import MediaStats
+
+    account = make_account(username="statsuser")
+    job = PostJob(
+        account_id=account.id,
+        source_video_path="data/videos/source/x.mp4",
+        scheduled_for=datetime.now(timezone.utc),
+        status=PostJobStatus.done,
+    )
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+    log = PostLog(
+        job_id=job.id,
+        account_id=account.id,
+        success=True,
+        media_id="MID",
+        media_code="CODE",
+        post_type="reel",
+        final_video_path="data/videos/out/x.mp4",
+        final_caption="cap",
+    )
+    db_session.add(log)
+    db_session.commit()
+    db_session.refresh(log)
+
+    def _fake_refresh(db, row):
+        row.view_count = 10
+        row.like_count = 3
+        row.comment_count = 1
+        row.raw_stats_json = MediaStats(view_count=10).raw_json
+        db.commit()
+        db.refresh(row)
+        return row
+
+    monkeypatch.setattr("app.api.routes.publications.refresh_post_log_stats", _fake_refresh)
+
+    res = api_client.get("/api/publications")
+    assert res.status_code == 200
+    assert any(p["media_id"] == "MID" for p in res.json())
+
+    res = api_client.post(f"/api/publications/{log.id}/refresh-stats")
+    assert res.status_code == 200, res.text
+    assert res.json()["view_count"] == 10
+    assert res.json()["like_count"] == 3
+
+
+def test_video_upload_rejects_unknown_extension(api_client):
+    res = api_client.post(
+        "/api/videos",
+        files={"file": ("x.txt", io.BytesIO(b"abc"), "text/plain")},
+    )
+    assert res.status_code == 400
+
+
+def test_video_get_serves_uploaded_file(api_client, app_env):
+    payload = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 100
+    res = api_client.post(
+        "/api/videos",
+        files={"file": ("serve.mp4", io.BytesIO(payload), "video/mp4")},
+    )
+    assert res.status_code == 201, res.text
+    filename = res.json()["filename"]
+
+    res = api_client.get(f"/api/videos/{filename}")
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("video/")
+    assert res.content.startswith(b"\x00\x00\x00\x18")
+
+
+def test_video_get_404_for_missing(api_client):
+    res = api_client.get("/api/videos/missing-file.mp4")
+    assert res.status_code == 404
+
+
+def test_video_get_rejects_path_traversal(api_client, app_env):
+    app_env.video_source_dir.mkdir(parents=True, exist_ok=True)
+    res = api_client.get("/api/videos/..%2Fsecret.mp4")
+    assert res.status_code == 404
+
+
+def test_video_list_includes_duration_when_probe_available(api_client, monkeypatch):
+    payload = b"\x00" * 64
+    res = api_client.post(
+        "/api/videos",
+        files={"file": ("dur.mp4", io.BytesIO(payload), "video/mp4")},
+    )
+    assert res.status_code == 201
+
+    class _Meta:
+        duration_sec = 12.5
+
+    monkeypatch.setattr("app.video.uniquifier.probe", lambda path: _Meta())
+    res = api_client.get("/api/videos")
+    row = next(v for v in res.json() if v["filename"] == "dur.mp4")
+    assert row["duration_sec"] == 12.5
+
+
+def test_jobs_filter_by_status(api_client):
+    res = api_client.get("/api/jobs", params={"status": "queued"})
+    assert res.status_code == 200
+    assert isinstance(res.json(), list)
+
+
+def test_events_endpoint_returns_list(api_client):
+    res = api_client.get("/api/events")
+    assert res.status_code == 200
+    assert isinstance(res.json(), list)

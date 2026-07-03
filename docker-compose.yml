@@ -1,0 +1,63 @@
+services:
+  reels-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: insta-reels-publisher:latest
+    container_name: insta-reels-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+      - playwright-browsers:/ms-playwright
+    command: ["run-worker"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -m app.cli status > /tmp/healthcheck.log 2>&1 || exit 1"]
+      interval: 45s
+      timeout: 15s
+      retries: 3
+      start_period: 45s
+
+  reels-api:
+    image: insta-reels-publisher:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: insta-reels-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+      - playwright-browsers:/ms-playwright
+    command: ["run-api"]
+    ports:
+      - "8000:8000"
+    depends_on:
+      reels-worker:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5); sys.exit(0 if r.status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  reels-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: insta-reels-frontend:latest
+    container_name: insta-reels-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      reels-api:
+        condition: service_started
+
+volumes:
+  playwright-browsers:

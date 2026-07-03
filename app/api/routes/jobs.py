@@ -1,0 +1,110 @@
+"""Job listing + manual enqueue endpoints."""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.api.deps import AuthDep, get_db
+from app.api.schemas import EnqueueIn, JobOut
+from app.config import settings
+from app.db import Account, PostJob, PostJobStatus, PostType
+from app.api.routes.videos import media_type_for_name
+
+router = APIRouter(prefix="/api/jobs", tags=["jobs"], dependencies=[AuthDep])
+
+
+def _serialize(job: PostJob, *, db: Session) -> JobOut:
+    account = db.get(Account, job.account_id)
+    return JobOut(
+        id=job.id,
+        account_id=job.account_id,
+        account_username=account.username if account else None,
+        source_video_path=job.source_video_path,
+        post_type=(job.post_type.value if hasattr(job.post_type, "value") else (job.post_type or "reel")),
+        caption_template=job.caption_template,
+        scheduled_for=job.scheduled_for,
+        status=job.status.value,
+        attempts=job.attempts,
+        last_error=job.last_error,
+        started_at=job.started_at,
+        finished_at=job.finished_at,
+        created_at=job.created_at,
+    )
+
+
+@router.get("", response_model=List[JobOut])
+def list_jobs(
+    status_filter: Optional[str] = Query(default=None, alias="status"),
+    username: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> List[JobOut]:
+    stmt = select(PostJob).order_by(PostJob.scheduled_for.desc()).limit(limit)
+    if status_filter:
+        try:
+            stmt = stmt.where(PostJob.status == PostJobStatus(status_filter))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if username:
+        account = db.scalar(select(Account).where(Account.username == username))
+        if account is None:
+            return []
+        stmt = stmt.where(PostJob.account_id == account.id)
+    rows = db.scalars(stmt).all()
+    return [_serialize(j, db=db) for j in rows]
+
+
+@router.post("", response_model=JobOut, status_code=status.HTTP_201_CREATED)
+def enqueue_job(payload: EnqueueIn, db: Session = Depends(get_db)) -> JobOut:
+    account = db.scalar(select(Account).where(Account.username == payload.username))
+    if account is None:
+        raise HTTPException(status_code=404, detail=f"Account '{payload.username}' not found")
+
+    filename = payload.selected_filename
+    try:
+        media_type = media_type_for_name(filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if payload.post_type == "feed_photo" and media_type != "image":
+        raise HTTPException(status_code=400, detail="feed_photo requires an image file")
+    if payload.post_type in ("reel", "feed_video") and media_type != "video":
+        raise HTTPException(status_code=400, detail=f"{payload.post_type} requires a video file")
+
+    src = settings.video_source_dir / filename
+    if not src.exists() or not src.is_file():
+        raise HTTPException(status_code=404, detail=f"Media '{filename}' not found in source dir")
+
+    when = payload.when or datetime.now(timezone.utc)
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+
+    job = PostJob(
+        account_id=account.id,
+        source_video_path=str(src.resolve()),
+        post_type=PostType(payload.post_type),
+        caption_template=payload.caption_template,
+        scheduled_for=when,
+        status=PostJobStatus.queued,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return _serialize(job, db=db)
+
+
+@router.post("/{job_id}/cancel", response_model=JobOut)
+def cancel_job(job_id: int, db: Session = Depends(get_db)) -> JobOut:
+    job = db.get(PostJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status not in (PostJobStatus.queued, PostJobStatus.failed):
+        raise HTTPException(status_code=400, detail=f"Cannot cancel job in status '{job.status.value}'")
+    job.status = PostJobStatus.cancelled
+    db.commit()
+    db.refresh(job)
+    return _serialize(job, db=db)

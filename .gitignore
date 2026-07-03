@@ -1,0 +1,82 @@
+# --- Secrets & local config ---
+.env
+.env.*
+!.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+pip-wheel-metadata/
+*.manifest
+*.spec
+
+# --- Testing & coverage ---
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage/
+frontend/coverage/
+*.cover
+.hypothesis/
+
+# --- Runtime data (sessions, DB, videos, logs) ---
+data/
+!data/**/.gitkeep
+
+# --- Logs ---
+*.log
+logs/
+
+# --- Frontend (Vite / React) ---
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/*.tsbuildinfo
+
+# --- Playwright (local browser cache) ---
+/ms-playwright/
+playwright/.cache/
+
+# --- IDE & editors ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# --- OS ---
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# --- Docker / deploy artifacts ---
+*.tar.gz
+*.zip
+
+# --- Misc ---
+*.bak
+*.tmp
+.cache/
