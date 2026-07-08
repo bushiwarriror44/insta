@@ -43,6 +43,7 @@ from app.db import (
     Account,
     AccountStatus,
     DailyStat,
+    DiagnosticRunKind,
     Event,
     EventLevel,
     PostJob,
@@ -53,6 +54,7 @@ from app.db import (
     SessionLocal,
     init_db,
 )
+from app.diagnostics.collector import DiagnosticCollector
 from app.logging_setup import configure_logging, get_logger
 from app.proxies.pool import ProxyError, health_check_cached, proxy_risk_score
 from app.publisher.reels_publisher import (
@@ -216,16 +218,32 @@ def _process_job(db: Session, job: PostJob) -> None:
     log = logger.bind(job_id=job.id, account_id=job.account_id)
     job.attempts += 1
 
+    diag = DiagnosticCollector(
+        db,
+        kind=DiagnosticRunKind.publish_job,
+        account_id=job.account_id,
+        job_id=job.id,
+    )
+    on_log = diag.callback()
+
+    def _done(status: str, summary: str) -> None:
+        diag.finish(status, summary)  # type: ignore[arg-type]
+
+    diag.info("start", f"Job #{job.id} attempt {job.attempts}")
+
     account = db.get(Account, job.account_id)
     if account is None:
         job.status = PostJobStatus.dead
         job.last_error = "account missing"
         db.commit()
+        diag.error("account", "Account record missing")
+        _done("fail", "account missing")
         return
 
     log = log.bind(username=account.username)
     risk_profile = classify_account_risk(account)
     log = log.bind(risk_profile=risk_profile.name)
+    diag.info("account", f"@{account.username} status={account.status.value}")
 
     if account.status != AccountStatus.active:
         job.status = PostJobStatus.cancelled
@@ -233,6 +251,8 @@ def _process_job(db: Session, job: PostJob) -> None:
         job.finished_at = datetime.now(timezone.utc)
         db.commit()
         log.warning("worker.account_not_active", status=account.status.value)
+        diag.warn("account", f"Account not active: {account.status.value}")
+        _done("fail", job.last_error)
         return
 
     if not can_post_today(db, account):
@@ -240,13 +260,18 @@ def _process_job(db: Session, job: PostJob) -> None:
         job.scheduled_for = datetime.now(timezone.utc) + timedelta(hours=2)
         db.commit()
         log.info("worker.daily_cap_reached_reschedule")
+        diag.info("cap", "Daily post cap reached — rescheduled +2h")
+        _done("warn", "daily cap reached")
         return
 
     proxy = _account_proxy(db, account)
     if proxy is None:
+        diag.error("proxy", "No proxy assigned")
+        _done("fail", "no proxy assigned")
         _fail_hard(db, job, account, "no proxy assigned")
         return
 
+    diag.info("proxy", f"Checking proxy {proxy.label}")
     try:
         snapshot = health_check_cached(proxy.url)
     except ProxyError as exc:
@@ -254,6 +279,8 @@ def _process_job(db: Session, job: PostJob) -> None:
         proxy.last_checked_at = datetime.now(timezone.utc)
         db.commit()
         notify_proxy_down(proxy.label, str(exc))
+        diag.error("proxy", str(exc))
+        _done("fail", f"proxy unhealthy: {exc}")
         _fail_temporary(db, job, account, f"proxy unhealthy: {exc}")
         return
     else:
@@ -266,6 +293,10 @@ def _process_job(db: Session, job: PostJob) -> None:
                     "worker.proxy_geo_mismatch",
                     advertised=proxy.country,
                     actual=snapshot.country,
+                )
+                diag.warn(
+                    "proxy",
+                    f"Geo mismatch advertised={proxy.country} actual={snapshot.country}",
                 )
             proxy.last_geo_country = snapshot.country
         proxy.is_healthy = True
@@ -280,7 +311,12 @@ def _process_job(db: Session, job: PostJob) -> None:
                     message=f"Proxy {proxy.label} risk score={risk:.2f}",
                 )
             )
+            diag.warn("proxy", f"Proxy risk score={risk:.2f}")
         db.commit()
+        diag.info(
+            "proxy",
+            f"Proxy healthy ip={snapshot.ip or '?'} instagram_ok={snapshot.instagram_reachable}",
+        )
 
     fingerprint = ensure_fingerprint_and_proxy(account.username, country=proxy.country or "US")
     rotated, fingerprint = maybe_rotate_session_uuids(
@@ -289,6 +325,7 @@ def _process_job(db: Session, job: PostJob) -> None:
     if rotated:
         account.last_session_rotation_at = datetime.now(timezone.utc)
         db.commit()
+        diag.info("session", "Rotated client session UUIDs")
     elif account.last_session_rotation_at is None:
         # First time we touch this account post-upgrade — stamp now so the
         # 3–7 day clock starts ticking from a known origin.
@@ -297,22 +334,28 @@ def _process_job(db: Session, job: PostJob) -> None:
 
     src = Path(job.source_video_path)
     if not src.exists():
+        diag.error("media", f"Source missing: {src}")
+        _done("fail", f"source missing: {src}")
         _fail_hard(db, job, account, f"source missing: {src}")
         return
 
     post_type = _job_post_type(job)
+    diag.info("media", f"Post type={post_type} source={src.name}")
     if post_type == PostType.reel.value:
         out_path = settings.video_out_dir / f"{account.username}_{job.id}_{int(time.time())}.mp4"
         try:
             # Mirror is opt-in here; the inner ``random_params`` rolls a 5%
             # probability so most posts stay un-flipped (preserves text overlays).
-            uniquify(src, out_path, allow_mirror=True)
+            uniquify(src, out_path, allow_mirror=True, on_log=on_log)
         except Exception as exc:
             log.exception("worker.uniquify_failed")
+            diag.error("uniquify", str(exc))
+            _done("fail", f"uniquify failed: {exc}")
             _fail_temporary(db, job, account, f"uniquify failed: {exc}")
             return
     else:
         out_path = src
+        diag.info("uniquify", "Skipped (not a reel)")
 
     caption = render_caption(
         account_username=account.username,
@@ -322,6 +365,7 @@ def _process_job(db: Session, job: PostJob) -> None:
         timezone=account.timezone,
         anti_repeat=True,
     )
+    diag.info("caption", f"Caption ready ({len(caption)} chars)")
 
     try:
         common = dict(
@@ -335,6 +379,7 @@ def _process_job(db: Session, job: PostJob) -> None:
             session_id=account.session_id,
             email=account.email,
             email_password=account.email_password,
+            on_log=on_log,
         )
         if post_type == PostType.feed_photo.value:
             result: PublishResult = publish_feed_photo(image_path=out_path, **common)
@@ -358,6 +403,7 @@ def _process_job(db: Session, job: PostJob) -> None:
             cooldown_hours=cooldown_hours,
             cooldown_until=cooldown_until.isoformat(),
         )
+        diag.warn("publish", f"Action cooldown {cooldown_hours}h: {exc}")
         db.add(
             Event(
                 account_id=account.id,
@@ -379,9 +425,11 @@ def _process_job(db: Session, job: PostJob) -> None:
         job.next_attempt_at = cooldown_until + timedelta(minutes=random.randint(5, 25))
         job.scheduled_for = job.next_attempt_at
         db.commit()
+        _done("warn", f"cooldown: {exc}")
         return
     except HardPublishError as exc:
         log.error("worker.hard_publish_error", error=str(exc))
+        diag.error("publish", str(exc))
         account.status = AccountStatus.blocked
         notify_blocked(account.username, account.id, str(exc))
         _record_post_log(db, job, account, success=False, error=str(exc), final_video=out_path, final_caption=caption)
@@ -390,20 +438,26 @@ def _process_job(db: Session, job: PostJob) -> None:
         job.last_error = str(exc)
         job.finished_at = datetime.now(timezone.utc)
         db.commit()
+        _done("fail", str(exc))
         return
     except TemporaryPublishError as exc:
         log.warning("worker.temp_publish_error", error=str(exc), attempt=job.attempts)
+        diag.warn("publish", str(exc))
         notify_publish_failure(account.username, account.id, str(exc), job.attempts)
         _record_post_log(db, job, account, success=False, error=str(exc), final_video=out_path, final_caption=caption)
         increment_daily_stat(db, account, success=False)
         if _should_quarantine(account, str(exc), job.attempts):
             _enter_quarantine(db, job, account, reason=str(exc))
+            _done("warn", f"quarantine: {exc}")
             return
         _fail_temporary(db, job, account, str(exc))
+        _done("warn", str(exc))
         return
     except Exception as exc:  # pragma: no cover - defensive
         log.exception("worker.unexpected")
+        diag.error("publish", f"unexpected: {exc}")
         _fail_temporary(db, job, account, f"unexpected: {exc}")
+        _done("fail", f"unexpected: {exc}")
         return
 
     _record_post_log(
@@ -424,6 +478,8 @@ def _process_job(db: Session, job: PostJob) -> None:
     job.last_error = None
     db.commit()
     log.info("worker.job_done", media_id=result.media_id)
+    diag.info("done", f"Published media_id={result.media_id}")
+    _done("ok", f"Published media_id={result.media_id}")
 
 
 def _fail_temporary(db: Session, job: PostJob, account: Account, message: str) -> None:

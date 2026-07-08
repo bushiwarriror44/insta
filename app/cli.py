@@ -156,7 +156,7 @@ def cmd_add_proxy(
     with SessionLocal() as db:
         proxy = upsert_proxy(db, label=label, url=url, country=country, timezone_name=timezone_name, notes=notes)
         if not skip_health_check:
-            ok, _snapshot = health_check_record(db, proxy)
+            ok, _snapshot, _err = health_check_record(db, proxy)
             if not ok:
                 console.print(f"[yellow]Proxy {label} is registered but failed health-check.[/yellow]")
                 raise typer.Exit(code=1)

@@ -142,6 +142,26 @@ export interface InstagramAuthStepOut {
   challenge: boolean;
 }
 
+export interface DiagnosticLogLine {
+  ts: string;
+  level: "info" | "warn" | "error";
+  step: string;
+  message: string;
+}
+
+export interface DiagnosticRunOut {
+  id: number;
+  kind: "connection_test" | "publish_job";
+  account_id: number;
+  account_username: string | null;
+  job_id: number | null;
+  status: "running" | "ok" | "warn" | "fail";
+  summary: string | null;
+  logs: DiagnosticLogLine[];
+  created_at: string;
+  finished_at: string | null;
+}
+
 export interface AccountConnectionTestOut {
   username: string;
   proxy_assigned: boolean;
@@ -151,6 +171,8 @@ export interface AccountConnectionTestOut {
   instagram_auth: InstagramAuthStepOut;
   overall_ok: boolean;
   checked_at: string;
+  run_id: number;
+  logs: DiagnosticLogLine[];
 }
 
 export interface VideoOut {
@@ -189,6 +211,7 @@ export interface JobOut {
   status: JobStatus | string;
   attempts: number;
   last_error: string | null;
+  next_attempt_at: string | null;
   started_at: string | null;
   finished_at: string | null;
   created_at: string | null;

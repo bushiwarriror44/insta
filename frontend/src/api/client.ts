@@ -6,6 +6,7 @@ import type {
   AccountSessionOut,
   AccountSessionUpdate,
   DashboardSummary,
+  DiagnosticRunOut,
   EnqueueIn,
   EventOut,
   Health,
@@ -197,6 +198,17 @@ export const api = {
       request<JobOut>("/api/jobs", { method: "POST", body: payload }),
     cancel: (id: number) =>
       request<JobOut>(`/api/jobs/${id}/cancel`, { method: "POST" }),
+    logs: (id: number) => request<DiagnosticRunOut[]>(`/api/jobs/${id}/logs`),
+  },
+
+  diagnostics: {
+    list: (params?: {
+      username?: string;
+      kind?: string;
+      job_id?: number;
+      limit?: number;
+    }) => request<DiagnosticRunOut[]>("/api/diagnostic-runs", { query: params }),
+    get: (id: number) => request<DiagnosticRunOut>(`/api/diagnostic-runs/${id}`),
   },
 
   events: {

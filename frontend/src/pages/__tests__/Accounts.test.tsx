@@ -24,6 +24,10 @@ const apiMock = vi.hoisted(() => ({
     update: vi.fn(),
     remove: vi.fn(),
   },
+  diagnostics: {
+    list: vi.fn(),
+    get: vi.fn(),
+  },
 }));
 
 vi.mock("../../api/client", async () => {
@@ -92,8 +96,10 @@ const account: AccountOut = {
 beforeEach(() => {
   Object.values(apiMock.accounts).forEach((fn) => fn.mockReset());
   Object.values(apiMock.proxies).forEach((fn) => fn.mockReset());
+  Object.values(apiMock.diagnostics).forEach((fn) => fn.mockReset());
   apiMock.accounts.list.mockResolvedValue([account]);
   apiMock.proxies.list.mockResolvedValue([proxy]);
+  apiMock.diagnostics.list.mockResolvedValue([]);
 });
 
 function renderAccounts() {
@@ -292,6 +298,8 @@ describe("Accounts page", () => {
       },
       overall_ok: true,
       checked_at: "2026-06-29T10:00:00Z",
+      run_id: 1,
+      logs: [{ ts: "2026-06-29T10:00:00Z", level: "info", step: "proxy", message: "ok" }],
     });
 
     renderAccounts();

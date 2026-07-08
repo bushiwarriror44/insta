@@ -200,10 +200,10 @@ def health_check_cached(proxy_url: str, *, force: bool = False) -> HealthSnapsho
     return snapshot
 
 
-def health_check_record(db: Session, proxy: Proxy) -> tuple[bool, HealthSnapshot | None]:
+def health_check_record(db: Session, proxy: Proxy) -> tuple[bool, HealthSnapshot | None, str | None]:
     """Run a full health check and persist the result on the Proxy row.
 
-    Returns ``(is_healthy, snapshot)`` where *snapshot* is populated on success.
+    Returns ``(is_healthy, snapshot, error_message)``.
     """
     try:
         snapshot = health_check_cached(proxy.url, force=True)
@@ -211,8 +211,9 @@ def health_check_record(db: Session, proxy: Proxy) -> tuple[bool, HealthSnapshot
         proxy.is_healthy = False
         proxy.last_checked_at = datetime.now(timezone.utc)
         db.commit()
-        logger.warning("proxy.unhealthy", label=proxy.label, error=str(exc))
-        return False, None
+        err = str(exc)
+        logger.warning("proxy.unhealthy", label=proxy.label, error=err)
+        return False, None, err
 
     proxy.is_healthy = True
     proxy.last_checked_at = datetime.now(timezone.utc)
@@ -234,7 +235,9 @@ def health_check_record(db: Session, proxy: Proxy) -> tuple[bool, HealthSnapshot
         country=snapshot.country,
         instagram=snapshot.instagram_reachable,
     )
-    return True, snapshot
+    if not snapshot.instagram_reachable:
+        return True, snapshot, "Instagram unreachable through proxy"
+    return True, snapshot, None
 
 
 def upsert_proxy(

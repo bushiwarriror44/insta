@@ -81,7 +81,7 @@ def test_connection_test_happy_path(api_client, db_session, monkeypatch):
 
     monkeypatch.setattr(
         "app.accounts.connection_test.health_check_record",
-        lambda db, proxy: (True, snapshot),
+        lambda db, proxy: (True, snapshot, None),
     )
     monkeypatch.setattr(
         "app.accounts.connection_test.ensure_fingerprint_and_proxy",
@@ -104,6 +104,8 @@ def test_connection_test_happy_path(api_client, db_session, monkeypatch):
     assert body["proxy_health"]["instagram_reachable"] is True
     assert body["instagram_auth"]["ok"] is True
     assert body["instagram_auth"]["method"] == "sessionid"
+    assert body["run_id"] > 0
+    assert len(body["logs"]) >= 1
 
 
 def test_connection_test_proxy_unhealthy_skips_auth(api_client, monkeypatch):
@@ -118,7 +120,7 @@ def test_connection_test_proxy_unhealthy_skips_auth(api_client, monkeypatch):
     probe = MagicMock()
     monkeypatch.setattr(
         "app.accounts.connection_test.health_check_record",
-        lambda db, proxy: (False, None),
+        lambda db, proxy: (False, None, "Proxy unhealthy"),
     )
     monkeypatch.setattr("app.accounts.connection_test.probe_session_auth", probe)
 
@@ -127,6 +129,7 @@ def test_connection_test_proxy_unhealthy_skips_auth(api_client, monkeypatch):
     body = res.json()
     assert body["overall_ok"] is False
     assert body["proxy_health"]["ok"] is False
+    assert "unhealthy" in (body["proxy_health"]["error"] or "").lower()
     probe.assert_not_called()
 
 
@@ -148,7 +151,7 @@ def test_connection_test_session_auth_failure(api_client, monkeypatch):
     )
     monkeypatch.setattr(
         "app.accounts.connection_test.health_check_record",
-        lambda db, proxy: (True, snapshot),
+        lambda db, proxy: (True, snapshot, None),
     )
     monkeypatch.setattr(
         "app.accounts.connection_test.ensure_fingerprint_and_proxy",
@@ -203,7 +206,7 @@ def test_proxy_check_returns_instagram_reachable(api_client, monkeypatch):
     )
     monkeypatch.setattr(
         "app.api.routes.proxies.health_check_record",
-        lambda db, proxy: (True, snapshot),
+        lambda db, proxy: (True, snapshot, None),
     )
     res = api_client.post("/api/proxies/px-ig/check")
     assert res.status_code == 200
@@ -218,6 +221,50 @@ def test_run_account_connection_test_no_proxy(db_session, make_proxy):
     result = run_account_connection_test(account, db_session)
     assert result.overall_ok is False
     assert result.proxy_assigned is False
+    assert result.run_id > 0
+    assert any(line.step == "proxy" for line in result.logs)
+
+
+def test_diagnostic_runs_list_after_connection_test(api_client, monkeypatch):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-diag", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/accounts",
+        json={"username": "diaglist", "password": "secret", "proxy_label": "px-diag"},
+    )
+    snapshot = HealthSnapshot(
+        ok=True,
+        ip="1.2.3.4",
+        country="US",
+        instagram_reachable=True,
+        checked_at=datetime.now(timezone.utc),
+    )
+    monkeypatch.setattr(
+        "app.accounts.connection_test.health_check_record",
+        lambda db, proxy: (True, snapshot, None),
+    )
+    monkeypatch.setattr(
+        "app.accounts.connection_test.ensure_fingerprint_and_proxy",
+        lambda username, country="US": MagicMock(),
+    )
+    monkeypatch.setattr(
+        "app.accounts.connection_test.probe_session_auth",
+        lambda **kwargs: ProbeSessionResult(ok=True, method="sessionid", ig_username="diaglist"),
+    )
+    test_res = api_client.post("/api/accounts/diaglist/test-connection")
+    run_id = test_res.json()["run_id"]
+
+    list_res = api_client.get("/api/diagnostic-runs", params={"username": "diaglist"})
+    assert list_res.status_code == 200
+    rows = list_res.json()
+    assert len(rows) >= 1
+    assert rows[0]["id"] == run_id
+
+    get_res = api_client.get(f"/api/diagnostic-runs/{run_id}")
+    assert get_res.status_code == 200
+    assert get_res.json()["logs"]
 
 
 def test_probe_session_auth_none_without_credentials(app_env, fingerprint, fake_client_class):

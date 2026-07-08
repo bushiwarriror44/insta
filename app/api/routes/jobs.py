@@ -9,9 +9,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import AuthDep, get_db
-from app.api.schemas import EnqueueIn, JobOut
+from app.api.schemas import DiagnosticRunOut, EnqueueIn, JobOut
 from app.config import settings
-from app.db import Account, PostJob, PostJobStatus, PostType
+from app.db import Account, DiagnosticRun, PostJob, PostJobStatus, PostType
+from app.api.routes.diagnostics import _to_run_out
 from app.api.routes.videos import media_type_for_name
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"], dependencies=[AuthDep])
@@ -30,6 +31,7 @@ def _serialize(job: PostJob, *, db: Session) -> JobOut:
         status=job.status.value,
         attempts=job.attempts,
         last_error=job.last_error,
+        next_attempt_at=job.next_attempt_at,
         started_at=job.started_at,
         finished_at=job.finished_at,
         created_at=job.created_at,
@@ -108,3 +110,18 @@ def cancel_job(job_id: int, db: Session = Depends(get_db)) -> JobOut:
     db.commit()
     db.refresh(job)
     return _serialize(job, db=db)
+
+
+@router.get("/{job_id}/logs", response_model=List[DiagnosticRunOut])
+def job_diagnostic_logs(job_id: int, db: Session = Depends(get_db)) -> List[DiagnosticRunOut]:
+    job = db.get(PostJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    account = db.get(Account, job.account_id)
+    runs = db.scalars(
+        select(DiagnosticRun)
+        .where(DiagnosticRun.job_id == job_id)
+        .order_by(DiagnosticRun.created_at.asc())
+    ).all()
+    username = account.username if account else None
+    return [_to_run_out(r, account_username=username) for r in runs]

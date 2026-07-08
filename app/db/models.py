@@ -54,6 +54,18 @@ class EventLevel(str, enum.Enum):
     critical = "critical"
 
 
+class DiagnosticRunKind(str, enum.Enum):
+    connection_test = "connection_test"
+    publish_job = "publish_job"
+
+
+class DiagnosticRunStatus(str, enum.Enum):
+    running = "running"
+    ok = "ok"
+    warn = "warn"
+    fail = "fail"
+
+
 class Proxy(Base):
     __tablename__ = "proxies"
 
@@ -203,3 +215,19 @@ class Event(Base):
     message: Mapped[str] = mapped_column(Text)
     payload: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+
+class DiagnosticRun(Base):
+    __tablename__ = "diagnostic_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[DiagnosticRunKind] = mapped_column(Enum(DiagnosticRunKind, native_enum=False), index=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True)
+    job_id: Mapped[Optional[int]] = mapped_column(ForeignKey("post_jobs.id", ondelete="SET NULL"), nullable=True, index=True)
+    status: Mapped[DiagnosticRunStatus] = mapped_column(
+        Enum(DiagnosticRunStatus, native_enum=False), default=DiagnosticRunStatus.running, index=True
+    )
+    lines_json: Mapped[str] = mapped_column(Text, default="[]")
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

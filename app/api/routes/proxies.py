@@ -62,7 +62,7 @@ def create_proxy(payload: ProxyIn, db: Session = Depends(get_db)) -> ProxyOut:
         notes=payload.notes,
     )
     if not payload.skip_health_check:
-        _ok, snapshot = health_check_record(db, proxy)
+        _ok, snapshot, _err = health_check_record(db, proxy)
         db.refresh(proxy)
     else:
         snapshot = None
@@ -85,7 +85,7 @@ def update_proxy(label: str, payload: ProxyUpdate, db: Session = Depends(get_db)
     )
     snapshot = None
     if not payload.skip_health_check:
-        _ok, snapshot = health_check_record(db, proxy)
+        _ok, snapshot, _err = health_check_record(db, proxy)
         db.refresh(proxy)
     counts = _proxy_account_counts(db)
     return _to_proxy_out(proxy, accounts_count=counts.get(proxy.id, 0), snapshot=snapshot)
@@ -112,7 +112,7 @@ def check_proxy(label: str, db: Session = Depends(get_db)) -> ProxyOut:
     proxy = db.scalar(select(Proxy).where(Proxy.label == label))
     if proxy is None:
         raise HTTPException(status_code=404, detail=f"Proxy '{label}' not found")
-    _ok, snapshot = health_check_record(db, proxy)
+    _ok, snapshot, _err = health_check_record(db, proxy)
     db.refresh(proxy)
     counts = _proxy_account_counts(db)
     return _to_proxy_out(proxy, accounts_count=counts.get(proxy.id, 0), snapshot=snapshot)

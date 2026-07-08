@@ -24,7 +24,7 @@ import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import imageio_ffmpeg
 
@@ -257,6 +257,7 @@ def uniquify(
     *,
     allow_mirror: bool = False,
     rng: Optional[random.Random] = None,
+    on_log: Optional[Callable[[str, str, str], None]] = None,
 ) -> UniquifyParams:
     """Re-encode ``input_path`` into ``output_path`` with random uniquification.
 
@@ -335,12 +336,19 @@ def uniquify(
         zoom=round(p.zoom, 4),
         pitch_cents=round(p.audio_pitch_cents, 2),
     )
+    if on_log is not None:
+        on_log("info", "uniquify", f"Encoding {src.name} -> {dst.name} (crf={p.crf})")
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.decode("utf-8", errors="replace") if exc.stderr else ""
-        logger.error("uniquify.ffmpeg_failed", returncode=exc.returncode, stderr=stderr[-2000:])
+        tail = stderr[-2000:]
+        logger.error("uniquify.ffmpeg_failed", returncode=exc.returncode, stderr=tail)
+        if on_log is not None:
+            on_log("error", "uniquify", f"ffmpeg failed (code {exc.returncode}): {tail[-500:]}")
         raise
 
     logger.info("uniquify.done", dst=str(dst), size=dst.stat().st_size)
+    if on_log is not None:
+        on_log("info", "uniquify", f"Output ready ({dst.stat().st_size} bytes)")
     return p

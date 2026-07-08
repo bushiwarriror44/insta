@@ -19,6 +19,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
 import { Card } from "../components/Card";
 import { CountryFlag, countryCodeToFlag } from "../components/CountryFlag";
+import { DiagnosticLogPanel } from "../components/DiagnosticLogPanel";
 import { Loader } from "../components/Loader";
 import { Modal } from "../components/Modal";
 import { StatusBadge } from "../components/StatusBadge";
@@ -30,6 +31,7 @@ import type {
   AccountProxyUpdate,
   AccountSessionOut,
   AccountSessionUpdate,
+  DiagnosticRunOut,
   ProxyIn,
   ProxyOut,
   ProxyUpdate,
@@ -958,12 +960,33 @@ function ConnectionModal({
   const { push } = useToast();
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<AccountConnectionTestOut | null>(null);
+  const [history, setHistory] = useState<DiagnosticRunOut[]>([]);
+  const [selectedHistoryId, setSelectedHistoryId] = useState<number | "current">("current");
 
   useEffect(() => {
     if (!open) return;
     setResult(null);
     setRunning(false);
+    setSelectedHistoryId("current");
+    setHistory([]);
   }, [open, account?.username]);
+
+  const connectionUsername = account?.username;
+  useEffect(() => {
+    if (!open || !connectionUsername) return;
+    let cancelled = false;
+    api.diagnostics
+      .list({ username: connectionUsername, kind: "connection_test", limit: 5 })
+      .then((rows) => {
+        if (!cancelled) setHistory(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setHistory([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, connectionUsername, result?.run_id]);
 
   async function runTest() {
     if (!account) return;
@@ -1151,6 +1174,40 @@ function ConnectionModal({
             ) : null}
           </div>
         ) : null}
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+              Diagnostic log
+            </div>
+            {history.length > 0 ? (
+              <select
+                className="input py-1 text-xs max-w-[220px]"
+                value={selectedHistoryId === "current" ? "current" : String(selectedHistoryId)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setSelectedHistoryId(v === "current" ? "current" : Number(v));
+                }}
+              >
+                <option value="current">Latest check</option>
+                {history.map((h) => (
+                  <option key={h.id} value={h.id}>
+                    {new Date(h.created_at).toLocaleString()} — {h.status}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+          </div>
+          <DiagnosticLogPanel
+            lines={
+              selectedHistoryId === "current"
+                ? result?.logs ?? []
+                : history.find((h) => h.id === selectedHistoryId)?.logs ?? []
+            }
+            emptyLabel={running ? "Running check…" : "Run check to see step-by-step logs."}
+            maxHeightClass="max-h-64"
+          />
+        </div>
 
         <div className="flex flex-wrap gap-2">
           <button type="button" className="btn-ghost text-xs" onClick={onOpenProxy}>

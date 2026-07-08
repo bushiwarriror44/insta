@@ -69,9 +69,10 @@ def test_health_check_record_updates_proxy_on_success(db_session, make_proxy):
     respx.get("https://ipapi.co/country/").mock(
         return_value=httpx.Response(200, text="US")
     )
-    ok, snapshot = health_check_record(db_session, proxy)
+    ok, snapshot, err = health_check_record(db_session, proxy)
     assert ok is True
     assert snapshot is not None
+    assert err is None
     db_session.refresh(proxy)
     assert proxy.is_healthy is True
     assert proxy.last_known_ip == "5.5.5.5"
@@ -83,8 +84,9 @@ def test_health_check_record_updates_proxy_on_success(db_session, make_proxy):
 def test_health_check_record_marks_unhealthy_on_failure(db_session, make_proxy):
     proxy = make_proxy()
     respx.get(settings.proxy_health_url).mock(return_value=httpx.Response(503))
-    ok, _snapshot = health_check_record(db_session, proxy)
+    ok, _snapshot, err = health_check_record(db_session, proxy)
     assert ok is False
+    assert err is not None
     db_session.refresh(proxy)
     assert proxy.is_healthy is False
     assert proxy.last_checked_at is not None
@@ -231,9 +233,10 @@ def test_geo_mismatch_does_not_disable_proxy(db_session, make_proxy):
     respx.get("https://ipapi.co/country/").mock(
         return_value=httpx.Response(200, text="NL")
     )
-    ok, snapshot = health_check_record(db_session, proxy)
+    ok, snapshot, err = health_check_record(db_session, proxy)
     assert ok is True
     assert snapshot is not None
+    assert err is None
     db_session.refresh(proxy)
     assert proxy.last_geo_country == "NL"
 

@@ -158,6 +158,26 @@ class InstagramAuthStepOut(BaseModel):
     challenge: bool = False
 
 
+class DiagnosticLogLineOut(BaseModel):
+    ts: str
+    level: Literal["info", "warn", "error"]
+    step: str
+    message: str
+
+
+class DiagnosticRunOut(BaseModel):
+    id: int
+    kind: Literal["connection_test", "publish_job"]
+    account_id: int
+    account_username: Optional[str] = None
+    job_id: Optional[int] = None
+    status: Literal["running", "ok", "warn", "fail"]
+    summary: Optional[str] = None
+    logs: list[DiagnosticLogLineOut] = Field(default_factory=list)
+    created_at: datetime
+    finished_at: Optional[datetime] = None
+
+
 class AccountConnectionTestOut(BaseModel):
     username: str
     proxy_assigned: bool
@@ -167,6 +187,8 @@ class AccountConnectionTestOut(BaseModel):
     instagram_auth: InstagramAuthStepOut
     overall_ok: bool
     checked_at: datetime
+    run_id: int
+    logs: list[DiagnosticLogLineOut] = Field(default_factory=list)
 
 
 # --- Media -----------------------------------------------------------------
@@ -203,6 +225,7 @@ class JobOut(BaseModel):
     status: str
     attempts: int
     last_error: Optional[str] = None
+    next_attempt_at: Optional[datetime] = None
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     created_at: Optional[datetime] = None

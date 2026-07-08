@@ -15,11 +15,13 @@ from app.accounts.session_manager import (
 )
 from app.api.schemas import (
     AccountConnectionTestOut,
+    DiagnosticLogLineOut,
     InstagramAuthStepOut,
     ProxyHealthStepOut,
     SessionStorageStepOut,
 )
-from app.db import Account, Proxy
+from app.db import Account, DiagnosticRunKind, Proxy
+from app.diagnostics.collector import DiagnosticCollector
 from app.proxies.pool import ProxyError, health_check_record
 
 
@@ -33,25 +35,61 @@ def _session_source(
     return exported.source
 
 
-def _session_file_updated_at(username: str) -> datetime | None:
-    path = session_path(username)
-    if not path.exists():
-        return None
-    return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+def _finish(
+    collector: DiagnosticCollector,
+    *,
+    overall_ok: bool,
+    summary: str,
+    username: str,
+    proxy_assigned: bool,
+    proxy_label: str | None,
+    proxy_health: ProxyHealthStepOut,
+    session_storage: SessionStorageStepOut,
+    instagram_auth: InstagramAuthStepOut,
+    now: datetime,
+) -> AccountConnectionTestOut:
+    status: Literal["ok", "warn", "fail"] = "ok" if overall_ok else "fail"
+    if not overall_ok and proxy_health.ok and proxy_health.geo_mismatch:
+        status = "warn"
+    collector.finish(status, summary)
+    return AccountConnectionTestOut(
+        username=username,
+        proxy_assigned=proxy_assigned,
+        proxy_label=proxy_label,
+        proxy_health=proxy_health,
+        session_storage=session_storage,
+        instagram_auth=instagram_auth,
+        overall_ok=overall_ok,
+        checked_at=now,
+        run_id=collector.run_id,
+        logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
+    )
 
 
 def run_account_connection_test(account: Account, db: Session) -> AccountConnectionTestOut:
     """Run proxy + Instagram session diagnostics for a single account."""
     now = datetime.now(timezone.utc)
     username = account.username
+    collector = DiagnosticCollector(
+        db,
+        kind=DiagnosticRunKind.connection_test,
+        account_id=account.id,
+    )
+
     file_exists = session_path(username).exists()
+    device_exists = device_path(username).exists()
     source = _session_source(username, account.session_id)
 
     session_storage = SessionStorageStepOut(
         has_session_id=bool(account.session_id),
         session_file_exists=file_exists,
-        device_file_exists=device_path(username).exists(),
+        device_file_exists=device_exists,
         session_source=source,
+    )
+    collector.info(
+        "storage",
+        f"session source={source}, db sessionid={'yes' if account.session_id else 'no'}, "
+        f"cookies file={'yes' if file_exists else 'no'}, device file={'yes' if device_exists else 'no'}",
     )
 
     proxy_assigned = account.proxy_id is not None
@@ -64,7 +102,11 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
     )
 
     if not proxy_assigned:
-        return AccountConnectionTestOut(
+        collector.error("proxy", "No proxy assigned")
+        return _finish(
+            collector,
+            overall_ok=False,
+            summary="No proxy assigned",
             username=username,
             proxy_assigned=False,
             proxy_label=None,
@@ -75,14 +117,17 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
                 method="none",
                 error="No proxy assigned — cannot reach Instagram",
             ),
-            overall_ok=False,
-            checked_at=now,
+            now=now,
         )
 
     proxy = db.get(Proxy, account.proxy_id)
     if proxy is None:
+        collector.error("proxy", "Proxy record missing in database")
         proxy_health = ProxyHealthStepOut(ok=False, error="Proxy record missing")
-        return AccountConnectionTestOut(
+        return _finish(
+            collector,
+            overall_ok=False,
+            summary="Proxy record missing",
             username=username,
             proxy_assigned=True,
             proxy_label=None,
@@ -93,20 +138,23 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
                 method="none",
                 error="Proxy record missing",
             ),
-            overall_ok=False,
-            checked_at=now,
+            now=now,
         )
 
     proxy_label = proxy.label
-    is_healthy, snapshot = health_check_record(db, proxy)
+    collector.info("proxy", f"Using proxy {proxy_label}")
+
+    is_healthy, snapshot, health_error = health_check_record(db, proxy)
     db.refresh(proxy)
 
     if not is_healthy or snapshot is None:
-        proxy_health = ProxyHealthStepOut(
-            ok=False,
-            error="Proxy health check failed",
-        )
-        return AccountConnectionTestOut(
+        err = health_error or "Proxy health check failed"
+        collector.error("proxy_health", err)
+        proxy_health = ProxyHealthStepOut(ok=False, error=err)
+        return _finish(
+            collector,
+            overall_ok=False,
+            summary=err,
             username=username,
             proxy_assigned=True,
             proxy_label=proxy_label,
@@ -117,8 +165,7 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
                 method="none",
                 error="Proxy unhealthy — session check skipped",
             ),
-            overall_ok=False,
-            checked_at=now,
+            now=now,
         )
 
     geo_mismatch = bool(
@@ -133,9 +180,24 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
         instagram_reachable=snapshot.instagram_reachable,
         geo_mismatch=geo_mismatch,
     )
+    collector.info(
+        "proxy_health",
+        f"IP={snapshot.ip or 'unknown'}, geo={snapshot.country or 'unknown'}, "
+        f"instagram_reachable={snapshot.instagram_reachable}",
+    )
+    if geo_mismatch:
+        collector.warn(
+            "proxy_health",
+            f"Geo mismatch: advertised {proxy.country}, actual {snapshot.country}",
+        )
 
-    if not snapshot.instagram_reachable:
-        return AccountConnectionTestOut(
+    if health_error or not snapshot.instagram_reachable:
+        err = health_error or "Instagram unreachable through proxy"
+        collector.error("instagram_reach", err)
+        return _finish(
+            collector,
+            overall_ok=False,
+            summary=err,
             username=username,
             proxy_assigned=True,
             proxy_label=proxy_label,
@@ -144,16 +206,17 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
             instagram_auth=InstagramAuthStepOut(
                 ok=False,
                 method="none",
-                error="Instagram unreachable through proxy",
+                error=err,
             ),
-            overall_ok=False,
-            checked_at=now,
+            now=now,
         )
 
+    collector.info("fingerprint", "Loading device fingerprint")
     fingerprint = ensure_fingerprint_and_proxy(
         username,
         country=proxy.country or "US",
     )
+    collector.info("session_probe", "Validating Instagram session")
     try:
         probe = probe_session_auth(
             username=username,
@@ -162,29 +225,58 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
             session_id=account.session_id,
         )
     except ProxyError as exc:
+        collector.error("session_probe", str(exc))
         instagram_auth = InstagramAuthStepOut(
             ok=False,
             method="none",
             error=str(exc),
         )
-        overall_ok = False
-    else:
-        instagram_auth = InstagramAuthStepOut(
-            ok=probe.ok,
-            method=probe.method,
-            ig_username=probe.ig_username,
-            error=probe.error,
-            challenge=probe.challenge,
+        return _finish(
+            collector,
+            overall_ok=False,
+            summary=str(exc),
+            username=username,
+            proxy_assigned=True,
+            proxy_label=proxy_label,
+            proxy_health=proxy_health,
+            session_storage=session_storage,
+            instagram_auth=instagram_auth,
+            now=now,
         )
-        overall_ok = proxy_health.ok and proxy_health.instagram_reachable and probe.ok
 
-    return AccountConnectionTestOut(
+    instagram_auth = InstagramAuthStepOut(
+        ok=probe.ok,
+        method=probe.method,
+        ig_username=probe.ig_username,
+        error=probe.error,
+        challenge=probe.challenge,
+    )
+    if probe.ok:
+        collector.info(
+            "session_probe",
+            f"Authenticated via {probe.method}"
+            + (f" as @{probe.ig_username}" if probe.ig_username else ""),
+        )
+    elif probe.challenge:
+        collector.warn("session_probe", probe.error or "Challenge required")
+    else:
+        collector.error("session_probe", probe.error or "Session validation failed")
+
+    overall_ok = proxy_health.ok and proxy_health.instagram_reachable and probe.ok
+    summary = (
+        "Ready for autoposting"
+        if overall_ok
+        else (probe.error or health_error or "Connection check failed")
+    )
+    return _finish(
+        collector,
+        overall_ok=overall_ok,
+        summary=summary,
         username=username,
         proxy_assigned=True,
         proxy_label=proxy_label,
         proxy_health=proxy_health,
         session_storage=session_storage,
         instagram_auth=instagram_auth,
-        overall_ok=overall_ok,
-        checked_at=now,
+        now=now,
     )

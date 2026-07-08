@@ -292,6 +292,7 @@ export function Publishing() {
                   <th>Type</th>
                   <th>Media</th>
                   <th>Status</th>
+                  <th>Error</th>
                   <th>Views / Plays</th>
                   <th>Likes</th>
                   <th>Comments</th>
@@ -311,6 +312,9 @@ export function Publishing() {
                     </td>
                     <td className={row.success ? "text-emerald-300" : "text-rose-300"}>
                       {row.success ? "published" : "failed"}
+                    </td>
+                    <td className="text-xs text-rose-300 max-w-[200px] break-words">
+                      {row.error ?? "—"}
                     </td>
                     <td className="tabular-nums">
                       {count(row.view_count)} / {count(row.play_count)}

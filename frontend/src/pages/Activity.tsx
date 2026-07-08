@@ -3,15 +3,22 @@ import { useCallback, useEffect, useState } from "react";
 
 import { api } from "../api/client";
 import { Card } from "../components/Card";
+import { DiagnosticLogPanel } from "../components/DiagnosticLogPanel";
 import { Loader } from "../components/Loader";
+import { Modal } from "../components/Modal";
 import { StatusBadge } from "../components/StatusBadge";
 import { useToast } from "../context/ToastContext";
-import type { EventOut, JobOut } from "../api/types";
+import type { DiagnosticRunOut, EventOut, JobOut } from "../api/types";
 
 const POLL_INTERVAL_MS = 7000;
+const JOB_LOG_POLL_MS = 3000;
 
 const JOB_STATUSES = ["", "queued", "running", "done", "failed", "dead", "cancelled"];
 const EVENT_LEVELS = ["", "info", "warn", "error", "critical"];
+
+function basename(path: string) {
+  return path.split(/[\\/]/).pop() || path;
+}
 
 export function Activity() {
   const { push } = useToast();
@@ -20,6 +27,10 @@ export function Activity() {
   const [jobStatus, setJobStatus] = useState<string>("");
   const [eventLevel, setEventLevel] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const [selectedJob, setSelectedJob] = useState<JobOut | null>(null);
+  const [jobRuns, setJobRuns] = useState<DiagnosticRunOut[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
+  const [logsLoading, setLogsLoading] = useState(false);
 
   const reload = useCallback(async () => {
     const [j, e] = await Promise.all([
@@ -29,6 +40,24 @@ export function Activity() {
     setJobs(j);
     setEvents(e);
   }, [jobStatus, eventLevel]);
+
+  const loadJobLogs = useCallback(async (jobId: number) => {
+    setLogsLoading(true);
+    try {
+      const runs = await api.jobs.logs(jobId);
+      setJobRuns(runs);
+      setSelectedRunId((current) => {
+        if (current && runs.some((r) => r.id === current)) return current;
+        return runs.length > 0 ? runs[runs.length - 1].id : null;
+      });
+    } catch (err) {
+      push((err as Error).message, "error");
+      setJobRuns([]);
+      setSelectedRunId(null);
+    } finally {
+      setLogsLoading(false);
+    }
+  }, [push]);
 
   useEffect(() => {
     let cancelled = false;
@@ -51,6 +80,22 @@ export function Activity() {
       window.clearInterval(id);
     };
   }, [reload, push]);
+
+  useEffect(() => {
+    if (!selectedJob) return;
+    loadJobLogs(selectedJob.id);
+    const id = window.setInterval(() => {
+      loadJobLogs(selectedJob.id);
+      if (selectedJob.status === "running") {
+        reload();
+      }
+    }, JOB_LOG_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [selectedJob, loadJobLogs, reload]);
+
+  const activeRun =
+    jobRuns.find((r) => r.id === selectedRunId) ?? jobRuns[jobRuns.length - 1] ?? null;
+  const activeLines = activeRun?.logs ?? [];
 
   if (loading) return <Loader />;
 
@@ -80,7 +125,7 @@ export function Activity() {
 
       <Card
         title="Jobs"
-        description={`${jobs.length} latest`}
+        description={`${jobs.length} latest — click a row for diagnostic logs`}
         actions={
           <select
             className="input max-w-[140px] py-1.5 text-xs"
@@ -104,8 +149,10 @@ export function Activity() {
                 <tr>
                   <th>ID</th>
                   <th>Account</th>
+                  <th>Type</th>
                   <th>Status</th>
                   <th>Scheduled</th>
+                  <th>Next try</th>
                   <th>Attempts</th>
                   <th>Source</th>
                   <th>Last error</th>
@@ -114,25 +161,33 @@ export function Activity() {
               </thead>
               <tbody>
                 {jobs.map((j) => (
-                  <tr key={j.id} className="hover:bg-slate-900/40 align-top">
+                  <tr
+                    key={j.id}
+                    className="hover:bg-slate-900/40 align-top cursor-pointer"
+                    onClick={() => setSelectedJob(j)}
+                  >
                     <td className="tabular-nums text-slate-400">#{j.id}</td>
                     <td className="font-medium">
                       {j.account_username ? `@${j.account_username}` : `id:${j.account_id}`}
                     </td>
+                    <td className="text-xs text-slate-400">{j.post_type}</td>
                     <td>
                       <StatusBadge value={j.status} />
                     </td>
                     <td className="text-xs text-slate-400">
                       {new Date(j.scheduled_for).toLocaleString()}
                     </td>
-                    <td className="tabular-nums text-slate-300">{j.attempts}</td>
-                    <td className="text-xs text-slate-400 max-w-[260px] break-all">
-                      {j.source_video_path.split(/[\\/]/).pop()}
+                    <td className="text-xs text-slate-400">
+                      {j.next_attempt_at ? new Date(j.next_attempt_at).toLocaleString() : "—"}
                     </td>
-                    <td className="text-xs text-rose-300 max-w-[280px] break-words">
+                    <td className="tabular-nums text-slate-300">{j.attempts}</td>
+                    <td className="text-xs text-slate-400 max-w-[200px] break-all">
+                      {basename(j.source_video_path)}
+                    </td>
+                    <td className="text-xs text-rose-300 max-w-[220px] break-words">
                       {j.last_error ?? ""}
                     </td>
-                    <td className="text-right">
+                    <td className="text-right" onClick={(e) => e.stopPropagation()}>
                       {(j.status === "queued" || j.status === "failed") && (
                         <button
                           className="btn-ghost text-xs"
@@ -201,6 +256,71 @@ export function Activity() {
           </ul>
         )}
       </Card>
+
+      <Modal
+        open={selectedJob !== null}
+        onClose={() => {
+          setSelectedJob(null);
+          setJobRuns([]);
+          setSelectedRunId(null);
+        }}
+        title={selectedJob ? `Job #${selectedJob.id} logs` : "Job logs"}
+        footer={
+          <button type="button" className="btn-ghost" onClick={() => setSelectedJob(null)}>
+            Close
+          </button>
+        }
+      >
+        {selectedJob ? (
+          <div className="space-y-4">
+            <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3 text-sm space-y-1">
+              <div>
+                Account:{" "}
+                <span className="font-medium">
+                  {selectedJob.account_username
+                    ? `@${selectedJob.account_username}`
+                    : selectedJob.account_id}
+                </span>
+              </div>
+              <div className="text-slate-400">
+                {selectedJob.post_type} · {basename(selectedJob.source_video_path)} · attempts{" "}
+                {selectedJob.attempts}
+              </div>
+              <div className="flex items-center gap-2">
+                <StatusBadge value={selectedJob.status} />
+                {selectedJob.last_error ? (
+                  <span className="text-xs text-rose-300">{selectedJob.last_error}</span>
+                ) : null}
+              </div>
+            </div>
+
+            {jobRuns.length > 1 ? (
+              <select
+                className="input text-xs"
+                value={selectedRunId ?? ""}
+                onChange={(e) => setSelectedRunId(Number(e.target.value))}
+              >
+                {jobRuns.map((run, idx) => (
+                  <option key={run.id} value={run.id}>
+                    Attempt {idx + 1} — {run.status}
+                    {run.summary ? ` — ${run.summary}` : ""}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+
+            {logsLoading && activeLines.length === 0 ? (
+              <Loader label="Loading logs…" />
+            ) : (
+              <DiagnosticLogPanel
+                lines={activeLines}
+                emptyLabel="No diagnostic logs for this job yet."
+                maxHeightClass="max-h-80"
+              />
+            )}
+          </div>
+        ) : null}
+      </Modal>
     </div>
   );
 }

@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ToastProvider } from "../../context/ToastContext";
 import type { AccountOut, VideoOut } from "../../api/types";
-import { byLabel } from "../../test/utils";
 import { Upload } from "../Upload";
 
 const apiMock = vi.hoisted(() => ({

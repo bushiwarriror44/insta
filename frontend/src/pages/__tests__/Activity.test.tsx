@@ -6,7 +6,7 @@ import type { EventOut, JobOut } from "../../api/types";
 import { Activity } from "../Activity";
 
 const apiMock = vi.hoisted(() => ({
-  jobs: { list: vi.fn(), cancel: vi.fn() },
+  jobs: { list: vi.fn(), cancel: vi.fn(), logs: vi.fn() },
   events: { list: vi.fn() },
 }));
 
@@ -31,6 +31,7 @@ const job: JobOut = {
   status: "queued",
   attempts: 0,
   last_error: null,
+  next_attempt_at: null,
   started_at: null,
   finished_at: null,
   created_at: new Date().toISOString(),
@@ -49,8 +50,10 @@ const event: EventOut = {
 beforeEach(() => {
   apiMock.jobs.list.mockReset();
   apiMock.jobs.cancel.mockReset();
+  apiMock.jobs.logs.mockReset();
   apiMock.events.list.mockReset();
   apiMock.jobs.list.mockResolvedValue([job]);
+  apiMock.jobs.logs.mockResolvedValue([]);
   apiMock.events.list.mockResolvedValue([event]);
 });
 
@@ -120,6 +123,35 @@ describe("Activity page", () => {
     expect(
       screen.queryByRole("button", { name: /^cancel$/i })
     ).not.toBeInTheDocument();
+  });
+
+  it("opens job log modal when clicking a row", async () => {
+    apiMock.jobs.logs.mockResolvedValue([
+      {
+        id: 1,
+        kind: "publish_job",
+        account_id: 1,
+        account_username: "alice",
+        job_id: 42,
+        status: "fail",
+        summary: "proxy unhealthy",
+        logs: [
+          {
+            ts: new Date().toISOString(),
+            level: "error",
+            step: "proxy",
+            message: "timeout",
+          },
+        ],
+        created_at: new Date().toISOString(),
+        finished_at: new Date().toISOString(),
+      },
+    ]);
+    renderActivity();
+    await screen.findByText("#42");
+    fireEvent.click(screen.getByText("#42"));
+    await waitFor(() => expect(apiMock.jobs.logs).toHaveBeenCalledWith(42));
+    expect(await screen.findByText(/timeout/i)).toBeInTheDocument();
   });
 
   it("renders empty placeholder when there are no jobs", async () => {
