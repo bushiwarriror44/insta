@@ -47,9 +47,19 @@ function proxyOptionLabel(p: ProxyOut): string {
 }
 
 function sessionSourceLabel(source: AccountOut["session_source"]): string {
-  if (source === "database") return "DB sessionid";
-  if (source === "session_file") return "Cookies file";
-  return "No session";
+  if (source === "database") return "sessionid в БД";
+  if (source === "session_file") return "Файл cookies";
+  return "Нет сессии";
+}
+
+function isMissingSessionError(error: string | null | undefined): boolean {
+  if (!error) return false;
+  const lower = error.toLowerCase();
+  return (
+    lower.includes("session_id") ||
+    error.includes("файла сессии") ||
+    error.includes("нет файла сессии")
+  );
 }
 
 type StepVisual = "pending" | "running" | "ok" | "warn" | "fail";
@@ -129,33 +139,33 @@ export function Accounts() {
   const onCreatedAccount = async () => {
     setOpenAccount(false);
     await reload();
-    push("Account saved", "success");
+    push("Аккаунт сохранён", "success");
   };
   const onCreatedProxy = async () => {
     setOpenProxy(false);
     await reload();
-    push("Proxy saved", "success");
+    push("Прокси сохранён", "success");
   };
   const onUpdatedProxy = async () => {
     setEditingProxy(null);
     await reload();
-    push("Proxy updated", "success");
+    push("Прокси обновлён", "success");
   };
   const onAssignedProxy = async () => {
     setAssigningAccount(null);
     await reload();
-    push("Account proxy updated", "success");
+    push("Прокси аккаунта обновлён", "success");
   };
   const onImportedSession = async () => {
     setSessionAccount(null);
     await reload();
-    push("Session saved", "success");
+    push("Сессия сохранена", "success");
   };
 
   const testAllConnections = useCallback(async () => {
     const targets = accounts.filter((a) => a.proxy_label);
     if (targets.length === 0) {
-      push("No accounts with proxies to test", "error");
+      push("Нет аккаунтов с прокси для проверки", "error");
       return;
     }
     setTestingAll(true);
@@ -206,7 +216,7 @@ export function Accounts() {
         setTestAllProgress({ done: i + 1, total: targets.length, ok: okCount });
       }
       push(
-        `Checked ${targets.length} account(s): ${okCount} ready for autoposting`,
+        `Проверено ${targets.length} акк.: ${okCount} готовы к автопостингу`,
         okCount === targets.length ? "success" : "info"
       );
     } finally {
@@ -220,57 +230,57 @@ export function Accounts() {
     <div className="space-y-6">
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-2xl font-semibold">Accounts</h1>
+          <h1 className="text-2xl font-semibold">Аккаунты</h1>
           <p className="text-sm text-slate-400 mt-1">
-            Manage Instagram accounts and their proxies.
+            Управление аккаунтами Instagram и их прокси.
           </p>
         </div>
         <div className="flex items-center gap-2">
           <button className="btn-ghost" onClick={() => setOpenProxy(true)}>
             <Server size={16} />
-            <span>Add proxy</span>
+            <span>Добавить прокси</span>
           </button>
           <button className="btn-primary" onClick={() => setOpenAccount(true)}>
             <Plus size={16} />
-            <span>Add account</span>
+            <span>Добавить аккаунт</span>
           </button>
         </div>
       </div>
 
       <Card
-        title="Proxies"
-        description={`${proxies.length} configured`}
+        title="Прокси"
+        description={`${proxies.length} настроено`}
         actions={
           <button
             className="btn-ghost text-xs"
             onClick={async () => {
               try {
                 await reload();
-                push("Refreshed", "info");
+                push("Обновлено", "info");
               } catch (err) {
                 push((err as Error).message, "error");
               }
             }}
           >
             <RefreshCw size={14} />
-            Refresh
+            Обновить
           </button>
         }
       >
         {proxies.length === 0 ? (
-          <div className="text-sm text-slate-500">No proxies yet.</div>
+          <div className="text-sm text-slate-500">Прокси пока нет.</div>
         ) : (
           <div className="overflow-x-auto -mx-5">
             <table className="table-base">
               <thead>
                 <tr>
-                  <th>Label</th>
+                  <th>Метка</th>
                   <th>URL</th>
-                  <th>Country / TZ</th>
-                  <th>Accounts</th>
-                  <th>Last IP</th>
-                  <th>Geo (actual)</th>
-                  <th>Status</th>
+                  <th>Страна / TZ</th>
+                  <th>Аккаунты</th>
+                  <th>Последний IP</th>
+                  <th>Гео (факт)</th>
+                  <th>Статус</th>
                   <th></th>
                 </tr>
               </thead>
@@ -307,7 +317,7 @@ export function Accounts() {
                         p.last_geo_country &&
                         p.country &&
                         p.last_geo_country.toUpperCase() !== p.country.toUpperCase()
-                          ? `Mismatch with advertised country (${p.country})`
+                          ? `Не совпадает с заявленной страной (${p.country})`
                           : undefined
                       }
                     >
@@ -332,44 +342,44 @@ export function Accounts() {
                         <button
                           type="button"
                           className="btn-ghost text-xs"
-                          aria-label={`Edit proxy ${p.label}`}
+                          aria-label={`Изменить прокси ${p.label}`}
                           onClick={() => setEditingProxy(p)}
                         >
                           <Pencil size={14} />
-                          Edit
+                          Изменить
                         </button>
                         <button
                           type="button"
                           className="btn-ghost text-xs text-rose-300 disabled:opacity-40"
-                          aria-label={`Delete proxy ${p.label}`}
+                          aria-label={`Удалить прокси ${p.label}`}
                           disabled={(p.accounts_count ?? 0) > 0}
                           title={
                             (p.accounts_count ?? 0) > 0
-                              ? `${p.accounts_count} account(s) use this proxy — reassign them first`
-                              : "Remove this proxy"
+                              ? `${p.accounts_count} акк. используют этот прокси — сначала переназначьте их`
+                              : "Удалить этот прокси"
                           }
                           onClick={async () => {
                             if ((p.accounts_count ?? 0) > 0) return;
                             if (
-                              !window.confirm(`Delete proxy "${p.label}" permanently?`)
+                              !window.confirm(`Удалить прокси «${p.label}» навсегда?`)
                             )
                               return;
                             try {
                               await api.proxies.remove(p.label);
                               await reload();
-                              push(`Proxy ${p.label} removed`, "info");
+                              push(`Прокси ${p.label} удалён`, "info");
                             } catch (err) {
                               push((err as Error).message, "error");
                             }
                           }}
                         >
                           <Trash2 size={14} />
-                          Delete
+                          Удалить
                         </button>
                         <button
                           type="button"
                           className="btn-ghost text-xs"
-                          aria-label={`Health check proxy ${p.label}`}
+                          aria-label={`Проверка прокси ${p.label}`}
                           onClick={async () => {
                             try {
                               const updated = await api.proxies.check(p.label);
@@ -377,7 +387,7 @@ export function Accounts() {
                                 arr.map((x) => (x.id === updated.id ? updated : x))
                               );
                               push(
-                                `Proxy ${p.label}: ${updated.is_healthy ? "healthy" : "unhealthy"}`,
+                                `Прокси ${p.label}: ${updated.is_healthy ? "работает" : "недоступен"}`,
                                 updated.is_healthy ? "success" : "error"
                               );
                             } catch (err) {
@@ -386,7 +396,7 @@ export function Accounts() {
                           }}
                         >
                           <RefreshCw size={14} />
-                          Check
+                          Проверить
                         </button>
                       </div>
                     </td>
@@ -399,8 +409,8 @@ export function Accounts() {
       </Card>
 
       <Card
-        title="Accounts"
-        description={`${accounts.length} configured`}
+        title="Аккаунты"
+        description={`${accounts.length} настроено`}
         actions={
           accounts.length > 0 ? (
             <button
@@ -411,28 +421,28 @@ export function Accounts() {
             >
               <RefreshCw size={14} className={testingAll ? "animate-spin" : ""} />
               {testingAll
-                ? `Checking ${testAllProgress.done}/${testAllProgress.total}…`
-                : "Test all"}
+                ? `Проверка ${testAllProgress.done}/${testAllProgress.total}…`
+                : "Проверить все"}
             </button>
           ) : undefined
         }
       >
         {accounts.length === 0 ? (
-          <div className="text-sm text-slate-500">No accounts yet.</div>
+          <div className="text-sm text-slate-500">Аккаунтов пока нет.</div>
         ) : (
           <div className="overflow-x-auto -mx-5">
             <table className="table-base">
               <thead>
                 <tr>
-                  <th>Username</th>
-                  <th>Status</th>
-                  <th>Proxy</th>
+                  <th>Имя пользователя</th>
+                  <th>Статус</th>
+                  <th>Прокси</th>
                   <th>TZ</th>
-                  <th>Profile</th>
-                  <th>Cap / Gap</th>
-                  <th>Today</th>
-                  <th>Last publish</th>
-                  <th>Cooldown till</th>
+                  <th>Профиль</th>
+                  <th>Лимит / Пауза</th>
+                  <th>Сегодня</th>
+                  <th>Последняя публикация</th>
+                  <th>Кулдаун до</th>
                   <th></th>
                 </tr>
               </thead>
@@ -445,7 +455,7 @@ export function Accounts() {
                         {a.has_totp ? (
                           <span
                             className="ml-2 text-[10px] uppercase tracking-wide text-emerald-400"
-                            title="TOTP seed configured"
+                            title="Настроен TOTP seed"
                           >
                             2FA
                           </span>
@@ -453,9 +463,9 @@ export function Accounts() {
                         {a.has_session_id ? (
                           <span
                             className="ml-2 text-[10px] uppercase tracking-wide text-brand-300"
-                            title="Browser session cookie imported"
+                            title="Импортирована cookie сессии браузера"
                           >
-                            Session
+                            Сессия
                           </span>
                         ) : null}
                         {a.session_file_exists ? (
@@ -463,8 +473,8 @@ export function Accounts() {
                             className="ml-2 text-[10px] uppercase tracking-wide text-sky-300"
                             title={
                               a.session_file_updated_at
-                                ? `Cookies on disk · ${new Date(a.session_file_updated_at).toLocaleString()}`
-                                : "Cookies stored on disk"
+                                ? `Cookies на диске · ${new Date(a.session_file_updated_at).toLocaleString()}`
+                                : "Cookies сохранены на диске"
                             }
                           >
                             Cookies
@@ -478,7 +488,7 @@ export function Accounts() {
                         className="mt-1 inline-flex items-center gap-1 text-xs font-normal text-brand-300 hover:text-brand-200"
                       >
                         <ExternalLink size={12} />
-                        Open Instagram
+                        Открыть Instagram
                       </a>
                     </td>
                     <td>
@@ -495,15 +505,15 @@ export function Accounts() {
                           <button
                             type="button"
                             className="btn-ghost text-[10px] px-1 py-0"
-                            aria-label={`Connection check for ${a.username}`}
+                            aria-label={`Проверка подключения для ${a.username}`}
                             title={
                               a.proxy_last_ip
-                                ? `Last proxy IP: ${a.proxy_last_ip}`
-                                : "Full connection check"
+                                ? `Последний IP прокси: ${a.proxy_last_ip}`
+                                : "Полная проверка подключения"
                             }
                             onClick={() => setConnectionAccount(a)}
                           >
-                            <Network size={12} /> Connection
+                            <Network size={12} /> Подключение
                           </button>
                         ) : null}
                       </div>
@@ -537,26 +547,26 @@ export function Accounts() {
                         <button
                           type="button"
                           className="btn-ghost text-xs"
-                          aria-label={`Connection for ${a.username}`}
+                          aria-label={`Подключение для ${a.username}`}
                           onClick={() => setConnectionAccount(a)}
                         >
-                          <Network size={14} /> Connection
+                          <Network size={14} /> Подключение
                         </button>
                         <button
                           type="button"
                           className="btn-ghost text-xs"
-                          aria-label={`Session for ${a.username}`}
+                          aria-label={`Сессия для ${a.username}`}
                           onClick={() => setSessionAccount(a)}
                         >
-                          <KeyRound size={14} /> Session
+                          <KeyRound size={14} /> Сессия
                         </button>
                         <button
                           type="button"
                           className="btn-ghost text-xs"
-                          aria-label={`Change proxy for ${a.username}`}
+                          aria-label={`Сменить прокси для ${a.username}`}
                           onClick={() => setAssigningAccount(a)}
                         >
-                          <Server size={14} /> Change proxy
+                          <Server size={14} /> Сменить прокси
                         </button>
                         {a.status === "active" ? (
                           <button
@@ -567,13 +577,13 @@ export function Accounts() {
                                 setAccounts((arr) =>
                                   arr.map((x) => (x.id === updated.id ? updated : x))
                                 );
-                                push(`@${a.username} paused`, "info");
+                                push(`@${a.username} приостановлен`, "info");
                               } catch (err) {
                                 push((err as Error).message, "error");
                               }
                             }}
                           >
-                            <Pause size={14} /> Pause
+                            <Pause size={14} /> Пауза
                           </button>
                         ) : (
                           <button
@@ -584,13 +594,13 @@ export function Accounts() {
                                 setAccounts((arr) =>
                                   arr.map((x) => (x.id === updated.id ? updated : x))
                                 );
-                                push(`@${a.username} resumed`, "success");
+                                push(`@${a.username} возобновлён`, "success");
                               } catch (err) {
                                 push((err as Error).message, "error");
                               }
                             }}
                           >
-                            <Play size={14} /> Resume
+                            <Play size={14} /> Возобновить
                           </button>
                         )}
                       </div>
@@ -726,7 +736,7 @@ function AddAccountModal({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.username || !form.password || !form.proxy_label) {
-      push("Fill username, password and proxy", "error");
+      push("Заполните имя пользователя, пароль и прокси", "error");
       return;
     }
     setBusy(true);
@@ -765,15 +775,15 @@ function AddAccountModal({
     <Modal
       open={open}
       onClose={onClose}
-      title="Add account"
+      title="Добавить аккаунт"
       footer={
         <>
           <button onClick={onClose} className="btn-ghost">
-            <XCircle size={16} /> Cancel
+            <XCircle size={16} /> Отмена
           </button>
           <button form="add-account-form" type="submit" className="btn-primary" disabled={busy}>
             <CheckCircle2 size={16} />
-            {busy ? "Saving..." : "Save account"}
+            {busy ? "Сохранение…" : "Сохранить аккаунт"}
           </button>
         </>
       }
@@ -781,7 +791,7 @@ function AddAccountModal({
       <form id="add-account-form" onSubmit={submit} className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <label className="label">Username</label>
+            <label className="label">Имя пользователя</label>
             <input
               className="input"
               value={form.username}
@@ -790,7 +800,7 @@ function AddAccountModal({
             />
           </div>
           <div>
-            <label className="label">Password</label>
+            <label className="label">Пароль</label>
             <input
               className="input"
               type="password"
@@ -802,11 +812,11 @@ function AddAccountModal({
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <label className="label">Proxy</label>
+            <label className="label">Прокси</label>
             {proxies.length === 0 ? (
               <div className="flex items-center gap-2 text-sm text-amber-300">
                 <ShieldOff size={16} />
-                <span>No proxies. Add one first.</span>
+                <span>Нет прокси. Сначала добавьте.</span>
               </div>
             ) : (
               <select
@@ -823,7 +833,7 @@ function AddAccountModal({
             )}
           </div>
           <div>
-            <label className="label">Timezone</label>
+            <label className="label">Часовой пояс</label>
             <input
               className="input"
               value={form.timezone}
@@ -834,7 +844,7 @@ function AddAccountModal({
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div>
-            <label className="label">Daily cap</label>
+            <label className="label">Дневной лимит</label>
             <input
               type="number"
               className="input"
@@ -845,7 +855,7 @@ function AddAccountModal({
             />
           </div>
           <div>
-            <label className="label">Min gap (h)</label>
+            <label className="label">Мин. пауза (ч)</label>
             <input
               type="number"
               step="0.5"
@@ -857,7 +867,7 @@ function AddAccountModal({
             />
           </div>
           <div>
-            <label className="label">Active start</label>
+            <label className="label">Начало активности</label>
             <input
               type="number"
               className="input"
@@ -868,7 +878,7 @@ function AddAccountModal({
             />
           </div>
           <div>
-            <label className="label">Active end</label>
+            <label className="label">Конец активности</label>
             <input
               type="number"
               className="input"
@@ -881,13 +891,13 @@ function AddAccountModal({
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <label className="label">Caption profile</label>
+            <label className="label">Профиль подписей</label>
             <select
               className="input"
               value={form.caption_profile ?? ""}
               onChange={(e) => setForm({ ...form, caption_profile: e.target.value })}
             >
-              <option value="">— default —</option>
+              <option value="">— по умолчанию —</option>
               {CAPTION_PROFILE_OPTIONS.map((p) => (
                 <option key={p} value={p}>
                   {p}
@@ -895,11 +905,11 @@ function AddAccountModal({
               ))}
             </select>
             <p className="text-xs text-slate-500 mt-1">
-              Tunes caption pool and hashtag tiers per topic.
+              Настраивает пул подписей и уровни хештегов по теме.
             </p>
           </div>
           <div>
-            <label className="label">TOTP seed (optional)</label>
+            <label className="label">TOTP seed (необязательно)</label>
             <input
               className="input"
               value={form.totp_seed ?? ""}
@@ -908,13 +918,13 @@ function AddAccountModal({
               autoComplete="off"
             />
             <p className="text-xs text-slate-500 mt-1">
-              Base32 secret for auto 2FA. Stored locally.
+              Base32-секрет для авто 2FA. Хранится локально.
             </p>
           </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <label className="label">Recovery email (optional)</label>
+            <label className="label">Резервный email (необязательно)</label>
             <input
               className="input"
               type="email"
@@ -924,7 +934,7 @@ function AddAccountModal({
             />
           </div>
           <div>
-            <label className="label">Email password / app password</label>
+            <label className="label">Пароль email / app password</label>
             <input
               className="input"
               type="password"
@@ -933,7 +943,7 @@ function AddAccountModal({
               autoComplete="new-password"
             />
             <p className="text-xs text-slate-500 mt-1">
-              Used for IMAP-based challenge code retrieval.
+              Используется для получения кода подтверждения через IMAP.
             </p>
           </div>
         </div>
@@ -998,8 +1008,8 @@ function ConnectionModal({
       onResult?.(account, data);
       push(
         data.overall_ok
-          ? `@${account.username}: ready for autoposting`
-          : `@${account.username}: connection issues found`,
+          ? `@${account.username}: готов к автопостингу`
+          : `@${account.username}: обнаружены проблемы с подключением`,
         data.overall_ok ? "success" : "error"
       );
     } catch (err) {
@@ -1047,15 +1057,19 @@ function ConnectionModal({
           : "fail"
       : "pending";
 
+  const missingSession =
+    result?.instagram_auth.error != null &&
+    isMissingSessionError(result.instagram_auth.error);
+
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title={`Connection · @${account?.username ?? ""}`}
+      title={`Подключение · @${account?.username ?? ""}`}
       footer={
         <>
           <button type="button" onClick={onClose} className="btn-ghost">
-            <XCircle size={16} /> Close
+            <XCircle size={16} /> Закрыть
           </button>
           <button
             type="button"
@@ -1064,7 +1078,7 @@ function ConnectionModal({
             onClick={runTest}
           >
             <RefreshCw size={16} className={running ? "animate-spin" : ""} />
-            {running ? "Checking…" : "Run check"}
+            {running ? "Проверка…" : "Запустить проверку"}
           </button>
         </>
       }
@@ -1072,7 +1086,7 @@ function ConnectionModal({
       <div className="space-y-4">
         <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-sm space-y-2">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-slate-400">Proxy:</span>
+            <span className="text-slate-400">Прокси:</span>
             <CountryFlag code={account?.proxy_country} />
             <span className="font-mono text-xs">{account?.proxy_label ?? "—"}</span>
             {account?.proxy_last_ip ? (
@@ -1081,10 +1095,10 @@ function ConnectionModal({
           </div>
           <div className="flex flex-wrap gap-2 text-[10px] uppercase tracking-wide">
             {account?.has_session_id ? (
-              <span className="text-brand-300">DB sessionid</span>
+              <span className="text-brand-300">sessionid в БД</span>
             ) : null}
             {account?.session_file_exists ? (
-              <span className="text-sky-300">Cookies file</span>
+              <span className="text-sky-300">Файл cookies</span>
             ) : null}
             {account ? (
               <span className="text-slate-500">{sessionSourceLabel(account.session_source)}</span>
@@ -1094,16 +1108,16 @@ function ConnectionModal({
 
         <div className="space-y-2">
           <ConnectionStepRow
-            label="1. Proxy assigned"
+            label="1. Прокси назначен"
             state={step1}
             detail={
               result
-                ? result.proxy_label ?? "No proxy"
-                : account?.proxy_label ?? "Not assigned"
+                ? result.proxy_label ?? "Нет прокси"
+                : account?.proxy_label ?? "Не назначен"
             }
           />
           <ConnectionStepRow
-            label="2. Proxy responds"
+            label="2. Прокси отвечает"
             state={step2}
             detail={
               result?.proxy_health.ok ? (
@@ -1111,41 +1125,41 @@ function ConnectionModal({
                   IP: {result.proxy_health.ip ?? "—"}
                   <CountryFlag code={result.proxy_health.geo_country} showCode />
                   {result.proxy_health.geo_mismatch ? (
-                    <span className="text-amber-300">Geo mismatch with advertised country</span>
+                    <span className="text-amber-300">Гео не совпадает с заявленной страной</span>
                   ) : null}
                 </span>
               ) : (
-                result?.proxy_health.error ?? (running ? "Checking proxy…" : "Not tested yet")
+                result?.proxy_health.error ?? (running ? "Проверка прокси…" : "Ещё не проверено")
               )
             }
           />
           <ConnectionStepRow
-            label="3. Instagram reachable via proxy"
+            label="3. Instagram доступен через прокси"
             state={step3}
             detail={
               result
                 ? result.proxy_health.instagram_reachable
-                  ? "TLS handshake to Instagram succeeded"
-                  : "Proxy cannot reach Instagram"
+                  ? "TLS-рукопожатие с Instagram успешно"
+                  : "Прокси не может достучаться до Instagram"
                 : running
-                  ? "Probing Instagram…"
-                  : "Not tested yet"
+                  ? "Проверка Instagram…"
+                  : "Ещё не проверено"
             }
           />
           <ConnectionStepRow
-            label="4. Session valid"
+            label="4. Сессия действительна"
             state={step4}
             detail={
               result?.instagram_auth.ok ? (
                 <span>
-                  Authenticated via {result.instagram_auth.method}
+                  Аутентификация через {result.instagram_auth.method}
                   {result.instagram_auth.ig_username
                     ? ` · @${result.instagram_auth.ig_username}`
                     : ""}
                 </span>
               ) : (
                 result?.instagram_auth.error ??
-                (running ? "Validating session…" : "Not tested yet")
+                (running ? "Проверка сессии…" : "Ещё не проверено")
               )
             }
           />
@@ -1161,24 +1175,36 @@ function ConnectionModal({
           >
             <div className="font-medium">
               {result.overall_ok
-                ? "Ready for autoposting"
-                : "Not ready for autoposting"}
+                ? "Готов к автопостингу"
+                : "Не готов к автопостингу"}
             </div>
             {!result.overall_ok && result.instagram_auth.error ? (
               <div className="mt-1 text-xs opacity-90">{result.instagram_auth.error}</div>
             ) : null}
             {result.checked_at ? (
               <div className="mt-1 text-xs opacity-70">
-                Checked {new Date(result.checked_at).toLocaleString()}
+                Проверено {new Date(result.checked_at).toLocaleString()}
               </div>
             ) : null}
+          </div>
+        ) : null}
+
+        {missingSession ? (
+          <div className="rounded-xl border border-amber-500/50 bg-amber-950/40 p-4 text-sm text-amber-100">
+            <div className="font-semibold text-amber-200">
+              Сессия не найдена — импортируйте sessionid
+            </div>
+            <p className="mt-1 text-xs text-amber-100/90">
+              Для автопостинга нужна cookie sessionid из Dolphin или браузера. Нажмите кнопку ниже,
+              чтобы вставить сессию.
+            </p>
           </div>
         ) : null}
 
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-              Diagnostic log
+              Диагностический лог
             </div>
             {history.length > 0 ? (
               <select
@@ -1189,7 +1215,7 @@ function ConnectionModal({
                   setSelectedHistoryId(v === "current" ? "current" : Number(v));
                 }}
               >
-                <option value="current">Latest check</option>
+                <option value="current">Последняя проверка</option>
                 {history.map((h) => (
                   <option key={h.id} value={h.id}>
                     {new Date(h.created_at).toLocaleString()} — {h.status}
@@ -1204,17 +1230,25 @@ function ConnectionModal({
                 ? result?.logs ?? []
                 : history.find((h) => h.id === selectedHistoryId)?.logs ?? []
             }
-            emptyLabel={running ? "Running check…" : "Run check to see step-by-step logs."}
+            emptyLabel={running ? "Выполняется проверка…" : "Запустите проверку, чтобы увидеть пошаговые логи."}
             maxHeightClass="max-h-64"
           />
         </div>
 
         <div className="flex flex-wrap gap-2">
           <button type="button" className="btn-ghost text-xs" onClick={onOpenProxy}>
-            <Server size={14} /> Change proxy
+            <Server size={14} /> Сменить прокси
           </button>
-          <button type="button" className="btn-ghost text-xs" onClick={onOpenSession}>
-            <KeyRound size={14} /> Import session
+          <button
+            type="button"
+            className={
+              missingSession
+                ? "btn-primary text-sm shadow-lg shadow-brand-500/20 ring-2 ring-brand-400/60"
+                : "btn-ghost text-xs"
+            }
+            onClick={onOpenSession}
+          >
+            <KeyRound size={14} /> Импортировать сессию
           </button>
         </div>
       </div>
@@ -1279,7 +1313,7 @@ function SessionModal({
     if (!account) return;
     const trimmed = sessionId.trim();
     if (trimmed.length < 31) {
-      push("Paste a valid sessionid cookie (31+ characters)", "error");
+      push("Вставьте корректную cookie sessionid (31+ символов)", "error");
       return;
     }
     setBusy(true);
@@ -1298,9 +1332,9 @@ function SessionModal({
     if (!exportData?.session_id) return;
     try {
       await navigator.clipboard.writeText(exportData.session_id);
-      push("Session copied", "success");
+      push("Сессия скопирована", "success");
     } catch {
-      push("Copy failed", "error");
+      push("Не удалось скопировать", "error");
     }
   }
 
@@ -1312,7 +1346,7 @@ function SessionModal({
       const data = await api.accounts.testConnection(account.username);
       setVerifyResult(data);
       push(
-        data.instagram_auth.ok ? "Session is valid" : "Session validation failed",
+        data.instagram_auth.ok ? "Сессия действительна" : "Проверка сессии не пройдена",
         data.instagram_auth.ok ? "success" : "error"
       );
     } catch (err) {
@@ -1322,7 +1356,7 @@ function SessionModal({
     }
   }
 
-  const title = `Session · @${account?.username ?? ""}`;
+  const title = `Сессия · @${account?.username ?? ""}`;
 
   return (
     <Modal
@@ -1333,7 +1367,7 @@ function SessionModal({
         tab === "import" ? (
           <>
             <button type="button" onClick={onClose} className="btn-ghost">
-              <XCircle size={16} /> Cancel
+              <XCircle size={16} /> Отмена
             </button>
             <button
               form="import-session-form"
@@ -1342,12 +1376,12 @@ function SessionModal({
               disabled={busy}
             >
               <CheckCircle2 size={16} />
-              {busy ? "Saving..." : "Save session"}
+              {busy ? "Сохранение…" : "Сохранить сессию"}
             </button>
           </>
         ) : (
           <button type="button" onClick={onClose} className="btn-ghost">
-            <XCircle size={16} /> Close
+            <XCircle size={16} /> Закрыть
           </button>
         )
       }
@@ -1360,7 +1394,7 @@ function SessionModal({
           }`}
           onClick={() => setTab("import")}
         >
-          Import
+          Импорт
         </button>
         <button
           type="button"
@@ -1369,26 +1403,26 @@ function SessionModal({
           }`}
           onClick={() => setTab("export")}
         >
-          Export
+          Экспорт
         </button>
       </div>
 
       <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-sm mb-4 space-y-2">
-        <div className="text-slate-400">Session storage (per account)</div>
+        <div className="text-slate-400">Хранение сессии (на аккаунт)</div>
         <div className="flex flex-wrap gap-2 text-xs">
           <span className={account?.has_session_id ? "text-brand-300" : "text-slate-500"}>
-            DB sessionid: {account?.has_session_id ? "yes" : "no"}
+            sessionid в БД: {account?.has_session_id ? "да" : "нет"}
           </span>
           <span className={account?.session_file_exists ? "text-sky-300" : "text-slate-500"}>
-            Cookies file: {account?.session_file_exists ? "yes" : "no"}
+            Файл cookies: {account?.session_file_exists ? "да" : "нет"}
           </span>
           <span className="text-slate-400">
-            Source: {account ? sessionSourceLabel(account.session_source) : "—"}
+            Источник: {account ? sessionSourceLabel(account.session_source) : "—"}
           </span>
         </div>
         {account?.session_file_updated_at ? (
           <div className="text-xs text-slate-500">
-            Cookies updated {new Date(account.session_file_updated_at).toLocaleString()}
+            Cookies обновлены {new Date(account.session_file_updated_at).toLocaleString()}
           </div>
         ) : null}
         <button
@@ -1398,7 +1432,7 @@ function SessionModal({
           onClick={verifySession}
         >
           <RefreshCw size={14} className={verifying ? "animate-spin" : ""} />
-          {verifying ? "Verifying…" : "Verify session"}
+          {verifying ? "Проверка…" : "Проверить сессию"}
         </button>
         {verifyResult ? (
           <div
@@ -1409,12 +1443,12 @@ function SessionModal({
             }`}
           >
             {verifyResult.instagram_auth.ok
-              ? `Valid via ${verifyResult.instagram_auth.method}${
+              ? `Действительна через ${verifyResult.instagram_auth.method}${
                   verifyResult.instagram_auth.ig_username
                     ? ` (@${verifyResult.instagram_auth.ig_username})`
                     : ""
                 }`
-              : verifyResult.instagram_auth.error ?? "Session invalid"}
+              : verifyResult.instagram_auth.error ?? "Сессия недействительна"}
           </div>
         ) : null}
       </div>
@@ -1422,56 +1456,56 @@ function SessionModal({
       {tab === "import" ? (
         <form id="import-session-form" onSubmit={submitImport} className="space-y-4">
           <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-sm">
-            <div className="text-slate-400">Instagram account</div>
+            <div className="text-slate-400">Аккаунт Instagram</div>
             <div className="font-medium">@{account?.username ?? "—"}</div>
-            <div className="mt-2 text-slate-400">Current status</div>
+            <div className="mt-2 text-slate-400">Текущий статус</div>
             <div className="text-xs">
               {account?.has_session_id ? (
-                <span className="text-brand-300">Session cookie on file — paste to replace</span>
+                <span className="text-brand-300">Cookie сессии сохранена — вставьте новую для замены</span>
               ) : (
-                <span className="text-slate-500">No session imported yet</span>
+                <span className="text-slate-500">Сессия ещё не импортирована</span>
               )}
             </div>
           </div>
           <div>
             <label className="label" htmlFor="import-session-id">
-              sessionid cookie
+              cookie sessionid
             </label>
             <textarea
               id="import-session-id"
               className="input min-h-[88px] font-mono text-xs"
               value={sessionId}
               onChange={(e) => setSessionId(e.target.value)}
-              placeholder="Paste sessionid from Dolphin / browser devtools"
+              placeholder="Вставьте sessionid из Dolphin / devtools браузера"
               autoComplete="off"
               spellCheck={false}
             />
             <p className="text-xs text-slate-500 mt-1">
-              Import after confirming the challenge in Dolphin on the same proxy.
+              Импортируйте после подтверждения challenge в Dolphin на том же прокси.
             </p>
           </div>
         </form>
       ) : (
         <div className="space-y-4">
           <p className="text-xs text-amber-300/90">
-            Sensitive data — copy only into trusted tools (Dolphin, backup).
+            Конфиденциальные данные — копируйте только в доверенные инструменты (Dolphin, бэкап).
           </p>
           {exportLoading ? (
-            <div className="text-sm text-slate-400">Loading session…</div>
+            <div className="text-sm text-slate-400">Загрузка сессии…</div>
           ) : exportError ? (
             <div className="text-sm text-slate-400 rounded-xl border border-slate-800 p-3">
               {exportError.includes("404") || exportError.toLowerCase().includes("not found")
-                ? "No session found — import a sessionid or log in first."
+                ? "Сессия не найдена — импортируйте sessionid или сначала войдите в аккаунт."
                 : exportError}
             </div>
           ) : exportData ? (
             <>
               <div className="text-xs text-slate-500">
-                Source:{" "}
+                Источник:{" "}
                 <span className="text-slate-300">
-                  {exportData.source === "database" ? "database" : "saved session file"}
+                  {exportData.source === "database" ? "база данных" : "сохранённый файл сессии"}
                 </span>
-                {exportData.session_file_exists ? " · session file on disk" : null}
+                {exportData.session_file_exists ? " · файл сессии на диске" : null}
               </div>
               <textarea
                 readOnly
@@ -1479,7 +1513,7 @@ function SessionModal({
                 value={exportData.session_id}
               />
               <button type="button" className="btn-primary text-sm" onClick={copyExport}>
-                <Copy size={14} /> Copy sessionid
+                <Copy size={14} /> Копировать sessionid
               </button>
             </>
           ) : null}
@@ -1519,7 +1553,7 @@ function AssignProxyModal({
 
   async function runProxyTest() {
     if (!proxyLabel) {
-      push("Select a proxy", "error");
+      push("Выберите прокси", "error");
       return;
     }
     setTesting(true);
@@ -1541,17 +1575,17 @@ function AssignProxyModal({
       const updated = await api.proxies.check(proxyLabel);
       setTestResult(updated);
       if (!updated.is_healthy) {
-        push("Proxy unhealthy — not saved", "error");
+        push("Прокси недоступен — не сохранён", "error");
         return;
       }
       if (updated.instagram_reachable === false) {
-        push("Instagram unreachable through proxy — not saved", "error");
+        push("Instagram недоступен через прокси — не сохранён", "error");
         return;
       }
       const payload: AccountProxyUpdate = { proxy_label: proxyLabel };
       await api.accounts.updateProxy(account.username, payload);
       await onSaved();
-      push("Proxy tested and saved", "success");
+      push("Прокси проверен и сохранён", "success");
     } catch (err) {
       push((err as Error).message, "error");
     } finally {
@@ -1564,11 +1598,11 @@ function AssignProxyModal({
     e.preventDefault();
     if (!account) return;
     if (proxies.length === 0) {
-      push("Add a proxy first", "error");
+      push("Сначала добавьте прокси", "error");
       return;
     }
     if (!proxyLabel) {
-      push("Select a proxy", "error");
+      push("Выберите прокси", "error");
       return;
     }
     setBusy(true);
@@ -1587,11 +1621,11 @@ function AssignProxyModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={`Change proxy · @${account?.username ?? ""}`}
+      title={`Сменить прокси · @${account?.username ?? ""}`}
       footer={
         <>
           <button type="button" onClick={onClose} className="btn-ghost">
-            <XCircle size={16} /> Cancel
+            <XCircle size={16} /> Отмена
           </button>
           <button
             type="button"
@@ -1600,7 +1634,7 @@ function AssignProxyModal({
             onClick={testAndSave}
           >
             <RefreshCw size={16} className={testing ? "animate-spin" : ""} />
-            Test &amp; save
+            Проверить и сохранить
           </button>
           <button
             form="assign-proxy-form"
@@ -1609,24 +1643,24 @@ function AssignProxyModal({
             disabled={busy || proxies.length === 0}
           >
             <CheckCircle2 size={16} />
-            {busy ? "Saving..." : "Save proxy"}
+            {busy ? "Сохранение…" : "Сохранить прокси"}
           </button>
         </>
       }
     >
       <form id="assign-proxy-form" onSubmit={submit} className="space-y-4">
         <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-sm">
-          <div className="text-slate-400">Instagram account</div>
+          <div className="text-slate-400">Аккаунт Instagram</div>
           <div className="font-medium">@{account?.username ?? "—"}</div>
-          <div className="mt-2 text-slate-400">Current proxy</div>
+          <div className="mt-2 text-slate-400">Текущий прокси</div>
           <div className="font-mono text-xs">{account?.proxy_label ?? "—"}</div>
         </div>
         <div>
-          <label className="label">Proxy</label>
+          <label className="label">Прокси</label>
           {proxies.length === 0 ? (
             <div className="flex items-center gap-2 text-sm text-amber-300">
               <ShieldOff size={16} />
-              <span>No proxies. Add one first.</span>
+              <span>Нет прокси. Сначала добавьте.</span>
             </div>
           ) : (
             <div className="space-y-2">
@@ -1649,11 +1683,11 @@ function AssignProxyModal({
                   type="button"
                   className="btn-ghost shrink-0"
                   disabled={testing || !proxyLabel}
-                  aria-label="Test selected proxy in modal"
+                  aria-label="Проверить выбранный прокси"
                   onClick={runProxyTest}
                 >
                   <RefreshCw size={14} className={testing ? "animate-spin" : ""} />
-                  {testing ? "Testing…" : "Test proxy"}
+                  {testing ? "Проверка…" : "Проверить прокси"}
                 </button>
               </div>
               {selectedProxy ? (
@@ -1666,17 +1700,17 @@ function AssignProxyModal({
                   <div className="flex items-center gap-2">
                     <StatusBadge value={testResult.is_healthy ? "ok" : "bad"} />
                     <span className="text-slate-300">
-                      {testResult.is_healthy ? "Healthy" : "Unhealthy"}
+                      {testResult.is_healthy ? "Работает" : "Недоступен"}
                     </span>
                   </div>
                   <div className="text-slate-400">
                     IP: <span className="text-slate-200">{testResult.last_known_ip ?? "—"}</span>
                   </div>
                   <div className="text-slate-400 flex items-center gap-1.5">
-                    Geo:
+                    Гео:
                     <CountryFlag code={testResult.last_geo_country} showCode />
                     {testResult.geo_mismatch_warning ? (
-                      <span className="text-amber-300">Mismatch</span>
+                      <span className="text-amber-300">Не совпадает</span>
                     ) : null}
                   </div>
                   <div className="text-slate-400">
@@ -1691,15 +1725,15 @@ function AssignProxyModal({
                       }
                     >
                       {testResult.instagram_reachable === false
-                        ? "unreachable"
+                        ? "недоступен"
                         : testResult.instagram_reachable
-                          ? "reachable"
+                          ? "доступен"
                           : "—"}
                     </span>
                   </div>
                   {testResult.last_checked_at ? (
                     <div className="text-slate-500">
-                      Checked {new Date(testResult.last_checked_at).toLocaleString()}
+                      Проверено {new Date(testResult.last_checked_at).toLocaleString()}
                     </div>
                   ) : null}
                 </div>
@@ -1707,7 +1741,7 @@ function AssignProxyModal({
             </div>
           )}
           <p className="text-xs text-slate-500 mt-1">
-            All Instagram actions for this account will use the selected proxy.
+            Все действия Instagram для этого аккаунта будут выполняться через выбранный прокси.
           </p>
         </div>
       </form>
@@ -1750,7 +1784,7 @@ function EditProxyModal({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!proxy || !form.url.trim()) {
-      push("URL required", "error");
+      push("Укажите URL", "error");
       return;
     }
     setBusy(true);
@@ -1777,15 +1811,15 @@ function EditProxyModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={`Edit proxy · ${label}`}
+      title={`Изменить прокси · ${label}`}
       footer={
         <>
           <button type="button" onClick={onClose} className="btn-ghost">
-            <XCircle size={16} /> Cancel
+            <XCircle size={16} /> Отмена
           </button>
           <button form="edit-proxy-form" type="submit" className="btn-primary" disabled={busy}>
             <CheckCircle2 size={16} />
-            {busy ? "Saving..." : "Save changes"}
+            {busy ? "Сохранение…" : "Сохранить изменения"}
           </button>
         </>
       }
@@ -1800,12 +1834,12 @@ function EditProxyModal({
             onChange={(e) => setForm({ ...form, url: e.target.value })}
           />
           <p className="text-xs text-slate-500 mt-1">
-            Stored in the database for this workspace.
+            Хранится в базе данных для этого рабочего пространства.
           </p>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="label">Country</label>
+            <label className="label">Страна</label>
             <input
               className="input"
               maxLength={8}
@@ -1814,7 +1848,7 @@ function EditProxyModal({
             />
           </div>
           <div>
-            <label className="label">Timezone</label>
+            <label className="label">Часовой пояс</label>
             <input
               className="input"
               value={form.timezone ?? ""}
@@ -1823,7 +1857,7 @@ function EditProxyModal({
           </div>
         </div>
         <div>
-          <label className="label">Notes</label>
+          <label className="label">Заметки</label>
           <textarea
             className="input min-h-[60px]"
             value={form.notes ?? ""}
@@ -1839,7 +1873,7 @@ function EditProxyModal({
               setForm({ ...form, skip_health_check: e.target.checked })
             }
           />
-          <span>Skip health check after save</span>
+          <span>Пропустить проверку после сохранения</span>
         </label>
       </form>
     </Modal>
@@ -1869,7 +1903,7 @@ function AddProxyModal({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.label || !form.url) {
-      push("Fill label and URL", "error");
+      push("Заполните метку и URL", "error");
       return;
     }
     setBusy(true);
@@ -1888,22 +1922,22 @@ function AddProxyModal({
     <Modal
       open={open}
       onClose={onClose}
-      title="Add proxy"
+      title="Добавить прокси"
       footer={
         <>
           <button onClick={onClose} className="btn-ghost">
-            <XCircle size={16} /> Cancel
+            <XCircle size={16} /> Отмена
           </button>
           <button form="add-proxy-form" type="submit" className="btn-primary" disabled={busy}>
             <CheckCircle2 size={16} />
-            {busy ? "Saving..." : "Save proxy"}
+            {busy ? "Сохранение…" : "Сохранить прокси"}
           </button>
         </>
       }
     >
       <form id="add-proxy-form" onSubmit={submit} className="space-y-3">
         <div>
-          <label className="label">Label</label>
+          <label className="label">Метка</label>
           <input
             className="input"
             value={form.label}
@@ -1921,7 +1955,7 @@ function AddProxyModal({
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="label">Country</label>
+            <label className="label">Страна</label>
             <input
               className="input"
               maxLength={8}
@@ -1930,7 +1964,7 @@ function AddProxyModal({
             />
           </div>
           <div>
-            <label className="label">Timezone</label>
+            <label className="label">Часовой пояс</label>
             <input
               className="input"
               value={form.timezone ?? ""}
@@ -1939,7 +1973,7 @@ function AddProxyModal({
           </div>
         </div>
         <div>
-          <label className="label">Notes</label>
+          <label className="label">Заметки</label>
           <textarea
             className="input min-h-[60px]"
             value={form.notes ?? ""}
@@ -1955,7 +1989,7 @@ function AddProxyModal({
               setForm({ ...form, skip_health_check: e.target.checked })
             }
           />
-          <span>Skip health check on save</span>
+          <span>Пропустить проверку при сохранении</span>
         </label>
       </form>
     </Modal>

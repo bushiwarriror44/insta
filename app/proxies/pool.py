@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import Proxy
+from app.geo.country_codes import countries_mismatch, normalize_country_code
 from app.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -58,7 +59,7 @@ def proxy_risk_score(snapshot: HealthSnapshot, *, advertised_country: str | None
         score += 0.6
     if not snapshot.ip:
         score += 0.2
-    if advertised_country and snapshot.country and advertised_country.upper() != snapshot.country.upper():
+    if countries_mismatch(advertised_country, snapshot.country):
         score += 0.25
     return min(1.0, score)
 
@@ -220,7 +221,7 @@ def health_check_record(db: Session, proxy: Proxy) -> tuple[bool, HealthSnapshot
     proxy.last_known_ip = snapshot.ip or proxy.last_known_ip
     if snapshot.country:
         proxy.last_geo_country = snapshot.country
-        if proxy.country and proxy.country.upper() != snapshot.country.upper():
+        if countries_mismatch(proxy.country, snapshot.country):
             logger.warning(
                 "proxy.geo_mismatch",
                 label=proxy.label,
@@ -248,6 +249,8 @@ def upsert_proxy(
     timezone_name: Optional[str] = None,
     notes: Optional[str] = None,
 ) -> Proxy:
+    if country is not None:
+        country = normalize_country_code(country)
     proxy = db.query(Proxy).filter(Proxy.label == label).one_or_none()
     if proxy is None:
         proxy = Proxy(label=label, url=url, country=country, timezone=timezone_name, notes=notes)

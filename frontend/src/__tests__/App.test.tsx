@@ -51,7 +51,7 @@ describe("App routing", () => {
       login: vi.fn(),
     });
     renderAt("/");
-    expect(screen.getByText(/connecting to api/i)).toBeInTheDocument();
+    expect(screen.getByText(/подключение к api/i)).toBeInTheDocument();
   });
 
   it("redirects unauthenticated users to /login", () => {

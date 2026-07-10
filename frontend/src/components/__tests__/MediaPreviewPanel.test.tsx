@@ -67,7 +67,7 @@ describe("MediaPreviewPanel", () => {
         onDelete={() => {}}
       />
     );
-    expect(screen.getByText(/select a video or photo/i)).toBeInTheDocument();
+    expect(screen.getByText(/выберите видео или фото/i)).toBeInTheDocument();
   });
 
   it("renders video preview and publish button", async () => {
@@ -91,7 +91,7 @@ describe("MediaPreviewPanel", () => {
     );
     expect(screen.getByText("clip.mp4")).toBeInTheDocument();
     await waitFor(() => expect(document.querySelector("video")).toBeTruthy());
-    fireEvent.click(screen.getByRole("button", { name: /publish now/i }));
+    fireEvent.click(screen.getByRole("button", { name: /опубликовать сейчас/i }));
     expect(onPublish).toHaveBeenCalled();
   });
 });

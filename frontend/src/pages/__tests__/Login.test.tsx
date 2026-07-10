@@ -26,14 +26,14 @@ describe("Login page", () => {
     useAuthMock.mockReturnValue({ login: vi.fn().mockResolvedValue(true) });
     renderLogin();
     expect(screen.getByRole("heading", { name: /reels admin/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /войти/i })).toBeInTheDocument();
   });
 
   it("does not call login when token field is empty", () => {
     const login = vi.fn().mockResolvedValue(true);
     useAuthMock.mockReturnValue({ login });
     renderLogin();
-    fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
+    fireEvent.click(screen.getByRole("button", { name: /войти/i }));
     expect(login).not.toHaveBeenCalled();
   });
 
@@ -41,9 +41,9 @@ describe("Login page", () => {
     const login = vi.fn().mockResolvedValue(true);
     useAuthMock.mockReturnValue({ login });
     renderLogin();
-    const input = screen.getByLabelText(/admin token/i);
+    const input = screen.getByLabelText(/токен администратора/i);
     fireEvent.change(input, { target: { value: "  my-secret  " } });
-    fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
+    fireEvent.click(screen.getByRole("button", { name: /войти/i }));
     await waitFor(() => expect(login).toHaveBeenCalledWith("my-secret"));
   });
 
@@ -51,11 +51,11 @@ describe("Login page", () => {
     const login = vi.fn().mockResolvedValue(false);
     useAuthMock.mockReturnValue({ login });
     renderLogin();
-    fireEvent.change(screen.getByLabelText(/admin token/i), {
+    fireEvent.change(screen.getByLabelText(/токен администратора/i), {
       target: { value: "bad" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
-    await screen.findByText(/invalid token/i);
+    fireEvent.click(screen.getByRole("button", { name: /войти/i }));
+    await screen.findByText(/неверный токен/i);
   });
 
   it("disables the button while submitting", async () => {
@@ -65,15 +65,15 @@ describe("Login page", () => {
     );
     useAuthMock.mockReturnValue({ login });
     renderLogin();
-    fireEvent.change(screen.getByLabelText(/admin token/i), {
+    fireEvent.change(screen.getByLabelText(/токен администратора/i), {
       target: { value: "x" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
-    const btn = screen.getByRole("button", { name: /checking/i });
+    fireEvent.click(screen.getByRole("button", { name: /войти/i }));
+    const btn = screen.getByRole("button", { name: /проверка/i });
     expect(btn).toBeDisabled();
     resolveLogin(true);
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /sign in/i })).not.toBeDisabled()
+      expect(screen.getByRole("button", { name: /войти/i })).not.toBeDisabled()
     );
   });
 });

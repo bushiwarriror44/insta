@@ -117,7 +117,7 @@ describe("Accounts page", () => {
     const matches = screen.getAllByText("res-de-1");
     expect(matches.length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("203.0.113.1")).toBeInTheDocument();
-    const instagramLink = screen.getByRole("link", { name: /open instagram/i });
+    const instagramLink = screen.getByRole("link", { name: /открыть instagram/i });
     expect(instagramLink).toHaveAttribute(
       "href",
       "https://www.instagram.com/alice/"
@@ -146,16 +146,16 @@ describe("Accounts page", () => {
     await screen.findByText("@alice");
 
     fireEvent.click(
-      screen.getByRole("button", { name: /change proxy for alice/i })
+      screen.getByRole("button", { name: /сменить прокси для alice/i })
     );
     const heading = await screen.findByRole("heading", {
-      name: /change proxy · @alice/i,
+      name: /сменить прокси · @alice/i,
     });
     const modal = heading.closest("div.card") as HTMLElement;
     fireEvent.change(within(modal).getByRole("combobox"), {
       target: { value: secondProxy.label },
     });
-    fireEvent.click(screen.getByRole("button", { name: /save proxy/i }));
+    fireEvent.click(screen.getByRole("button", { name: /сохранить прокси/i }));
 
     await waitFor(() =>
       expect(apiMock.accounts.updateProxy).toHaveBeenCalledWith("alice", {
@@ -175,15 +175,15 @@ describe("Accounts page", () => {
     await screen.findByText("@alice");
 
     fireEvent.click(
-      screen.getByRole("button", { name: /change proxy for alice/i })
+      screen.getByRole("button", { name: /сменить прокси для alice/i })
     );
     const heading = await screen.findByRole("heading", {
-      name: /change proxy · @alice/i,
+      name: /сменить прокси · @alice/i,
     });
     const modal = heading.closest("div.card") as HTMLElement;
 
-    expect(within(modal).getByText(/no proxies\. add one first\./i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /save proxy/i })).toBeDisabled();
+    expect(within(modal).getByText(/нет прокси\. сначала добавьте/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /сохранить прокси/i })).toBeDisabled();
     expect(apiMock.accounts.updateProxy).not.toHaveBeenCalled();
   });
 
@@ -198,15 +198,15 @@ describe("Accounts page", () => {
     renderAccounts();
     await screen.findByText("@alice");
 
-    fireEvent.click(screen.getByRole("button", { name: /session for alice/i }));
+    fireEvent.click(screen.getByRole("button", { name: /сессия для alice/i }));
     const heading = await screen.findByRole("heading", {
-      name: /session · @alice/i,
+      name: /сессия · @alice/i,
     });
     const modal = heading.closest("div.card") as HTMLElement;
-    fireEvent.change(byLabel(/sessionid cookie/i, modal), {
+    fireEvent.change(byLabel(/cookie sessionid/i, modal), {
       target: { value: sessionId },
     });
-    fireEvent.click(screen.getByRole("button", { name: /save session/i }));
+    fireEvent.click(screen.getByRole("button", { name: /сохранить сессию/i }));
 
     await waitFor(() =>
       expect(apiMock.accounts.updateSession).toHaveBeenCalledWith("alice", {
@@ -225,9 +225,9 @@ describe("Accounts page", () => {
 
     renderAccounts();
     await screen.findByText("@alice");
-    fireEvent.click(screen.getByRole("button", { name: /session for alice/i }));
-    await screen.findByRole("heading", { name: /session · @alice/i });
-    fireEvent.click(screen.getByRole("button", { name: /^export$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /сессия для alice/i }));
+    await screen.findByRole("heading", { name: /сессия · @alice/i });
+    fireEvent.click(screen.getByRole("button", { name: /^экспорт$/i }));
 
     await waitFor(() =>
       expect(apiMock.accounts.getSession).toHaveBeenCalledWith("alice")
@@ -250,17 +250,17 @@ describe("Accounts page", () => {
     renderAccounts();
     await screen.findByText("@alice");
     fireEvent.click(
-      screen.getByRole("button", { name: /change proxy for alice/i })
+      screen.getByRole("button", { name: /сменить прокси для alice/i })
     );
     const heading = await screen.findByRole("heading", {
-      name: /change proxy · @alice/i,
+      name: /сменить прокси · @alice/i,
     });
     const modal = heading.closest("div.card") as HTMLElement;
     fireEvent.change(within(modal).getByRole("combobox"), {
       target: { value: secondProxy.label },
     });
     fireEvent.click(
-      within(modal).getByRole("button", { name: /test selected proxy in modal/i })
+      within(modal).getByRole("button", { name: /проверить выбранный прокси/i })
     );
 
     await waitFor(() =>
@@ -269,7 +269,7 @@ describe("Accounts page", () => {
     await waitFor(() =>
       expect(within(modal).getByText("198.51.100.2")).toBeInTheDocument()
     );
-    expect(within(modal).getByText(/reachable/i)).toBeInTheDocument();
+    expect(within(modal).getByText(/доступен/i)).toBeInTheDocument();
   });
 
   it("opens connection modal and runs full connection check", async () => {
@@ -305,20 +305,20 @@ describe("Accounts page", () => {
     renderAccounts();
     await screen.findByText("@alice");
     fireEvent.click(
-      screen.getByRole("button", { name: /^connection for alice$/i })
+      screen.getByRole("button", { name: /^подключение для alice$/i })
     );
     const heading = await screen.findByRole("heading", {
-      name: /connection · @alice/i,
+      name: /подключение · @alice/i,
     });
     const modal = heading.closest("div.card") as HTMLElement;
-    expect(within(modal).getByText(/proxy assigned/i)).toBeInTheDocument();
-    fireEvent.click(within(modal).getByRole("button", { name: /run check/i }));
+    expect(within(modal).getByText(/прокси назначен/i)).toBeInTheDocument();
+    fireEvent.click(within(modal).getByRole("button", { name: /запустить проверку/i }));
 
     await waitFor(() =>
       expect(apiMock.accounts.testConnection).toHaveBeenCalledWith("alice")
     );
     await waitFor(() =>
-      expect(within(modal).getByText(/ready for autoposting/i)).toBeInTheDocument()
+      expect(within(modal).getByText(/готов к автопостингу/i)).toBeInTheDocument()
     );
   });
 
@@ -332,9 +332,9 @@ describe("Accounts page", () => {
     renderAccounts();
     await screen.findByText("@alice");
     fireEvent.click(
-      screen.getByRole("button", { name: /connection check for alice/i })
+      screen.getByRole("button", { name: /проверка подключения для alice/i })
     );
-    await screen.findByRole("heading", { name: /connection · @alice/i });
+    await screen.findByRole("heading", { name: /подключение · @alice/i });
   });
 
   it("opens the Add account modal and submits a new account", async () => {
@@ -350,14 +350,14 @@ describe("Accounts page", () => {
     renderAccounts();
     await screen.findByText("@alice");
 
-    fireEvent.click(screen.getByRole("button", { name: /add account/i }));
-    const heading = await screen.findByRole("heading", { name: /add account/i });
+    fireEvent.click(screen.getByRole("button", { name: /добавить аккаунт/i }));
+    const heading = await screen.findByRole("heading", { name: /добавить аккаунт/i });
     const modal = heading.closest("div.card") as HTMLElement;
     expect(modal).toBeInTheDocument();
 
-    fireEvent.change(byLabel(/username/i, modal), { target: { value: "bob" } });
-    fireEvent.change(byLabel(/^password$/i, modal), { target: { value: "secret" } });
-    fireEvent.click(screen.getByRole("button", { name: /save account/i }));
+    fireEvent.change(byLabel(/имя пользователя/i, modal), { target: { value: "bob" } });
+    fireEvent.change(byLabel(/^пароль$/i, modal), { target: { value: "secret" } });
+    fireEvent.click(screen.getByRole("button", { name: /сохранить аккаунт/i }));
 
     await waitFor(() =>
       expect(apiMock.accounts.create).toHaveBeenCalledWith(
@@ -373,10 +373,10 @@ describe("Accounts page", () => {
   it("shows validation toast when required fields are empty", async () => {
     renderAccounts();
     await screen.findByText("@alice");
-    fireEvent.click(screen.getByRole("button", { name: /add account/i }));
-    await screen.findByRole("heading", { name: /add account/i });
-    fireEvent.click(screen.getByRole("button", { name: /save account/i }));
-    await screen.findByText(/fill username, password and proxy/i);
+    fireEvent.click(screen.getByRole("button", { name: /добавить аккаунт/i }));
+    await screen.findByRole("heading", { name: /добавить аккаунт/i });
+    fireEvent.click(screen.getByRole("button", { name: /сохранить аккаунт/i }));
+    await screen.findByText(/заполните имя пользователя, пароль и прокси/i);
     expect(apiMock.accounts.create).not.toHaveBeenCalled();
   });
 
@@ -386,7 +386,7 @@ describe("Accounts page", () => {
     await screen.findByText("@alice");
 
     const accountsTable = screen.getAllByRole("table")[1];
-    const pauseBtn = within(accountsTable).getByRole("button", { name: /pause/i });
+    const pauseBtn = within(accountsTable).getByRole("button", { name: /^пауза$/i });
     fireEvent.click(pauseBtn);
 
     await waitFor(() =>
@@ -400,7 +400,7 @@ describe("Accounts page", () => {
     renderAccounts();
     await screen.findByText("@alice");
     const accountsTable = screen.getAllByRole("table")[1];
-    fireEvent.click(within(accountsTable).getByRole("button", { name: /resume/i }));
+    fireEvent.click(within(accountsTable).getByRole("button", { name: /возобновить/i }));
     await waitFor(() =>
       expect(apiMock.accounts.resume).toHaveBeenCalledWith("alice")
     );
@@ -411,17 +411,17 @@ describe("Accounts page", () => {
     renderAccounts();
     await screen.findByText("@alice");
 
-    fireEvent.click(screen.getByRole("button", { name: /add proxy/i }));
-    const heading = await screen.findByRole("heading", { name: /add proxy/i });
+    fireEvent.click(screen.getByRole("button", { name: /добавить прокси/i }));
+    const heading = await screen.findByRole("heading", { name: /добавить прокси/i });
     const modal = heading.closest("div.card") as HTMLElement;
 
-    fireEvent.change(byLabel(/^label$/i, modal), { target: { value: "res-eu-1" } });
+    fireEvent.change(byLabel(/^метка$/i, modal), { target: { value: "res-eu-1" } });
     fireEvent.change(byLabel(/^url$/i, modal), {
       target: { value: "http://u:p@host:1" },
     });
     const skip = within(modal).getByRole("checkbox") as HTMLInputElement;
     fireEvent.click(skip);
-    fireEvent.click(screen.getByRole("button", { name: /save proxy/i }));
+    fireEvent.click(screen.getByRole("button", { name: /сохранить прокси/i }));
 
     await waitFor(() =>
       expect(apiMock.proxies.create).toHaveBeenCalledWith(
@@ -441,7 +441,7 @@ describe("Accounts page", () => {
     const proxiesTable = screen.getAllByRole("table")[0];
     fireEvent.click(
       within(proxiesTable).getByRole("button", {
-        name: /health check proxy res-de-1/i,
+        name: /проверка прокси res-de-1/i,
       })
     );
     await waitFor(() =>
@@ -454,10 +454,10 @@ describe("Accounts page", () => {
     renderAccounts();
     await screen.findByText("@alice");
     fireEvent.click(
-      screen.getByRole("button", { name: /edit proxy res-de-1/i })
+      screen.getByRole("button", { name: /изменить прокси res-de-1/i })
     );
     const heading = await screen.findByRole("heading", {
-      name: /edit proxy · res-de-1/i,
+      name: /изменить прокси · res-de-1/i,
     });
     const modal = heading.closest("div.card") as HTMLElement;
 
@@ -465,9 +465,9 @@ describe("Accounts page", () => {
       target: { value: "http://new/url" },
     });
     fireEvent.click(
-      within(modal).getByRole("checkbox", { name: /skip health check after save/i })
+      within(modal).getByRole("checkbox", { name: /пропустить проверку после сохранения/i })
     );
-    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    fireEvent.click(screen.getByRole("button", { name: /сохранить изменения/i }));
 
     await waitFor(() =>
       expect(apiMock.proxies.update).toHaveBeenCalledWith(
@@ -483,7 +483,7 @@ describe("Accounts page", () => {
   it("disables Delete proxy when accounts are attached", async () => {
     renderAccounts();
     await screen.findByText("@alice");
-    const delBtn = screen.getByRole("button", { name: /delete proxy res-de-1/i });
+    const delBtn = screen.getByRole("button", { name: /удалить прокси res-de-1/i });
     expect(delBtn).toBeDisabled();
   });
 
@@ -498,10 +498,10 @@ describe("Accounts page", () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
 
     renderAccounts();
-    await screen.findByText("No accounts yet.");
+    await screen.findByText("Аккаунтов пока нет.");
 
     fireEvent.click(
-      screen.getByRole("button", { name: /delete proxy res-de-1/i })
+      screen.getByRole("button", { name: /удалить прокси res-de-1/i })
     );
     await waitFor(() =>
       expect(apiMock.proxies.remove).toHaveBeenCalledWith("res-de-1")
@@ -522,7 +522,7 @@ describe("Accounts page", () => {
     renderAccounts();
     await screen.findByText("@alice");
     const accountsTable = screen.getAllByRole("table")[1];
-    expect(within(accountsTable).getByText("cooldown")).toBeInTheDocument();
+    expect(within(accountsTable).getByText("Пауза IG")).toBeInTheDocument();
     expect(within(accountsTable).getByText("lifestyle")).toBeInTheDocument();
     const expected = new Date(cooldownIso).toLocaleString();
     expect(within(accountsTable).getByText(expected)).toBeInTheDocument();
@@ -551,19 +551,19 @@ describe("Accounts page", () => {
     renderAccounts();
     await screen.findByText("@alice");
 
-    fireEvent.click(screen.getByRole("button", { name: /add account/i }));
-    const heading = await screen.findByRole("heading", { name: /add account/i });
+    fireEvent.click(screen.getByRole("button", { name: /добавить аккаунт/i }));
+    const heading = await screen.findByRole("heading", { name: /добавить аккаунт/i });
     const modal = heading.closest("div.card") as HTMLElement;
 
-    fireEvent.change(byLabel(/username/i, modal), { target: { value: "carol" } });
-    fireEvent.change(byLabel(/^password$/i, modal), { target: { value: "pw" } });
-    fireEvent.change(byLabel(/caption profile/i, modal), {
+    fireEvent.change(byLabel(/имя пользователя/i, modal), { target: { value: "carol" } });
+    fireEvent.change(byLabel(/^пароль$/i, modal), { target: { value: "pw" } });
+    fireEvent.change(byLabel(/профиль подписей/i, modal), {
       target: { value: "fitness" },
     });
     fireEvent.change(byLabel(/totp seed/i, modal), {
       target: { value: "JBSWY3DPEHPK3PXP" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /save account/i }));
+    fireEvent.click(screen.getByRole("button", { name: /сохранить аккаунт/i }));
 
     await waitFor(() =>
       expect(apiMock.accounts.create).toHaveBeenCalledWith(
@@ -587,22 +587,22 @@ describe("Accounts page", () => {
     renderAccounts();
     await screen.findByText("@alice");
 
-    fireEvent.click(screen.getByRole("button", { name: /add account/i }));
-    const heading = await screen.findByRole("heading", { name: /add account/i });
+    fireEvent.click(screen.getByRole("button", { name: /добавить аккаунт/i }));
+    const heading = await screen.findByRole("heading", { name: /добавить аккаунт/i });
     const modal = heading.closest("div.card") as HTMLElement;
 
-    fireEvent.change(byLabel(/username/i, modal), { target: { value: "dave" } });
-    fireEvent.change(byLabel(/^password$/i, modal), { target: { value: "pw-1" } });
-    fireEvent.change(byLabel(/timezone/i, modal), { target: { value: "Europe/Berlin" } });
-    fireEvent.change(byLabel(/daily cap/i, modal), { target: { value: "4" } });
-    fireEvent.change(byLabel(/min gap/i, modal), { target: { value: "5.5" } });
-    fireEvent.change(byLabel(/active start/i, modal), { target: { value: "11" } });
-    fireEvent.change(byLabel(/active end/i, modal), { target: { value: "23" } });
-    fireEvent.change(byLabel(/caption profile/i, modal), { target: { value: "travel" } });
+    fireEvent.change(byLabel(/имя пользователя/i, modal), { target: { value: "dave" } });
+    fireEvent.change(byLabel(/^пароль$/i, modal), { target: { value: "pw-1" } });
+    fireEvent.change(byLabel(/часовой пояс/i, modal), { target: { value: "Europe/Berlin" } });
+    fireEvent.change(byLabel(/дневной лимит/i, modal), { target: { value: "4" } });
+    fireEvent.change(byLabel(/мин\. пауза/i, modal), { target: { value: "5.5" } });
+    fireEvent.change(byLabel(/начало активности/i, modal), { target: { value: "11" } });
+    fireEvent.change(byLabel(/конец активности/i, modal), { target: { value: "23" } });
+    fireEvent.change(byLabel(/профиль подписей/i, modal), { target: { value: "travel" } });
     fireEvent.change(byLabel(/totp seed/i, modal), { target: { value: "JBSWY3DPEHPK3PXP" } });
-    fireEvent.change(byLabel(/recovery email/i, modal), { target: { value: "a@b.test" } });
-    fireEvent.change(byLabel(/email password/i, modal), { target: { value: "mail-secret" } });
-    fireEvent.click(screen.getByRole("button", { name: /save account/i }));
+    fireEvent.change(byLabel(/резервный email/i, modal), { target: { value: "a@b.test" } });
+    fireEvent.change(byLabel(/пароль email/i, modal), { target: { value: "mail-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: /сохранить аккаунт/i }));
 
     await waitFor(() =>
       expect(apiMock.accounts.create).toHaveBeenCalledWith({
@@ -627,16 +627,16 @@ describe("Accounts page", () => {
     renderAccounts();
     await screen.findByText("@alice");
 
-    fireEvent.click(screen.getByRole("button", { name: /add account/i }));
-    const heading = await screen.findByRole("heading", { name: /add account/i });
+    fireEvent.click(screen.getByRole("button", { name: /добавить аккаунт/i }));
+    const heading = await screen.findByRole("heading", { name: /добавить аккаунт/i });
     const modal = heading.closest("div.card") as HTMLElement;
 
-    fireEvent.change(byLabel(/username/i, modal), { target: { value: "eva" } });
-    fireEvent.change(byLabel(/^password$/i, modal), { target: { value: "pw-2" } });
+    fireEvent.change(byLabel(/имя пользователя/i, modal), { target: { value: "eva" } });
+    fireEvent.change(byLabel(/^пароль$/i, modal), { target: { value: "pw-2" } });
     fireEvent.change(byLabel(/totp seed/i, modal), { target: { value: "   " } });
-    fireEvent.change(byLabel(/recovery email/i, modal), { target: { value: "   " } });
-    fireEvent.change(byLabel(/email password/i, modal), { target: { value: "   " } });
-    fireEvent.click(screen.getByRole("button", { name: /save account/i }));
+    fireEvent.change(byLabel(/резервный email/i, modal), { target: { value: "   " } });
+    fireEvent.change(byLabel(/пароль email/i, modal), { target: { value: "   " } });
+    fireEvent.click(screen.getByRole("button", { name: /сохранить аккаунт/i }));
 
     await waitFor(() =>
       expect(apiMock.accounts.create).toHaveBeenCalledWith(
@@ -654,18 +654,18 @@ describe("Accounts page", () => {
     apiMock.proxies.list.mockResolvedValue([]);
     apiMock.accounts.list.mockResolvedValue([]);
     renderAccounts();
-    await screen.findByText("No accounts yet.");
+    await screen.findByText("Аккаунтов пока нет.");
 
-    fireEvent.click(screen.getByRole("button", { name: /add account/i }));
-    const heading = await screen.findByRole("heading", { name: /add account/i });
+    fireEvent.click(screen.getByRole("button", { name: /добавить аккаунт/i }));
+    const heading = await screen.findByRole("heading", { name: /добавить аккаунт/i });
     const modal = heading.closest("div.card") as HTMLElement;
-    expect(within(modal).getByText(/no proxies\. add one first\./i)).toBeInTheDocument();
+    expect(within(modal).getByText(/нет прокси\. сначала добавьте/i)).toBeInTheDocument();
 
-    fireEvent.change(byLabel(/username/i, modal), { target: { value: "neo" } });
-    fireEvent.change(byLabel(/^password$/i, modal), { target: { value: "pw-3" } });
-    fireEvent.click(screen.getByRole("button", { name: /save account/i }));
+    fireEvent.change(byLabel(/имя пользователя/i, modal), { target: { value: "neo" } });
+    fireEvent.change(byLabel(/^пароль$/i, modal), { target: { value: "pw-3" } });
+    fireEvent.click(screen.getByRole("button", { name: /сохранить аккаунт/i }));
 
-    await screen.findByText(/fill username, password and proxy/i);
+    await screen.findByText(/заполните имя пользователя, пароль и прокси/i);
     expect(apiMock.accounts.create).not.toHaveBeenCalled();
   });
 
@@ -674,17 +674,17 @@ describe("Accounts page", () => {
     renderAccounts();
     await screen.findByText("@alice");
 
-    fireEvent.click(screen.getByRole("button", { name: /add account/i }));
-    const heading = await screen.findByRole("heading", { name: /add account/i });
+    fireEvent.click(screen.getByRole("button", { name: /добавить аккаунт/i }));
+    const heading = await screen.findByRole("heading", { name: /добавить аккаунт/i });
     const modal = heading.closest("div.card") as HTMLElement;
 
-    fireEvent.change(byLabel(/username/i, modal), { target: { value: "zoe" } });
-    fireEvent.change(byLabel(/^password$/i, modal), { target: { value: "pw-4" } });
-    fireEvent.click(screen.getByRole("button", { name: /save account/i }));
+    fireEvent.change(byLabel(/имя пользователя/i, modal), { target: { value: "zoe" } });
+    fireEvent.change(byLabel(/^пароль$/i, modal), { target: { value: "pw-4" } });
+    fireEvent.click(screen.getByRole("button", { name: /сохранить аккаунт/i }));
 
     await screen.findByText("create failed");
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /save account/i })).toBeEnabled()
+      expect(screen.getByRole("button", { name: /сохранить аккаунт/i })).toBeEnabled()
     );
   });
 
@@ -693,24 +693,24 @@ describe("Accounts page", () => {
     renderAccounts();
     await screen.findByText("@alice");
 
-    fireEvent.click(screen.getByRole("button", { name: /add account/i }));
-    let heading = await screen.findByRole("heading", { name: /add account/i });
+    fireEvent.click(screen.getByRole("button", { name: /добавить аккаунт/i }));
+    let heading = await screen.findByRole("heading", { name: /добавить аккаунт/i });
     let modal = heading.closest("div.card") as HTMLElement;
 
-    fireEvent.change(byLabel(/username/i, modal), { target: { value: "kate" } });
-    fireEvent.change(byLabel(/^password$/i, modal), { target: { value: "pw-5" } });
-    fireEvent.change(byLabel(/timezone/i, modal), { target: { value: "Europe/Warsaw" } });
-    fireEvent.change(byLabel(/caption profile/i, modal), { target: { value: "food" } });
-    fireEvent.click(screen.getByRole("button", { name: /save account/i }));
+    fireEvent.change(byLabel(/имя пользователя/i, modal), { target: { value: "kate" } });
+    fireEvent.change(byLabel(/^пароль$/i, modal), { target: { value: "pw-5" } });
+    fireEvent.change(byLabel(/часовой пояс/i, modal), { target: { value: "Europe/Warsaw" } });
+    fireEvent.change(byLabel(/профиль подписей/i, modal), { target: { value: "food" } });
+    fireEvent.click(screen.getByRole("button", { name: /сохранить аккаунт/i }));
 
-    await screen.findByText(/account saved/i);
-    fireEvent.click(screen.getByRole("button", { name: /add account/i }));
-    heading = await screen.findByRole("heading", { name: /add account/i });
+    await screen.findByText(/аккаунт сохранён/i);
+    fireEvent.click(screen.getByRole("button", { name: /добавить аккаунт/i }));
+    heading = await screen.findByRole("heading", { name: /добавить аккаунт/i });
     modal = heading.closest("div.card") as HTMLElement;
 
-    expect((byLabel(/username/i, modal) as HTMLInputElement).value).toBe("");
-    expect((byLabel(/^password$/i, modal) as HTMLInputElement).value).toBe("");
-    expect((byLabel(/timezone/i, modal) as HTMLInputElement).value).toBe("UTC");
-    expect((byLabel(/caption profile/i, modal) as HTMLSelectElement).value).toBe("");
+    expect((byLabel(/имя пользователя/i, modal) as HTMLInputElement).value).toBe("");
+    expect((byLabel(/^пароль$/i, modal) as HTMLInputElement).value).toBe("");
+    expect((byLabel(/часовой пояс/i, modal) as HTMLInputElement).value).toBe("UTC");
+    expect((byLabel(/профиль подписей/i, modal) as HTMLSelectElement).value).toBe("");
   });
 });

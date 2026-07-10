@@ -236,7 +236,7 @@ def publish_reel(
     if not video_file.exists():
         raise HardPublishError(f"video not found: {video_file}")
 
-    _emit(on_log, "info", "login", "Authenticating Instagram client")
+    _emit(on_log, "info", "login", "Авторизация клиента Instagram")
     client = _login_media_client(
         username=username,
         password=password,
@@ -248,35 +248,35 @@ def publish_reel(
         email=email,
         email_password=email_password,
     )
-    _emit(on_log, "info", "login", "Client authenticated")
+    _emit(on_log, "info", "login", "Клиент авторизован")
 
     if do_warmup:
-        _emit(on_log, "info", "warmup", f"Starting pre-publish warmup ({warmup_intensity})")
+        _emit(on_log, "info", "warmup", f"Прогрев перед публикацией ({warmup_intensity})")
         try:
             warmup(client, intensity=warmup_intensity)
-            _emit(on_log, "info", "warmup", "Warmup completed")
+            _emit(on_log, "info", "warmup", "Прогрев завершён")
         except Exception as exc:  # warmup is best effort
             log.warning("warmup.failed", error=str(exc))
-            _emit(on_log, "warn", "warmup", f"Warmup failed (non-fatal): {exc}")
+            _emit(on_log, "warn", "warmup", f"Прогрев не удался (некритично): {exc}")
 
     think(median_sec=8.0, max_sec=30.0)
 
-    _emit(on_log, "info", "upload", f"Uploading reel {video_file.name}")
+    _emit(on_log, "info", "upload", f"Загрузка reel {video_file.name}")
     try:
         media = client.clip_upload(str(video_file), caption=caption)
     except FeedbackRequired as exc:
         # Treat as a soft cooldown if the message indicates throttling.
         # Worker upgrades the account to AccountStatus.cooldown for 24-48h.
         log.warning("publish.feedback_required_cooldown", error=str(exc))
-        _emit(on_log, "warn", "upload", f"Feedback required: {exc}")
+        _emit(on_log, "warn", "upload", f"Требуется обратная связь: {exc}")
         raise ActionCooldownError(str(exc)) from exc
     except ChallengeRequired as exc:
         log.error("publish.challenge_required")
-        _emit(on_log, "error", "upload", f"Challenge required: {exc}")
+        _emit(on_log, "error", "upload", f"Требуется подтверждение: {exc}")
         raise HardPublishError(f"challenge required during publish: {exc}") from exc
     except PleaseWaitFewMinutes as exc:
         log.warning("publish.rate_limited")
-        _emit(on_log, "warn", "upload", f"Rate limited: {exc}")
+        _emit(on_log, "warn", "upload", f"Лимит запросов: {exc}")
         raise TemporaryPublishError(str(exc)) from exc
     except ClientError as exc:
         msg = str(exc)
@@ -294,15 +294,15 @@ def publish_reel(
 
     media_id, media_code = _coerce_media_result(media)
     log.info("publish.done", media_id=media_id, media_code=media_code)
-    _emit(on_log, "info", "upload", f"Published media_id={media_id} code={media_code or '-'}")
+    _emit(on_log, "info", "upload", f"Опубликовано media_id={media_id} code={media_code or '-'}")
 
     try:
-        _emit(on_log, "info", "settling", "Post-publish settling")
+        _emit(on_log, "info", "settling", "Пост-публикационная пауза")
         _post_publish_settle(client, log)
-        _emit(on_log, "info", "settling", "Settling complete")
+        _emit(on_log, "info", "settling", "Пауза завершена")
     except Exception as exc:  # noqa: BLE001 - settling never blocks success
         log.debug("publish.settling_aborted", error=str(exc))
-        _emit(on_log, "warn", "settling", f"Settling aborted: {exc}")
+        _emit(on_log, "warn", "settling", f"Пауза прервана: {exc}")
 
     return PublishResult(
         media_id=media_id,
@@ -332,7 +332,7 @@ def publish_feed_photo(
     image_file = Path(image_path)
     if not image_file.exists():
         raise HardPublishError(f"image not found: {image_file}")
-    _emit(on_log, "info", "login", "Authenticating Instagram client")
+    _emit(on_log, "info", "login", "Авторизация клиента Instagram")
     client = _login_media_client(
         username=username,
         password=password,
@@ -344,7 +344,7 @@ def publish_feed_photo(
         email=email,
         email_password=email_password,
     )
-    _emit(on_log, "info", "upload", f"Uploading feed photo {image_file.name}")
+    _emit(on_log, "info", "upload", f"Загрузка фото в ленту {image_file.name}")
     try:
         media = client.photo_upload(str(image_file), caption=caption)
     except FeedbackRequired as exc:
@@ -365,7 +365,7 @@ def publish_feed_photo(
         raise TemporaryPublishError(msg) from exc
     media_id, media_code = _coerce_media_result(media)
     log.info("publish.feed_photo_done", media_id=media_id, media_code=media_code)
-    _emit(on_log, "info", "upload", f"Published media_id={media_id}")
+    _emit(on_log, "info", "upload", f"Опубликовано media_id={media_id}")
     _post_publish_settle(client, log)
     return PublishResult(media_id=media_id, media_code=media_code, final_video_path=image_file, final_caption=caption)
 
@@ -390,7 +390,7 @@ def publish_feed_video(
     video_file = Path(video_path)
     if not video_file.exists():
         raise HardPublishError(f"video not found: {video_file}")
-    _emit(on_log, "info", "login", "Authenticating Instagram client")
+    _emit(on_log, "info", "login", "Авторизация клиента Instagram")
     client = _login_media_client(
         username=username,
         password=password,
@@ -402,7 +402,7 @@ def publish_feed_video(
         email=email,
         email_password=email_password,
     )
-    _emit(on_log, "info", "upload", f"Uploading feed video {video_file.name}")
+    _emit(on_log, "info", "upload", f"Загрузка видео в ленту {video_file.name}")
     try:
         media = client.video_upload(str(video_file), caption=caption)
     except FeedbackRequired as exc:
@@ -423,7 +423,7 @@ def publish_feed_video(
         raise TemporaryPublishError(msg) from exc
     media_id, media_code = _coerce_media_result(media)
     log.info("publish.feed_video_done", media_id=media_id, media_code=media_code)
-    _emit(on_log, "info", "upload", f"Published media_id={media_id}")
+    _emit(on_log, "info", "upload", f"Опубликовано media_id={media_id}")
     _post_publish_settle(client, log)
     return PublishResult(media_id=media_id, media_code=media_code, final_video_path=video_file, final_caption=caption)
 

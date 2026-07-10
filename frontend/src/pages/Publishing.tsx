@@ -11,8 +11,14 @@ import { useToast } from "../context/ToastContext";
 import type { AccountOut, PostType, PublicationOut, VideoOut } from "../api/types";
 
 function count(v: number | null | undefined) {
-  return v == null ? "-" : v.toLocaleString();
+  return v == null ? "-" : v.toLocaleString("ru-RU");
 }
+
+const POST_TYPE_LABELS: Record<string, string> = {
+  reel: "Reels",
+  feed_photo: "Фото в ленте",
+  feed_video: "Видео в ленте",
+};
 
 function basename(path: string | null) {
   if (!path) return "-";
@@ -115,7 +121,7 @@ export function Publishing() {
       if (last) {
         selectItem(last);
         push(
-          files.length === 1 ? `Uploaded ${last.filename}` : `Uploaded ${files.length} files`,
+          files.length === 1 ? `Загружено: ${last.filename}` : `Загружено файлов: ${files.length}`,
           "success"
         );
       }
@@ -136,7 +142,7 @@ export function Publishing() {
     const mediaFilename = opts?.mediaFilename ?? selectedFilename;
     const account = opts?.usernameOverride ?? username;
     if (!account || !mediaFilename) {
-      push("Pick an account and media file", "error");
+      push("Выберите аккаунт и медиафайл", "error");
       return;
     }
     const type = opts?.postTypeOverride ?? postType;
@@ -158,7 +164,7 @@ export function Publishing() {
             : null,
         when: whenIso,
       });
-      push(whenIso ? "Publication scheduled" : "Publication queued", "success");
+      push(whenIso ? "Публикация запланирована" : "Публикация добавлена в очередь", "success");
       setCaption("");
       setWhenLocal("");
       const [jobsMedia, rows] = await Promise.all([
@@ -177,7 +183,7 @@ export function Publishing() {
   async function quickPublish(item: VideoOut) {
     const account = defaultUsername || username;
     if (!account) {
-      push("Add an account first", "error");
+      push("Сначала добавьте аккаунт", "error");
       return;
     }
     selectItem(item);
@@ -192,10 +198,10 @@ export function Publishing() {
 
   async function deleteSelected() {
     if (!selectedFilename) return;
-    if (!window.confirm(`Delete ${selectedFilename}?`)) return;
+    if (!window.confirm(`Удалить ${selectedFilename}?`)) return;
     try {
       await api.videos.remove(selectedFilename);
-      push("Media removed", "info");
+      push("Медиафайл удалён", "info");
       const list = await api.videos.list();
       setMedia(list);
       setSelectedFilename(list[0]?.filename ?? null);
@@ -209,7 +215,7 @@ export function Publishing() {
     try {
       const updated = await api.publications.refreshStats(row.id);
       setPublications((items) => items.map((item) => (item.id === updated.id ? updated : item)));
-      push("Stats refreshed", "success");
+      push("Статистика обновлена", "success");
     } catch (err) {
       push((err as Error).message, "error");
     } finally {
@@ -222,30 +228,30 @@ export function Publishing() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">Library</h1>
+        <h1 className="text-2xl font-semibold">Библиотека</h1>
         <p className="text-sm text-slate-400 mt-1">
-          Upload ready Reels, preview in the browser, and publish in one click.
+          Загружайте готовые Reels, просматривайте в браузере и публикуйте в один клик.
         </p>
       </div>
 
-      <Card title="Upload to library">
+      <Card title="Загрузка в библиотеку">
         <DropZone
           accept="video/mp4,video/quicktime,video/x-m4v,image/jpeg,image/png,image/webp"
           disabled={uploading}
           staging
           multiple
-          title="Drop ready Reels (.mp4)"
-          hint=".mp4 / .mov — or photos .jpg / .png / .webp"
+          title="Перетащите готовые Reels (.mp4)"
+          hint=".mp4 / .mov — или фото .jpg / .png / .webp"
           onFile={(file) => uploadFiles([file])}
           onFiles={uploadFiles}
         />
-        {uploading ? <div className="text-xs text-slate-400 mt-2">Uploading…</div> : null}
+        {uploading ? <div className="text-xs text-slate-400 mt-2">Загрузка…</div> : null}
       </Card>
 
       <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
         <Card
-          title="Media library"
-          description={`${media.length} files`}
+          title="Медиатека"
+          description={`${media.length} файлов`}
           className="xl:col-span-3"
         >
           <MediaLibraryGrid
@@ -261,7 +267,7 @@ export function Publishing() {
           />
         </Card>
 
-        <Card title="Preview & publish" className="xl:col-span-2">
+        <Card title="Просмотр и публикация" className="xl:col-span-2">
           <MediaPreviewPanel
             item={selectedItem}
             accounts={accounts}
@@ -280,24 +286,24 @@ export function Publishing() {
         </Card>
       </div>
 
-      <Card title="Published media statistics" description={`${publications.length} rows`}>
+      <Card title="Статистика опубликованных медиа" description={`${publications.length} записей`}>
         {publications.length === 0 ? (
-          <div className="text-sm text-slate-500">No publications yet.</div>
+          <div className="text-sm text-slate-500">Публикаций пока нет.</div>
         ) : (
           <div className="overflow-x-auto -mx-5">
             <table className="table-base">
               <thead>
                 <tr>
-                  <th>Account</th>
-                  <th>Type</th>
-                  <th>Media</th>
-                  <th>Status</th>
-                  <th>Error</th>
-                  <th>Views / Plays</th>
-                  <th>Likes</th>
-                  <th>Comments</th>
-                  <th>Saved / Shared</th>
-                  <th>Last stats</th>
+                  <th>Аккаунт</th>
+                  <th>Тип</th>
+                  <th>Медиа</th>
+                  <th>Статус</th>
+                  <th>Ошибка</th>
+                  <th>Просмотры / Воспроизведения</th>
+                  <th>Лайки</th>
+                  <th>Комментарии</th>
+                  <th>Сохранения / Репосты</th>
+                  <th>Последняя статистика</th>
                   <th></th>
                 </tr>
               </thead>
@@ -305,13 +311,13 @@ export function Publishing() {
                 {publications.map((row) => (
                   <tr key={row.id} className="hover:bg-slate-900/40">
                     <td className="font-medium">@{row.account_username ?? row.account_id}</td>
-                    <td className="text-slate-300">{row.post_type ?? "reel"}</td>
+                    <td className="text-slate-300">{POST_TYPE_LABELS[row.post_type ?? "reel"] ?? row.post_type ?? "reel"}</td>
                     <td className="text-xs text-slate-400">
                       <div>{row.media_code ?? row.media_id ?? "-"}</div>
                       <div className="text-slate-500">{basename(row.final_media_path)}</div>
                     </td>
                     <td className={row.success ? "text-emerald-300" : "text-rose-300"}>
-                      {row.success ? "published" : "failed"}
+                      {row.success ? "опубликовано" : "ошибка"}
                     </td>
                     <td className="text-xs text-rose-300 max-w-[200px] break-words">
                       {row.error ?? "—"}
@@ -325,7 +331,7 @@ export function Publishing() {
                       {count(row.save_count)} / {count(row.share_count)}
                     </td>
                     <td className="text-xs text-slate-400">
-                      {row.last_stats_at ? new Date(row.last_stats_at).toLocaleString() : "-"}
+                      {row.last_stats_at ? new Date(row.last_stats_at).toLocaleString("ru-RU") : "-"}
                     </td>
                     <td className="text-right">
                       <button
@@ -339,7 +345,7 @@ export function Publishing() {
                         ) : (
                           <BarChart3 size={14} />
                         )}
-                        Refresh stats
+                        Обновить статистику
                       </button>
                     </td>
                   </tr>

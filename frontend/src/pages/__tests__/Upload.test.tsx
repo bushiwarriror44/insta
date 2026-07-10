@@ -91,7 +91,7 @@ describe("Upload page (library alias)", () => {
   it("renders library grid after load", async () => {
     renderUpload();
     expect(await screen.findAllByText("clip.mp4")).not.toHaveLength(0);
-    expect(screen.getByRole("heading", { name: /^library$/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^библиотека$/i })).toBeInTheDocument();
   });
 
   it("uploads a file via staging drop zone", async () => {
@@ -118,12 +118,12 @@ describe("Upload page (library alias)", () => {
       type: "video/mp4",
     });
     await userEvent.upload(input, file);
-    fireEvent.click(screen.getByRole("button", { name: /^upload$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^загрузить$/i }));
 
     await waitFor(() =>
       expect(apiMock.videos.upload).toHaveBeenCalledWith(file)
     );
-    await screen.findByText(/uploaded uploaded\.mp4/i);
+    await screen.findByText(/загружено: uploaded\.mp4/i);
   });
 
   it("enqueues a job ASAP from preview panel", async () => {
@@ -131,7 +131,7 @@ describe("Upload page (library alias)", () => {
     renderUpload();
     await screen.findAllByText("clip.mp4");
 
-    fireEvent.click(screen.getByRole("button", { name: /publish now/i }));
+    fireEvent.click(screen.getByRole("button", { name: /опубликовать сейчас/i }));
 
     await waitFor(() =>
       expect(apiMock.jobs.enqueue).toHaveBeenCalledWith(
@@ -151,7 +151,7 @@ describe("Upload page (library alias)", () => {
     renderUpload();
     await screen.findAllByText("clip.mp4");
 
-    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^удалить$/i }));
 
     await waitFor(() =>
       expect(apiMock.videos.remove).toHaveBeenCalledWith("clip.mp4")

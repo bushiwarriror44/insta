@@ -58,7 +58,7 @@ describe("Dashboard page", () => {
   it("shows the loader while fetching", () => {
     apiMock.dashboard.mockImplementation(() => new Promise(() => {}));
     renderDashboard();
-    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+    expect(screen.getByText(/загрузка/i)).toBeInTheDocument();
   });
 
   it("renders the four stat cards once data arrives", async () => {
@@ -66,16 +66,16 @@ describe("Dashboard page", () => {
     renderDashboard();
 
     await waitFor(() =>
-      expect(screen.getByText("Active accounts")).toBeInTheDocument()
+      expect(screen.getByText("Активные аккаунты")).toBeInTheDocument()
     );
     expect(screen.getByText("3 / 5")).toBeInTheDocument();
-    expect(screen.getByText("Healthy proxies")).toBeInTheDocument();
+    expect(screen.getByText("Исправные прокси")).toBeInTheDocument();
     expect(screen.getByText("2 / 3")).toBeInTheDocument();
-    expect(screen.getByText("Queued / Running")).toBeInTheDocument();
+    expect(screen.getByText("В очереди / В работе")).toBeInTheDocument();
     expect(screen.getByText("4 · 1")).toBeInTheDocument();
-    expect(screen.getByText("Dead jobs (total)")).toBeInTheDocument();
+    expect(screen.getByText("Мёртвые задачи (всего)")).toBeInTheDocument();
     expect(screen.getByText("2")).toBeInTheDocument();
-    expect(screen.getByText(/risk 24h:/i)).toBeInTheDocument();
+    expect(screen.getByText(/риск 24ч:/i)).toBeInTheDocument();
   });
 
   it("shows fallback messages when there is no activity", async () => {
@@ -83,8 +83,8 @@ describe("Dashboard page", () => {
       summary({ daily_stats: [], recent_events: [] })
     );
     renderDashboard();
-    await screen.findByText(/no activity today yet/i);
-    expect(screen.getByText(/no events recorded/i)).toBeInTheDocument();
+    await screen.findByText(/сегодня активности пока нет/i);
+    expect(screen.getByText(/событий пока нет/i)).toBeInTheDocument();
   });
 
   it("renders today's per-account stats and recent events", async () => {
@@ -108,7 +108,7 @@ describe("Dashboard page", () => {
     await screen.findAllByText("@alice");
     expect(screen.getByText("challenge")).toBeInTheDocument();
     expect(screen.getByText("code requested")).toBeInTheDocument();
-    expect(screen.getAllByText(/fails/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/сбои/).length).toBeGreaterThanOrEqual(1);
   });
 
   it("polls the dashboard at the configured interval", async () => {

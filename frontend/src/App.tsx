@@ -15,7 +15,7 @@ export default function App() {
   if (state.state === "loading") {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <Loader label="Connecting to API..." />
+        <Loader label="Подключение к API..." />
       </div>
     );
   }

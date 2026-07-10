@@ -398,7 +398,7 @@ def probe_session_auth(
             return ProbeSessionResult(
                 ok=False,
                 method="sessionid",
-                error="session_id invalid or expired",
+                error="session_id недействителен или истёк",
             )
         except HardCheckpoint as exc:
             return ProbeSessionResult(
@@ -423,7 +423,10 @@ def probe_session_auth(
         return ProbeSessionResult(
             ok=False,
             method="none",
-            error="No session_id in database and no session file on disk",
+            error=(
+                "Нет session_id в БД и нет файла сессии на диске. "
+                "Импортируйте sessionid через панель «Сессия»."
+            ),
         )
 
     client = _fresh_client()
@@ -439,7 +442,7 @@ def probe_session_auth(
         return ProbeSessionResult(
             ok=False,
             method="session_file",
-            error="Session file expired or invalid",
+            error="Файл сессии устарел или недействителен",
         )
     except HardCheckpoint as exc:
         return ProbeSessionResult(

@@ -10,15 +10,16 @@ from sqlalchemy.orm import Session
 from app.api.deps import AuthDep, get_db
 from app.api.schemas import ProxyIn, ProxyOut, ProxyUpdate
 from app.db import Account, Proxy
+from app.geo.country_codes import countries_mismatch
 from app.proxies.pool import HealthSnapshot, health_check_record, upsert_proxy
 
 router = APIRouter(prefix="/api/proxies", tags=["proxies"], dependencies=[AuthDep])
 
 
 def _geo_mismatch(proxy: Proxy, snapshot: HealthSnapshot | None) -> bool:
-    if snapshot is None or not snapshot.country or not proxy.country:
+    if snapshot is None:
         return False
-    return proxy.country.upper() != snapshot.country.upper()
+    return countries_mismatch(proxy.country, snapshot.country)
 
 
 def _proxy_account_counts(db: Session) -> dict[int, int]:

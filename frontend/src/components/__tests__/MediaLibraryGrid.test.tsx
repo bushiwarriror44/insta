@@ -61,7 +61,7 @@ describe("MediaLibraryGrid", () => {
         onQuickPublish={onQuickPublish}
       />
     );
-    fireEvent.click(screen.getByRole("button", { name: /quick publish reel\.mp4/i }));
+    fireEvent.click(screen.getByRole("button", { name: /быстрая публикация reel\.mp4/i }));
     expect(onQuickPublish).toHaveBeenCalledWith(items[0]);
   });
 });

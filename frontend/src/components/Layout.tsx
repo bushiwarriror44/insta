@@ -11,10 +11,10 @@ import clsx from "clsx";
 import { useAuth } from "../context/AuthContext";
 
 const NAV = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
-  { to: "/accounts", label: "Accounts", icon: Users },
-  { to: "/publishing", label: "Library", icon: Library },
-  { to: "/activity", label: "Activity", icon: ActivityIcon },
+  { to: "/", label: "Панель", icon: LayoutDashboard, end: true, testId: "nav-dashboard" },
+  { to: "/accounts", label: "Аккаунты", icon: Users, testId: "nav-accounts" },
+  { to: "/publishing", label: "Библиотека", icon: Library, testId: "nav-publishing" },
+  { to: "/activity", label: "Активность", icon: ActivityIcon, testId: "nav-activity" },
 ];
 
 export function Layout() {
@@ -26,14 +26,15 @@ export function Layout() {
       <aside className="w-60 shrink-0 border-r border-slate-800 bg-slate-900/40 flex flex-col">
         <div className="px-5 py-5 border-b border-slate-800">
           <div className="text-lg font-semibold tracking-tight">Reels Admin</div>
-          <div className="text-xs text-slate-500 mt-0.5">Instagram automation</div>
+          <div className="text-xs text-slate-500 mt-0.5">Автоматизация Instagram</div>
         </div>
         <nav className="flex-1 px-3 py-4 space-y-1">
-          {NAV.map(({ to, label, icon: Icon, end }) => (
+          {NAV.map(({ to, label, icon: Icon, end, testId }) => (
             <NavLink
               key={to}
               to={to}
               end={end}
+              data-testid={testId}
               className={({ isActive }) =>
                 clsx(
                   "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
@@ -52,12 +53,12 @@ export function Layout() {
           {isAuthed && (
             <button onClick={logout} className="btn-ghost w-full justify-start">
               <LogOut size={16} />
-              <span>Logout</span>
+              <span>Выйти</span>
             </button>
           )}
           {!authRequired && (
             <div className="text-xs text-slate-500 px-3 mt-2">
-              Open mode (no token)
+              Открытый режим (без токена)
             </div>
           )}
         </div>
@@ -65,11 +66,11 @@ export function Layout() {
       <main className="flex-1 min-w-0">
         <header className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950/80 backdrop-blur">
           <div className="text-sm text-slate-400">
-            Reels Publisher · admin console
+            Reels Publisher · админ-консоль
           </div>
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-xs text-slate-400">live</span>
+            <span className="text-xs text-slate-400">онлайн</span>
           </div>
         </header>
         <div className="p-6">

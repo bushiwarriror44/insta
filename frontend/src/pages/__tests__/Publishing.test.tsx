@@ -120,11 +120,11 @@ describe("Publishing page", () => {
   it("renders media library grid and publication statistics", async () => {
     renderPublishing();
     await screen.findAllByText("clip.mp4");
-    fireEvent.click(screen.getByRole("button", { name: /^photos$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^фото$/i }));
     expect(screen.getByText("photo.jpg")).toBeInTheDocument();
     expect(screen.getByText("100 / 120")).toBeInTheDocument();
     expect(screen.getByText("CODE")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /videos/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /видео/i })).toBeInTheDocument();
   });
 
   it("uploads a media file after staging confirm", async () => {
@@ -150,9 +150,9 @@ describe("Publishing page", () => {
       type: "video/mp4",
     });
     await userEvent.upload(input, file);
-    fireEvent.click(screen.getByRole("button", { name: /^upload$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^загрузить$/i }));
     await waitFor(() => expect(apiMock.videos.upload).toHaveBeenCalledWith(file));
-    await screen.findByText(/uploaded new\.mp4/i);
+    await screen.findByText(/загружено: new\.mp4/i);
   });
 
   it("enqueues a feed photo publication from preview panel", async () => {
@@ -160,10 +160,10 @@ describe("Publishing page", () => {
     renderPublishing();
     await screen.findAllByText("clip.mp4");
 
-    fireEvent.click(screen.getByRole("button", { name: /^photos$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^фото$/i }));
     fireEvent.click(screen.getByText("photo.jpg"));
-    fireEvent.change(byLabel(/caption/i), { target: { value: "hello" } });
-    fireEvent.click(screen.getByRole("button", { name: /publish now/i }));
+    fireEvent.change(byLabel(/подпись/i), { target: { value: "hello" } });
+    fireEvent.click(screen.getByRole("button", { name: /опубликовать сейчас/i }));
 
     await waitFor(() =>
       expect(apiMock.jobs.enqueue).toHaveBeenCalledWith(
@@ -182,7 +182,7 @@ describe("Publishing page", () => {
     apiMock.jobs.enqueue.mockResolvedValue({});
     renderPublishing();
     await screen.findAllByText("clip.mp4");
-    fireEvent.click(screen.getByRole("button", { name: /quick publish clip\.mp4/i }));
+    fireEvent.click(screen.getByRole("button", { name: /быстрая публикация clip\.mp4/i }));
     await waitFor(() =>
       expect(apiMock.jobs.enqueue).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -203,7 +203,7 @@ describe("Publishing page", () => {
     });
     renderPublishing();
     await screen.findByText("CODE");
-    fireEvent.click(screen.getByRole("button", { name: /refresh stats/i }));
+    fireEvent.click(screen.getByRole("button", { name: /обновить статистику/i }));
     await waitFor(() =>
       expect(apiMock.publications.refreshStats).toHaveBeenCalledWith(10)
     );

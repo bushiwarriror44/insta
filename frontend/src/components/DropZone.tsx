@@ -16,7 +16,7 @@ interface Props {
 export function DropZone({
   accept = "video/mp4,video/quicktime",
   disabled,
-  title = "Drop ready Reels (.mp4) here",
+  title = "Перетащите готовые Reels (.mp4) сюда",
   hint = ".mp4 / .mov",
   staging = false,
   multiple = false,
@@ -91,7 +91,7 @@ export function DropZone({
           ) : previewUrl ? (
             <img
               src={previewUrl}
-              alt="Preview"
+              alt="Предпросмотр"
               className="max-h-48 rounded-lg object-contain"
             />
           ) : null}
@@ -99,7 +99,7 @@ export function DropZone({
         <div className="text-sm text-slate-300 text-center break-all">
           {pendingFiles.length === 1
             ? pendingFiles[0].name
-            : `${pendingFiles.length} files selected`}
+            : `Выбрано файлов: ${pendingFiles.length}`}
         </div>
         <div className="flex gap-2 justify-center">
           <button
@@ -108,7 +108,7 @@ export function DropZone({
             disabled={disabled}
             onClick={clearPending}
           >
-            <XCircle size={16} /> Cancel
+            <XCircle size={16} /> Отмена
           </button>
           <button
             type="button"
@@ -117,7 +117,7 @@ export function DropZone({
             onClick={() => commitFiles(pendingFiles)}
           >
             <CheckCircle2 size={16} />
-            {disabled ? "Uploading…" : "Upload"}
+            {disabled ? "Загрузка…" : "Загрузить"}
           </button>
         </div>
       </div>
@@ -148,7 +148,7 @@ export function DropZone({
     >
       <UploadCloud size={32} className="text-slate-400" />
       <div className="text-sm text-slate-300">
-        {title}, or <span className="text-brand-400">click to browse</span>
+        {title}, или <span className="text-brand-400">нажмите для выбора</span>
       </div>
       <div className="text-xs text-slate-500">{hint}</div>
       <input

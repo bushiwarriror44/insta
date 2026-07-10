@@ -251,3 +251,20 @@ def test_proxy_risk_score_detects_geo_mismatch():
     )
     score = proxy_risk_score(snap, advertised_country="DE")
     assert 0.2 <= score <= 1.0
+
+
+def test_proxy_risk_score_usa_vs_us_not_mismatch():
+    snap = HealthSnapshot(
+        ok=True,
+        ip="1.2.3.4",
+        country="US",
+        instagram_reachable=True,
+        checked_at=datetime.now(timezone.utc),
+    )
+    score = proxy_risk_score(snap, advertised_country="USA")
+    assert score == 0.0
+
+
+def test_upsert_proxy_normalizes_usa_country(db_session):
+    proxy = upsert_proxy(db_session, label="px-usa", url="http://u:p@h:1", country="USA")
+    assert proxy.country == "US"

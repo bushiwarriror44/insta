@@ -11,7 +11,7 @@ function makeFile(name = "clip.mp4", type = "video/mp4") {
 describe("DropZone", () => {
   it("renders default copy and accept hint", () => {
     render(<DropZone onFile={() => {}} />);
-    expect(screen.getByText(/click to browse/i)).toBeInTheDocument();
+    expect(screen.getByText(/нажмите для выбора/i)).toBeInTheDocument();
     expect(screen.getByText(/\.mp4 \/ \.mov/)).toBeInTheDocument();
   });
 
@@ -71,7 +71,7 @@ describe("DropZone", () => {
     const file = makeFile();
     await userEvent.upload(input, file);
     expect(onFile).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: /^upload$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^загрузить$/i }));
     expect(onFile).toHaveBeenCalledWith(file);
   });
 

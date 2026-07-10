@@ -6,7 +6,7 @@ import { Loader } from "../Loader";
 describe("Loader", () => {
   it("renders the default label", () => {
     render(<Loader />);
-    expect(screen.getByText("Loading...")).toBeInTheDocument();
+    expect(screen.getByText("Загрузка...")).toBeInTheDocument();
   });
 
   it("renders a custom label", () => {

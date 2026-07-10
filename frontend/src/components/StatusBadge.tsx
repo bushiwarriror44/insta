@@ -20,6 +20,26 @@ const STYLES: Record<string, string> = {
   bad: "bg-rose-500/15 text-rose-300 ring-rose-500/30",
 };
 
+const LABELS: Record<string, string> = {
+  active: "Активен",
+  paused: "Пауза",
+  challenge: "Проверка",
+  blocked: "Заблокирован",
+  cooldown: "Пауза IG",
+  queued: "В очереди",
+  running: "В работе",
+  done: "Готово",
+  failed: "Сбой",
+  dead: "Мёртвая",
+  cancelled: "Отменена",
+  info: "Инфо",
+  warn: "Предупр.",
+  error: "Ошибка",
+  critical: "Критично",
+  ok: "ОК",
+  bad: "Плохо",
+};
+
 export function StatusBadge({ value }: { value: string }) {
   const key = value.toLowerCase();
   return (
@@ -29,7 +49,7 @@ export function StatusBadge({ value }: { value: string }) {
         STYLES[key] ?? "bg-slate-700/40 text-slate-300 ring-slate-600/30"
       )}
     >
-      {value}
+      {LABELS[key] ?? value}
     </span>
   );
 }

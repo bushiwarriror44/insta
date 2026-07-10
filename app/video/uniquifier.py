@@ -337,7 +337,7 @@ def uniquify(
         pitch_cents=round(p.audio_pitch_cents, 2),
     )
     if on_log is not None:
-        on_log("info", "uniquify", f"Encoding {src.name} -> {dst.name} (crf={p.crf})")
+        on_log("info", "uniquify", f"Кодирование {src.name} -> {dst.name} (crf={p.crf})")
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except subprocess.CalledProcessError as exc:
@@ -345,10 +345,10 @@ def uniquify(
         tail = stderr[-2000:]
         logger.error("uniquify.ffmpeg_failed", returncode=exc.returncode, stderr=tail)
         if on_log is not None:
-            on_log("error", "uniquify", f"ffmpeg failed (code {exc.returncode}): {tail[-500:]}")
+            on_log("error", "uniquify", f"Ошибка ffmpeg (код {exc.returncode}): {tail[-500:]}")
         raise
 
     logger.info("uniquify.done", dst=str(dst), size=dst.stat().st_size)
     if on_log is not None:
-        on_log("info", "uniquify", f"Output ready ({dst.stat().st_size} bytes)")
+        on_log("info", "uniquify", f"Файл готов ({dst.stat().st_size} байт)")
     return p

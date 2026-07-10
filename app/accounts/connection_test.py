@@ -22,7 +22,14 @@ from app.api.schemas import (
 )
 from app.db import Account, DiagnosticRunKind, Proxy
 from app.diagnostics.collector import DiagnosticCollector
+from app.geo.country_codes import countries_mismatch, normalize_country_code
 from app.proxies.pool import ProxyError, health_check_record
+
+_SESSION_SOURCE_LABEL: dict[str, str] = {
+    "database": "БД",
+    "session_file": "файл",
+    "none": "нет",
+}
 
 
 def _session_source(
@@ -33,6 +40,10 @@ def _session_source(
     if exported is None:
         return "none"
     return exported.source
+
+
+def _yes_no(value: bool) -> str:
+    return "да" if value else "нет"
 
 
 def _finish(
@@ -88,25 +99,27 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
     )
     collector.info(
         "storage",
-        f"session source={source}, db sessionid={'yes' if account.session_id else 'no'}, "
-        f"cookies file={'yes' if file_exists else 'no'}, device file={'yes' if device_exists else 'no'}",
+        f"источник сессии={_SESSION_SOURCE_LABEL.get(source, source)}, "
+        f"sessionid в БД={_yes_no(bool(account.session_id))}, "
+        f"файл cookies={_yes_no(file_exists)}, "
+        f"файл устройства={_yes_no(device_exists)}",
     )
 
     proxy_assigned = account.proxy_id is not None
     proxy_label: str | None = None
-    proxy_health = ProxyHealthStepOut(ok=False, error="No proxy assigned")
+    proxy_health = ProxyHealthStepOut(ok=False, error="Прокси не назначен")
     instagram_auth = InstagramAuthStepOut(
         ok=False,
         method="none",
-        error="Skipped — fix proxy first",
+        error="Пропущено — сначала исправьте прокси",
     )
 
     if not proxy_assigned:
-        collector.error("proxy", "No proxy assigned")
+        collector.error("proxy", "Прокси не назначен")
         return _finish(
             collector,
             overall_ok=False,
-            summary="No proxy assigned",
+            summary="Прокси не назначен",
             username=username,
             proxy_assigned=False,
             proxy_label=None,
@@ -115,19 +128,19 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
             instagram_auth=InstagramAuthStepOut(
                 ok=False,
                 method="none",
-                error="No proxy assigned — cannot reach Instagram",
+                error="Прокси не назначен — Instagram недоступен",
             ),
             now=now,
         )
 
     proxy = db.get(Proxy, account.proxy_id)
     if proxy is None:
-        collector.error("proxy", "Proxy record missing in database")
-        proxy_health = ProxyHealthStepOut(ok=False, error="Proxy record missing")
+        collector.error("proxy", "Запись прокси отсутствует в БД")
+        proxy_health = ProxyHealthStepOut(ok=False, error="Запись прокси отсутствует")
         return _finish(
             collector,
             overall_ok=False,
-            summary="Proxy record missing",
+            summary="Запись прокси отсутствует",
             username=username,
             proxy_assigned=True,
             proxy_label=None,
@@ -136,19 +149,19 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
             instagram_auth=InstagramAuthStepOut(
                 ok=False,
                 method="none",
-                error="Proxy record missing",
+                error="Запись прокси отсутствует",
             ),
             now=now,
         )
 
     proxy_label = proxy.label
-    collector.info("proxy", f"Using proxy {proxy_label}")
+    collector.info("proxy", f"Используется прокси {proxy_label}")
 
     is_healthy, snapshot, health_error = health_check_record(db, proxy)
     db.refresh(proxy)
 
     if not is_healthy or snapshot is None:
-        err = health_error or "Proxy health check failed"
+        err = health_error or "Проверка прокси не пройдена"
         collector.error("proxy_health", err)
         proxy_health = ProxyHealthStepOut(ok=False, error=err)
         return _finish(
@@ -163,16 +176,12 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
             instagram_auth=InstagramAuthStepOut(
                 ok=False,
                 method="none",
-                error="Proxy unhealthy — session check skipped",
+                error="Прокси неисправен — проверка сессии пропущена",
             ),
             now=now,
         )
 
-    geo_mismatch = bool(
-        proxy.country
-        and snapshot.country
-        and proxy.country.upper() != snapshot.country.upper()
-    )
+    geo_mismatch = countries_mismatch(proxy.country, snapshot.country)
     proxy_health = ProxyHealthStepOut(
         ok=True,
         ip=snapshot.ip,
@@ -182,17 +191,19 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
     )
     collector.info(
         "proxy_health",
-        f"IP={snapshot.ip or 'unknown'}, geo={snapshot.country or 'unknown'}, "
-        f"instagram_reachable={snapshot.instagram_reachable}",
+        f"IP={snapshot.ip or 'неизвестен'}, страна={snapshot.country or 'неизвестна'}, "
+        f"instagram_доступен={snapshot.instagram_reachable}",
     )
     if geo_mismatch:
+        adv = normalize_country_code(proxy.country) or proxy.country
+        act = normalize_country_code(snapshot.country) or snapshot.country
         collector.warn(
             "proxy_health",
-            f"Geo mismatch: advertised {proxy.country}, actual {snapshot.country}",
+            f"Несовпадение гео: указано {adv}, фактически {act}",
         )
 
     if health_error or not snapshot.instagram_reachable:
-        err = health_error or "Instagram unreachable through proxy"
+        err = health_error or "Instagram недоступен через прокси"
         collector.error("instagram_reach", err)
         return _finish(
             collector,
@@ -211,12 +222,12 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
             now=now,
         )
 
-    collector.info("fingerprint", "Loading device fingerprint")
+    collector.info("fingerprint", "Загрузка отпечатка устройства")
     fingerprint = ensure_fingerprint_and_proxy(
         username,
-        country=proxy.country or "US",
+        country=normalize_country_code(proxy.country) or proxy.country or "US",
     )
-    collector.info("session_probe", "Validating Instagram session")
+    collector.info("session_probe", "Проверка сессии Instagram")
     try:
         probe = probe_session_auth(
             username=username,
@@ -254,19 +265,19 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
     if probe.ok:
         collector.info(
             "session_probe",
-            f"Authenticated via {probe.method}"
-            + (f" as @{probe.ig_username}" if probe.ig_username else ""),
+            f"Авторизация через {probe.method}"
+            + (f" как @{probe.ig_username}" if probe.ig_username else ""),
         )
     elif probe.challenge:
-        collector.warn("session_probe", probe.error or "Challenge required")
+        collector.warn("session_probe", probe.error or "Требуется подтверждение")
     else:
-        collector.error("session_probe", probe.error or "Session validation failed")
+        collector.error("session_probe", probe.error or "Проверка сессии не пройдена")
 
     overall_ok = proxy_health.ok and proxy_health.instagram_reachable and probe.ok
     summary = (
-        "Ready for autoposting"
+        "Готов к автопубликации"
         if overall_ok
-        else (probe.error or health_error or "Connection check failed")
+        else (probe.error or health_error or "Проверка подключения не пройдена")
     )
     return _finish(
         collector,

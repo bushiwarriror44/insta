@@ -16,7 +16,7 @@ export function Login() {
     setBusy(true);
     const ok = await login(token.trim());
     setBusy(false);
-    if (!ok) push("Invalid token", "error");
+    if (!ok) push("Неверный токен", "error");
   }
 
   return (
@@ -29,18 +29,18 @@ export function Login() {
         </div>
         <h1 className="text-2xl font-semibold text-center">Reels Admin</h1>
         <p className="text-sm text-slate-400 text-center mt-1">
-          Enter the admin token to continue.
+          Введите токен администратора для входа.
         </p>
         <form className="mt-6 space-y-4" onSubmit={submit}>
           <div>
             <label className="label" htmlFor="token">
-              Admin token
+              Токен администратора
             </label>
             <input
               id="token"
               type="password"
               className="input"
-              placeholder="paste your ADMIN_TOKEN"
+              placeholder="вставьте ADMIN_TOKEN"
               value={token}
               onChange={(e) => setToken(e.target.value)}
               autoFocus
@@ -48,7 +48,7 @@ export function Login() {
           </div>
           <button type="submit" className="btn-primary w-full" disabled={busy}>
             <LogIn size={16} />
-            <span>{busy ? "Checking..." : "Sign in"}</span>
+            <span>{busy ? "Проверка..." : "Войти"}</span>
           </button>
         </form>
       </div>

@@ -6,21 +6,21 @@ import { StatusBadge } from "../StatusBadge";
 describe("StatusBadge", () => {
   it("renders the value text", () => {
     render(<StatusBadge value="queued" />);
-    expect(screen.getByText("queued")).toBeInTheDocument();
+    expect(screen.getByText("В очереди")).toBeInTheDocument();
   });
 
   it("applies the appropriate class for known statuses", () => {
     const { rerender } = render(<StatusBadge value="active" />);
-    expect(screen.getByText("active").className).toMatch(/emerald/);
+    expect(screen.getByText("Активен").className).toMatch(/emerald/);
 
     rerender(<StatusBadge value="dead" />);
-    expect(screen.getByText("dead").className).toMatch(/rose/);
+    expect(screen.getByText("Мёртвая").className).toMatch(/rose/);
 
     rerender(<StatusBadge value="running" />);
-    expect(screen.getByText("running").className).toMatch(/sky/);
+    expect(screen.getByText("В работе").className).toMatch(/sky/);
 
     rerender(<StatusBadge value="cooldown" />);
-    expect(screen.getByText("cooldown").className).toMatch(/orange/);
+    expect(screen.getByText("Пауза IG").className).toMatch(/orange/);
   });
 
   it("uses neutral fallback for unknown values", () => {
@@ -31,7 +31,7 @@ describe("StatusBadge", () => {
 
   it("normalizes case-insensitively", () => {
     render(<StatusBadge value="ACTIVE" />);
-    const badge = screen.getByText("ACTIVE");
+    const badge = screen.getByText("Активен");
     expect(badge.className).toMatch(/emerald/);
   });
 });

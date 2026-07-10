@@ -83,7 +83,7 @@ describe("Modal", () => {
         body
       </Modal>
     );
-    const xBtn = screen.getByRole("button", { name: /close/i });
+    const xBtn = screen.getByRole("button", { name: /закрыть/i });
     fireEvent.click(xBtn);
     expect(onClose).toHaveBeenCalledTimes(1);
   });

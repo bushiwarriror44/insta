@@ -39,11 +39,11 @@ describe("Layout", () => {
       login: vi.fn(),
     });
     renderAt("/accounts");
-    expect(screen.getByRole("link", { name: /dashboard/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /accounts/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /library/i })).toBeInTheDocument();
+    expect(screen.getByTestId("nav-dashboard")).toBeInTheDocument();
+    expect(screen.getByTestId("nav-accounts")).toBeInTheDocument();
+    expect(screen.getByTestId("nav-publishing")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /^upload$/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /activity/i })).toBeInTheDocument();
+    expect(screen.getByTestId("nav-activity")).toBeInTheDocument();
     expect(screen.getByText("ACC")).toBeInTheDocument();
   });
 
@@ -55,8 +55,8 @@ describe("Layout", () => {
       login: vi.fn(),
     });
     renderAt();
-    expect(screen.getByText(/open mode/i)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /logout/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/открытый режим/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /выйти/i })).not.toBeInTheDocument();
   });
 
   it("shows logout button only when authed", () => {
@@ -68,9 +68,9 @@ describe("Layout", () => {
       login: vi.fn(),
     });
     renderAt();
-    const logoutBtn = screen.getByRole("button", { name: /logout/i });
+    const logoutBtn = screen.getByRole("button", { name: /выйти/i });
     fireEvent.click(logoutBtn);
     expect(logout).toHaveBeenCalledTimes(1);
-    expect(screen.queryByText(/open mode/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/открытый режим/i)).not.toBeInTheDocument();
   });
 });

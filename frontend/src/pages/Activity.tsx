@@ -13,6 +13,28 @@ import type { DiagnosticRunOut, EventOut, JobOut } from "../api/types";
 const POLL_INTERVAL_MS = 7000;
 const JOB_LOG_POLL_MS = 3000;
 
+const POST_TYPE_LABELS: Record<string, string> = {
+  reel: "Reels",
+  feed_photo: "Фото в ленте",
+  feed_video: "Видео в ленте",
+};
+
+const JOB_STATUS_LABELS: Record<string, string> = {
+  queued: "в очереди",
+  running: "выполняется",
+  done: "завершена",
+  failed: "ошибка",
+  dead: "прервана",
+  cancelled: "отменена",
+};
+
+const EVENT_LEVEL_LABELS: Record<string, string> = {
+  info: "инфо",
+  warn: "предупреждение",
+  error: "ошибка",
+  critical: "критическая",
+};
+
 const JOB_STATUSES = ["", "queued", "running", "done", "failed", "dead", "cancelled"];
 const EVENT_LEVELS = ["", "info", "warn", "error", "critical"];
 
@@ -103,9 +125,9 @@ export function Activity() {
     <div className="space-y-6">
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-2xl font-semibold">Activity</h1>
+          <h1 className="text-2xl font-semibold">Активность</h1>
           <p className="text-sm text-slate-400 mt-1">
-            Live job queue and event log. Refreshes every {POLL_INTERVAL_MS / 1000}s.
+            Очередь задач и журнал событий в реальном времени. Обновление каждые {POLL_INTERVAL_MS / 1000} с.
           </p>
         </div>
         <button
@@ -113,19 +135,19 @@ export function Activity() {
           onClick={async () => {
             try {
               await reload();
-              push("Refreshed", "info");
+              push("Обновлено", "info");
             } catch (err) {
               push((err as Error).message, "error");
             }
           }}
         >
-          <RefreshCw size={16} /> Refresh now
+          <RefreshCw size={16} /> Обновить сейчас
         </button>
       </div>
 
       <Card
-        title="Jobs"
-        description={`${jobs.length} latest — click a row for diagnostic logs`}
+        title="Задачи"
+        description={`${jobs.length} последних — нажмите на строку для просмотра диагностических логов`}
         actions={
           <select
             className="input max-w-[140px] py-1.5 text-xs"
@@ -134,28 +156,28 @@ export function Activity() {
           >
             {JOB_STATUSES.map((s) => (
               <option key={s} value={s}>
-                {s ? s : "All statuses"}
+                {s ? (JOB_STATUS_LABELS[s] ?? s) : "Все статусы"}
               </option>
             ))}
           </select>
         }
       >
         {jobs.length === 0 ? (
-          <div className="text-sm text-slate-500">No jobs match the filter.</div>
+          <div className="text-sm text-slate-500">Нет задач по выбранному фильтру.</div>
         ) : (
           <div className="overflow-x-auto -mx-5">
             <table className="table-base">
               <thead>
                 <tr>
                   <th>ID</th>
-                  <th>Account</th>
-                  <th>Type</th>
-                  <th>Status</th>
-                  <th>Scheduled</th>
-                  <th>Next try</th>
-                  <th>Attempts</th>
-                  <th>Source</th>
-                  <th>Last error</th>
+                  <th>Аккаунт</th>
+                  <th>Тип</th>
+                  <th>Статус</th>
+                  <th>Запланировано</th>
+                  <th>Следующая попытка</th>
+                  <th>Попытки</th>
+                  <th>Источник</th>
+                  <th>Последняя ошибка</th>
                   <th></th>
                 </tr>
               </thead>
@@ -170,15 +192,15 @@ export function Activity() {
                     <td className="font-medium">
                       {j.account_username ? `@${j.account_username}` : `id:${j.account_id}`}
                     </td>
-                    <td className="text-xs text-slate-400">{j.post_type}</td>
+                    <td className="text-xs text-slate-400">{POST_TYPE_LABELS[j.post_type] ?? j.post_type}</td>
                     <td>
                       <StatusBadge value={j.status} />
                     </td>
                     <td className="text-xs text-slate-400">
-                      {new Date(j.scheduled_for).toLocaleString()}
+                      {new Date(j.scheduled_for).toLocaleString("ru-RU")}
                     </td>
                     <td className="text-xs text-slate-400">
-                      {j.next_attempt_at ? new Date(j.next_attempt_at).toLocaleString() : "—"}
+                      {j.next_attempt_at ? new Date(j.next_attempt_at).toLocaleString("ru-RU") : "—"}
                     </td>
                     <td className="tabular-nums text-slate-300">{j.attempts}</td>
                     <td className="text-xs text-slate-400 max-w-[200px] break-all">
@@ -197,13 +219,13 @@ export function Activity() {
                               setJobs((arr) =>
                                 arr.map((x) => (x.id === upd.id ? upd : x))
                               );
-                              push(`Job #${j.id} cancelled`, "info");
+                              push(`Задача #${j.id} отменена`, "info");
                             } catch (err) {
                               push((err as Error).message, "error");
                             }
                           }}
                         >
-                          <Ban size={14} /> Cancel
+                          <Ban size={14} /> Отменить
                         </button>
                       )}
                     </td>
@@ -216,8 +238,8 @@ export function Activity() {
       </Card>
 
       <Card
-        title="Events"
-        description={`${events.length} latest`}
+        title="События"
+        description={`${events.length} последних`}
         actions={
           <select
             className="input max-w-[140px] py-1.5 text-xs"
@@ -226,14 +248,14 @@ export function Activity() {
           >
             {EVENT_LEVELS.map((l) => (
               <option key={l} value={l}>
-                {l ? l : "All levels"}
+                {l ? (EVENT_LEVEL_LABELS[l] ?? l) : "Все уровни"}
               </option>
             ))}
           </select>
         }
       >
         {events.length === 0 ? (
-          <div className="text-sm text-slate-500">No events.</div>
+          <div className="text-sm text-slate-500">Событий нет.</div>
         ) : (
           <ul className="divide-y divide-slate-800">
             {events.map((ev) => (
@@ -246,7 +268,7 @@ export function Activity() {
                       <span className="text-slate-400 text-xs">@{ev.account_username}</span>
                     )}
                     <span className="ml-auto text-xs text-slate-500">
-                      {new Date(ev.created_at).toLocaleString()}
+                      {new Date(ev.created_at).toLocaleString("ru-RU")}
                     </span>
                   </div>
                   <div className="text-slate-300 mt-0.5 break-words">{ev.message}</div>
@@ -264,10 +286,10 @@ export function Activity() {
           setJobRuns([]);
           setSelectedRunId(null);
         }}
-        title={selectedJob ? `Job #${selectedJob.id} logs` : "Job logs"}
+        title={selectedJob ? `Логи задачи #${selectedJob.id}` : "Логи задачи"}
         footer={
           <button type="button" className="btn-ghost" onClick={() => setSelectedJob(null)}>
-            Close
+            Закрыть
           </button>
         }
       >
@@ -275,7 +297,7 @@ export function Activity() {
           <div className="space-y-4">
             <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3 text-sm space-y-1">
               <div>
-                Account:{" "}
+                Аккаунт:{" "}
                 <span className="font-medium">
                   {selectedJob.account_username
                     ? `@${selectedJob.account_username}`
@@ -283,7 +305,7 @@ export function Activity() {
                 </span>
               </div>
               <div className="text-slate-400">
-                {selectedJob.post_type} · {basename(selectedJob.source_video_path)} · attempts{" "}
+                {POST_TYPE_LABELS[selectedJob.post_type] ?? selectedJob.post_type} · {basename(selectedJob.source_video_path)} · попыток{" "}
                 {selectedJob.attempts}
               </div>
               <div className="flex items-center gap-2">
@@ -302,7 +324,7 @@ export function Activity() {
               >
                 {jobRuns.map((run, idx) => (
                   <option key={run.id} value={run.id}>
-                    Attempt {idx + 1} — {run.status}
+                    Попытка {idx + 1} — {JOB_STATUS_LABELS[run.status] ?? run.status}
                     {run.summary ? ` — ${run.summary}` : ""}
                   </option>
                 ))}
@@ -310,11 +332,11 @@ export function Activity() {
             ) : null}
 
             {logsLoading && activeLines.length === 0 ? (
-              <Loader label="Loading logs…" />
+              <Loader label="Загрузка логов…" />
             ) : (
               <DiagnosticLogPanel
                 lines={activeLines}
-                emptyLabel="No diagnostic logs for this job yet."
+                emptyLabel="Диагностические логи для этой задачи пока отсутствуют."
                 maxHeightClass="max-h-80"
               />
             )}

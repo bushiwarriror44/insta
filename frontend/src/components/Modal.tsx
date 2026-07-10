@@ -44,7 +44,7 @@ export function Modal({
           <button
             onClick={onClose}
             className="text-slate-400 hover:text-white"
-            aria-label="Close"
+            aria-label="Закрыть"
           >
             <X size={18} />
           </button>

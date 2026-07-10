@@ -69,9 +69,9 @@ describe("Activity page", () => {
   it("renders jobs and events tables", async () => {
     renderActivity();
     await screen.findByText("#42");
-    // @alice and "queued"/"challenge" can match in multiple sections (rows + select options).
+    // @alice and status badges can match in multiple sections (rows + select options).
     expect(screen.getAllByText("@alice").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("queued").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("В очереди").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("challenge")).toBeInTheDocument();
     expect(screen.getByText("code requested")).toBeInTheDocument();
   });
@@ -111,7 +111,7 @@ describe("Activity page", () => {
     renderActivity();
     await screen.findByText("#42");
 
-    const cancelBtn = screen.getByRole("button", { name: /^cancel$/i });
+    const cancelBtn = screen.getByRole("button", { name: /отменить/i });
     fireEvent.click(cancelBtn);
     await waitFor(() => expect(apiMock.jobs.cancel).toHaveBeenCalledWith(42));
   });
@@ -121,7 +121,7 @@ describe("Activity page", () => {
     renderActivity();
     await screen.findByText("#42");
     expect(
-      screen.queryByRole("button", { name: /^cancel$/i })
+      screen.queryByRole("button", { name: /отменить/i })
     ).not.toBeInTheDocument();
   });
 
@@ -158,7 +158,7 @@ describe("Activity page", () => {
     apiMock.jobs.list.mockResolvedValue([]);
     apiMock.events.list.mockResolvedValue([]);
     renderActivity();
-    await screen.findByText(/no jobs match the filter/i);
-    expect(screen.getByText(/no events\b/i)).toBeInTheDocument();
+    await screen.findByText(/нет задач по выбранному фильтру/i);
+    expect(screen.getByText(/событий нет/i)).toBeInTheDocument();
   });
 });

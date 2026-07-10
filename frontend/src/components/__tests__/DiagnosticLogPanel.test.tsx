@@ -22,7 +22,7 @@ describe("DiagnosticLogPanel", () => {
         ]}
       />
     );
-    expect(screen.getByText("proxy")).toBeInTheDocument();
+    expect(screen.getByText("Прокси")).toBeInTheDocument();
     expect(screen.getByText("Connection refused")).toBeInTheDocument();
   });
 });

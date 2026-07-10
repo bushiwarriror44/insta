@@ -56,6 +56,7 @@ from app.db import (
 )
 from app.diagnostics.collector import DiagnosticCollector
 from app.logging_setup import configure_logging, get_logger
+from app.geo.country_codes import countries_mismatch
 from app.proxies.pool import ProxyError, health_check_cached, proxy_risk_score
 from app.publisher.reels_publisher import (
     ActionCooldownError,
@@ -229,21 +230,21 @@ def _process_job(db: Session, job: PostJob) -> None:
     def _done(status: str, summary: str) -> None:
         diag.finish(status, summary)  # type: ignore[arg-type]
 
-    diag.info("start", f"Job #{job.id} attempt {job.attempts}")
+    diag.info("start", f"Задача #{job.id}, попытка {job.attempts}")
 
     account = db.get(Account, job.account_id)
     if account is None:
         job.status = PostJobStatus.dead
         job.last_error = "account missing"
         db.commit()
-        diag.error("account", "Account record missing")
+        diag.error("account", "Запись аккаунта отсутствует")
         _done("fail", "account missing")
         return
 
     log = log.bind(username=account.username)
     risk_profile = classify_account_risk(account)
     log = log.bind(risk_profile=risk_profile.name)
-    diag.info("account", f"@{account.username} status={account.status.value}")
+    diag.info("account", f"@{account.username} статус={account.status.value}")
 
     if account.status != AccountStatus.active:
         job.status = PostJobStatus.cancelled
@@ -251,7 +252,7 @@ def _process_job(db: Session, job: PostJob) -> None:
         job.finished_at = datetime.now(timezone.utc)
         db.commit()
         log.warning("worker.account_not_active", status=account.status.value)
-        diag.warn("account", f"Account not active: {account.status.value}")
+        diag.warn("account", f"Аккаунт неактивен: {account.status.value}")
         _done("fail", job.last_error)
         return
 
@@ -260,18 +261,18 @@ def _process_job(db: Session, job: PostJob) -> None:
         job.scheduled_for = datetime.now(timezone.utc) + timedelta(hours=2)
         db.commit()
         log.info("worker.daily_cap_reached_reschedule")
-        diag.info("cap", "Daily post cap reached — rescheduled +2h")
+        diag.info("cap", "Дневной лимит публикаций — перенос на +2 ч")
         _done("warn", "daily cap reached")
         return
 
     proxy = _account_proxy(db, account)
     if proxy is None:
-        diag.error("proxy", "No proxy assigned")
+        diag.error("proxy", "Прокси не назначен")
         _done("fail", "no proxy assigned")
         _fail_hard(db, job, account, "no proxy assigned")
         return
 
-    diag.info("proxy", f"Checking proxy {proxy.label}")
+    diag.info("proxy", f"Проверка прокси {proxy.label}")
     try:
         snapshot = health_check_cached(proxy.url)
     except ProxyError as exc:
@@ -288,7 +289,7 @@ def _process_job(db: Session, job: PostJob) -> None:
         if snapshot.ip:
             proxy.last_known_ip = snapshot.ip
         if snapshot.country:
-            if proxy.country and proxy.country.upper() != snapshot.country.upper():
+            if countries_mismatch(proxy.country, snapshot.country):
                 log.warning(
                     "worker.proxy_geo_mismatch",
                     advertised=proxy.country,
@@ -296,7 +297,7 @@ def _process_job(db: Session, job: PostJob) -> None:
                 )
                 diag.warn(
                     "proxy",
-                    f"Geo mismatch advertised={proxy.country} actual={snapshot.country}",
+                    f"Несовпадение гео: указано {proxy.country}, фактически {snapshot.country}",
                 )
             proxy.last_geo_country = snapshot.country
         proxy.is_healthy = True
@@ -311,11 +312,11 @@ def _process_job(db: Session, job: PostJob) -> None:
                     message=f"Proxy {proxy.label} risk score={risk:.2f}",
                 )
             )
-            diag.warn("proxy", f"Proxy risk score={risk:.2f}")
+            diag.warn("proxy", f"Риск прокси={risk:.2f}")
         db.commit()
         diag.info(
             "proxy",
-            f"Proxy healthy ip={snapshot.ip or '?'} instagram_ok={snapshot.instagram_reachable}",
+            f"Прокси исправен ip={snapshot.ip or '?'} instagram_ok={snapshot.instagram_reachable}",
         )
 
     fingerprint = ensure_fingerprint_and_proxy(account.username, country=proxy.country or "US")
@@ -325,7 +326,7 @@ def _process_job(db: Session, job: PostJob) -> None:
     if rotated:
         account.last_session_rotation_at = datetime.now(timezone.utc)
         db.commit()
-        diag.info("session", "Rotated client session UUIDs")
+        diag.info("session", "Обновлены UUID клиентской сессии")
     elif account.last_session_rotation_at is None:
         # First time we touch this account post-upgrade — stamp now so the
         # 3–7 day clock starts ticking from a known origin.
@@ -334,13 +335,13 @@ def _process_job(db: Session, job: PostJob) -> None:
 
     src = Path(job.source_video_path)
     if not src.exists():
-        diag.error("media", f"Source missing: {src}")
+        diag.error("media", f"Исходный файл отсутствует: {src}")
         _done("fail", f"source missing: {src}")
         _fail_hard(db, job, account, f"source missing: {src}")
         return
 
     post_type = _job_post_type(job)
-    diag.info("media", f"Post type={post_type} source={src.name}")
+    diag.info("media", f"Тип публикации={post_type} файл={src.name}")
     if post_type == PostType.reel.value:
         out_path = settings.video_out_dir / f"{account.username}_{job.id}_{int(time.time())}.mp4"
         try:
@@ -355,7 +356,7 @@ def _process_job(db: Session, job: PostJob) -> None:
             return
     else:
         out_path = src
-        diag.info("uniquify", "Skipped (not a reel)")
+        diag.info("uniquify", "Пропущено (не reel)")
 
     caption = render_caption(
         account_username=account.username,
@@ -365,7 +366,7 @@ def _process_job(db: Session, job: PostJob) -> None:
         timezone=account.timezone,
         anti_repeat=True,
     )
-    diag.info("caption", f"Caption ready ({len(caption)} chars)")
+    diag.info("caption", f"Подпись готова ({len(caption)} симв.)")
 
     try:
         common = dict(
@@ -403,7 +404,7 @@ def _process_job(db: Session, job: PostJob) -> None:
             cooldown_hours=cooldown_hours,
             cooldown_until=cooldown_until.isoformat(),
         )
-        diag.warn("publish", f"Action cooldown {cooldown_hours}h: {exc}")
+        diag.warn("publish", f"Пауза действий {cooldown_hours} ч: {exc}")
         db.add(
             Event(
                 account_id=account.id,
@@ -455,7 +456,7 @@ def _process_job(db: Session, job: PostJob) -> None:
         return
     except Exception as exc:  # pragma: no cover - defensive
         log.exception("worker.unexpected")
-        diag.error("publish", f"unexpected: {exc}")
+        diag.error("publish", f"неожиданная ошибка: {exc}")
         _fail_temporary(db, job, account, f"unexpected: {exc}")
         _done("fail", f"unexpected: {exc}")
         return
@@ -478,7 +479,7 @@ def _process_job(db: Session, job: PostJob) -> None:
     job.last_error = None
     db.commit()
     log.info("worker.job_done", media_id=result.media_id)
-    diag.info("done", f"Published media_id={result.media_id}")
+    diag.info("done", f"Опубликовано media_id={result.media_id}")
     _done("ok", f"Published media_id={result.media_id}")
 
 

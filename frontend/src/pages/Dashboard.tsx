@@ -18,7 +18,7 @@ import type { DashboardSummary } from "../api/types";
 const POLL_INTERVAL_MS = 8000;
 
 function formatDate(value: string) {
-  return new Date(value).toLocaleString();
+  return new Date(value).toLocaleString("ru-RU");
 }
 
 export function Dashboard() {
@@ -54,44 +54,44 @@ export function Dashboard() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">Dashboard</h1>
-        <p className="text-sm text-slate-400 mt-1">Live snapshot of accounts and queue.</p>
+        <h1 className="text-2xl font-semibold">Панель</h1>
+        <p className="text-sm text-slate-400 mt-1">Текущее состояние аккаунтов и очереди.</p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
-          label="Active accounts"
+          label="Активные аккаунты"
           value={`${data.accounts_active} / ${data.accounts_total}`}
           icon={Users}
           tone="success"
-          hint={data.accounts_blocked ? `${data.accounts_blocked} blocked` : "no blocks"}
+          hint={data.accounts_blocked ? `${data.accounts_blocked} заблокировано` : "блокировок нет"}
         />
         <StatCard
-          label="Healthy proxies"
+          label="Исправные прокси"
           value={`${data.proxies_healthy} / ${data.proxies_total}`}
           icon={Server}
           tone={data.proxies_total === 0 ? "warn" : "info"}
         />
         <StatCard
-          label="Queued / Running"
+          label="В очереди / В работе"
           value={`${data.jobs_queued} · ${data.jobs_running}`}
           icon={ActivityIcon}
           tone="info"
-          hint={`done today: ${data.jobs_done_today}`}
+          hint={`сегодня готово: ${data.jobs_done_today}`}
         />
         <StatCard
-          label="Dead jobs (total)"
+          label="Мёртвые задачи (всего)"
           value={data.jobs_dead_total}
           icon={data.jobs_dead_total ? AlertTriangle : CheckCircle2}
           tone={data.jobs_dead_total ? "danger" : "success"}
-          hint={`risk 24h: ${data.risk_signals_24h} · quarantined: ${data.quarantined_accounts}`}
+          hint={`риск 24ч: ${data.risk_signals_24h} · карантин: ${data.quarantined_accounts}`}
         />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card title="Today by account" className="lg:col-span-1">
+        <Card title="Сегодня по аккаунтам" className="lg:col-span-1">
           {data.daily_stats.length === 0 ? (
-            <div className="text-sm text-slate-500">No activity today yet.</div>
+            <div className="text-sm text-slate-500">Сегодня активности пока нет.</div>
           ) : (
             <ul className="divide-y divide-slate-800">
               {data.daily_stats.map((row) => (
@@ -101,9 +101,9 @@ export function Dashboard() {
                 >
                   <span className="font-medium">@{row.username}</span>
                   <span className="text-slate-400">
-                    posts <span className="text-emerald-300 tabular-nums">{row.posts_count}</span>
+                    посты <span className="text-emerald-300 tabular-nums">{row.posts_count}</span>
                     {"  ·  "}
-                    fails{" "}
+                    сбои{" "}
                     <span
                       className={
                         row.failures_count
@@ -120,9 +120,9 @@ export function Dashboard() {
           )}
         </Card>
 
-        <Card title="Recent events" className="lg:col-span-2">
+        <Card title="Последние события" className="lg:col-span-2">
           {data.recent_events.length === 0 ? (
-            <div className="text-sm text-slate-500">No events recorded yet.</div>
+            <div className="text-sm text-slate-500">Событий пока нет.</div>
           ) : (
             <ul className="divide-y divide-slate-800">
               {data.recent_events.map((ev) => (

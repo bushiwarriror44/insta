@@ -6,9 +6,16 @@ import type { AccountOut, PostType, VideoOut } from "../api/types";
 
 const POST_TYPES: Array<{ value: PostType; label: string; media: "image" | "video" }> = [
   { value: "reel", label: "Reels", media: "video" },
-  { value: "feed_photo", label: "Feed photo", media: "image" },
-  { value: "feed_video", label: "Feed video", media: "video" },
+  { value: "feed_photo", label: "Фото в ленте", media: "image" },
+  { value: "feed_video", label: "Видео в ленте", media: "video" },
 ];
+
+const ACCOUNT_STATUS_LABELS: Record<string, string> = {
+  active: "активен",
+  inactive: "неактивен",
+  banned: "заблокирован",
+  error: "ошибка",
+};
 
 interface Props {
   item: VideoOut | null;
@@ -71,7 +78,7 @@ export function MediaPreviewPanel({
   if (!item) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[20rem] text-center text-slate-500 text-sm px-4">
-        Select a video or photo from the library to preview and publish.
+        Выберите видео или фото из библиотеки для просмотра и публикации.
       </div>
     );
   }
@@ -96,7 +103,7 @@ export function MediaPreviewPanel({
             className="max-h-72 rounded-lg object-contain"
           />
         ) : (
-          <div className="text-slate-500 text-sm py-12">Preview unavailable</div>
+          <div className="text-slate-500 text-sm py-12">Предпросмотр недоступен</div>
         )}
       </div>
 
@@ -105,7 +112,7 @@ export function MediaPreviewPanel({
         <div className="text-xs text-slate-500 flex flex-wrap gap-x-3 gap-y-1">
           <span>{formatBytes(item.size_bytes)}</span>
           {item.duration_sec ? <span>{formatDuration(item.duration_sec)}</span> : null}
-          <span>{new Date(item.modified_at).toLocaleString()}</span>
+          <span>{new Date(item.modified_at).toLocaleString("ru-RU")}</span>
         </div>
       </div>
 
@@ -117,7 +124,7 @@ export function MediaPreviewPanel({
         }}
       >
         <div>
-          <label className="label">Account</label>
+          <label className="label">Аккаунт</label>
           <select
             className="input"
             value={username}
@@ -125,13 +132,13 @@ export function MediaPreviewPanel({
           >
             {accounts.map((a) => (
               <option key={a.id} value={a.username}>
-                @{a.username} — {a.status}
+                @{a.username} — {ACCOUNT_STATUS_LABELS[a.status] ?? a.status}
               </option>
             ))}
           </select>
         </div>
         <div>
-          <label className="label">Post type</label>
+          <label className="label">Тип публикации</label>
           <select
             className="input"
             value={postType}
@@ -145,7 +152,7 @@ export function MediaPreviewPanel({
           </select>
         </div>
         <div>
-          <label className="label">Schedule for (optional)</label>
+          <label className="label">Запланировать на (необязательно)</label>
           <div className="relative">
             <input
               type="datetime-local"
@@ -155,15 +162,15 @@ export function MediaPreviewPanel({
             />
             <Calendar size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
           </div>
-          <div className="text-xs text-slate-500 mt-1">Leave empty to publish ASAP.</div>
+          <div className="text-xs text-slate-500 mt-1">Оставьте пустым для немедленной публикации.</div>
         </div>
         <div>
-          <label className="label">Caption</label>
+          <label className="label">Подпись</label>
           <textarea
             className="input min-h-[72px]"
             value={caption}
             onChange={(e) => onCaptionChange(e.target.value)}
-            placeholder="Optional caption. Reels support {hashtags}, {emoji}."
+            placeholder="Подпись (необязательно). Для Reels поддерживаются {hashtags}, {emoji}."
           />
         </div>
         <div className="flex gap-2">
@@ -172,7 +179,7 @@ export function MediaPreviewPanel({
             className="btn-ghost text-rose-300 shrink-0"
             onClick={onDelete}
           >
-            <Trash2 size={16} /> Delete
+            <Trash2 size={16} /> Удалить
           </button>
           <button
             type="submit"
@@ -180,7 +187,7 @@ export function MediaPreviewPanel({
             disabled={saving || accounts.length === 0}
           >
             <Send size={16} />
-            {saving ? "Publishing…" : whenLocal ? "Schedule" : "Publish now"}
+            {saving ? "Публикация…" : whenLocal ? "Запланировать" : "Опубликовать сейчас"}
           </button>
         </div>
       </form>
