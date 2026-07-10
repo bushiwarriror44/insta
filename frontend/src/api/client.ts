@@ -9,6 +9,7 @@ import type {
   DiagnosticRunOut,
   EnqueueIn,
   EventOut,
+  FirstLoginOut,
   Health,
   JobOut,
   PublicationOut,
@@ -152,6 +153,11 @@ export const api = {
     testConnection: (username: string) =>
       request<AccountConnectionTestOut>(
         `/api/accounts/${encodeURIComponent(username)}/test-connection`,
+        { method: "POST" }
+      ),
+    firstLogin: (username: string) =>
+      request<FirstLoginOut>(
+        `/api/accounts/${encodeURIComponent(username)}/first-login`,
         { method: "POST" }
       ),
   },

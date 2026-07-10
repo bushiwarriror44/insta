@@ -139,6 +139,7 @@ export interface InstagramAuthStepOut {
   method: "sessionid" | "session_file" | "none";
   ig_username?: string | null;
   error?: string | null;
+  error_code?: "session_missing" | "session_expired" | "challenge_required" | null;
   challenge: boolean;
 }
 
@@ -151,7 +152,7 @@ export interface DiagnosticLogLine {
 
 export interface DiagnosticRunOut {
   id: number;
-  kind: "connection_test" | "publish_job";
+  kind: "connection_test" | "publish_job" | "first_login";
   account_id: number;
   account_username: string | null;
   job_id: number | null;
@@ -172,6 +173,16 @@ export interface AccountConnectionTestOut {
   overall_ok: boolean;
   checked_at: string;
   run_id: number;
+  logs: DiagnosticLogLine[];
+}
+
+export interface FirstLoginOut {
+  run_id: number;
+  ok: boolean;
+  challenge: boolean;
+  session_imported: boolean;
+  connection_test?: AccountConnectionTestOut | null;
+  error?: string | null;
   logs: DiagnosticLogLine[];
 }
 

@@ -217,7 +217,7 @@ def test_first_login_happy_path(monkeypatch, app_env):
         timezone_id="UTC",
         headless=True,
     )
-    assert ok is True
+    assert ok.ok is True
     storage = app_env.tmp_path / "playwright" / "alice" / "state.json"
     assert storage.exists()
     type_calls = [e for e in page.events if e[0] == "type"]
@@ -240,7 +240,7 @@ def test_first_login_skips_form_when_already_logged_in(monkeypatch, app_env):
         timezone_id="UTC",
         headless=True,
     )
-    assert ok is True
+    assert ok.ok is True
     type_calls = [e for e in page.events if e[0] == "type"]
     assert type_calls == []
 
@@ -258,7 +258,8 @@ def test_first_login_detects_challenge(monkeypatch, app_env):
         timezone_id="UTC",
         headless=True,
     )
-    assert ok is False
+    assert ok.ok is False
+    assert ok.challenge is True
 
 
 def test_first_login_requires_proxy_before_browser(monkeypatch, app_env):
@@ -274,7 +275,7 @@ def test_first_login_requires_proxy_before_browser(monkeypatch, app_env):
         timezone_id="UTC",
         headless=True,
     )
-    assert ok is False
+    assert ok.ok is False
     assert pw.chromium.launched is False
 
 

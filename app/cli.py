@@ -301,8 +301,9 @@ def cmd_first_login(username: str) -> None:
         timezone_id=(proxy.timezone or "UTC"),
         user_agent=None,
         fingerprint=fp,
+        totp_seed=account.totp_seed,
     )
-    if success:
+    if success.ok:
         console.print(f"[green]First login flow completed for {username}[/green]")
     else:
         console.print(f"[yellow]First login finished with warnings for {username}. Check logs.[/yellow]")

@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.accounts.connection_test import run_account_connection_test
+from app.accounts.first_login_service import run_account_first_login
 from app.accounts.session_export import export_sessionid
 from app.accounts.session_manager import (
     clear_session_file,
@@ -23,6 +24,7 @@ from app.api.schemas import (
     AccountProxyUpdate,
     AccountSessionOut,
     AccountSessionUpdate,
+    FirstLoginOut,
 )
 from app.db import Account, AccountStatus, DailyStat, Proxy
 
@@ -239,3 +241,18 @@ def test_account_connection(username: str, db: Session = Depends(get_db)) -> Acc
     if account is None:
         raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
     return run_account_connection_test(account, db)
+
+
+@router.post("/{username}/first-login", response_model=FirstLoginOut)
+def account_first_login(username: str, db: Session = Depends(get_db)) -> FirstLoginOut:
+    account = db.scalar(select(Account).where(Account.username == username))
+    if account is None:
+        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+    from app.behavior.warmup_playwright import playwright_browsers_available
+
+    if not playwright_browsers_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Chromium не установлен — выполните install-playwright на сервере",
+        )
+    return run_account_first_login(account, db)

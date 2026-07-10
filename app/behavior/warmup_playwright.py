@@ -35,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import random
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -42,6 +43,13 @@ from app.config import settings
 from app.logging_setup import get_logger
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class FirstLoginResult:
+    ok: bool
+    challenge: bool = False
+    error: str | None = None
 
 
 def _storage_dir(username: str) -> Path:
@@ -195,9 +203,63 @@ async def _human_scroll(page, total_scrolls: int = 5) -> None:
         await _human_wait(1.0, 3.0)
 
 
-# ---------------------------------------------------------------------------
-# Main flow.
-# ---------------------------------------------------------------------------
+async def _try_submit_totp(page, totp_seed: str | None) -> bool:
+    """Fill Instagram 2FA code when a TOTP seed is configured."""
+    if not (totp_seed or "").strip():
+        return False
+    selectors = [
+        'input[name="verificationCode"]',
+        'input[aria-label*="code" i]',
+        'input[autocomplete="one-time-code"]',
+    ]
+    for sel in selectors:
+        try:
+            loc = page.locator(sel).first
+            if await loc.count() == 0:
+                continue
+            try:
+                import pyotp
+
+                code = pyotp.TOTP(totp_seed.strip().replace(" ", "")).now()
+            except Exception as exc:
+                logger.warning("playwright.totp_failed", error=str(exc))
+                return False
+            await _human_type(page, sel, code, click_first=True)
+            await _human_wait(0.5, 1.2)
+            confirm = page.locator('button[type="submit"]').first
+            if await confirm.count() > 0:
+                await confirm.click()
+            await _human_wait(4.0, 7.0)
+            return True
+        except Exception:
+            continue
+    return False
+
+
+async def _detect_challenge(page) -> bool:
+    challenge_selectors = [
+        "text=Suspicious Login",
+        "text=We Detected An Unusual Login Attempt",
+        "text=Help us confirm",
+        'input[name="security_code"]',
+    ]
+    for sel in challenge_selectors:
+        try:
+            if await page.locator(sel).count() > 0:
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def playwright_browsers_available() -> bool:
+    root = Path(settings.playwright_browsers_path if hasattr(settings, "playwright_browsers_path") else "/ms-playwright")
+    import os
+    root = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", str(root)))
+    try:
+        return root.exists() and any(root.iterdir())
+    except OSError:
+        return False
 
 
 async def _async_first_login(
@@ -209,16 +271,17 @@ async def _async_first_login(
     user_agent: str,
     viewport: dict[str, int],
     headless: bool,
-) -> bool:
+    totp_seed: Optional[str] = None,
+) -> FirstLoginResult:
     if not (proxy_url or "").strip():
         logger.error("playwright.proxy_required", username=username)
-        return False
+        return FirstLoginResult(ok=False, error="proxy required")
 
     try:
         from playwright.async_api import async_playwright
     except ImportError as exc:  # pragma: no cover
         logger.error("playwright.not_installed", error=str(exc))
-        return False
+        return FirstLoginResult(ok=False, error="playwright not installed")
 
     # `playwright-stealth` 2.x exposes a different API than 1.x. Try both.
     stealth_apply = None
@@ -281,7 +344,7 @@ async def _async_first_login(
             logger.error("playwright.goto_failed", error=str(exc))
             await context.close()
             await browser.close()
-            return False
+            return FirstLoginResult(ok=False, error=str(exc))
 
         await _human_wait(2.0, 4.0)
         await _accept_cookie_banner(page)
@@ -307,26 +370,18 @@ async def _async_first_login(
                 logger.error("playwright.login_form_failed", username=username, error=str(exc))
                 await context.close()
                 await browser.close()
-                return False
+                return FirstLoginResult(ok=False, error=str(exc))
 
-            await _human_wait(5.0, 9.0)
+            await _human_wait(3.0, 6.0)
+            await _try_submit_totp(page, totp_seed)
+            await _human_wait(3.0, 6.0)
 
-            challenge_selectors = [
-                "text=Suspicious Login",
-                "text=We Detected An Unusual Login Attempt",
-                "text=Help us confirm",
-                'input[name="security_code"]',
-            ]
-            for sel in challenge_selectors:
-                try:
-                    if await page.locator(sel).count() > 0:
-                        logger.warning("playwright.challenge_detected", username=username, selector=sel)
-                        await context.storage_state(path=str(state_file))
-                        await context.close()
-                        await browser.close()
-                        return False
-                except Exception:
-                    pass
+            if await _detect_challenge(page):
+                logger.warning("playwright.challenge_detected", username=username)
+                await context.storage_state(path=str(state_file))
+                await context.close()
+                await browser.close()
+                return FirstLoginResult(ok=False, challenge=True, error="challenge required")
 
         try:
             await page.goto("https://www.instagram.com/explore/", wait_until="domcontentloaded", timeout=30000)
@@ -340,7 +395,7 @@ async def _async_first_login(
         await browser.close()
 
     logger.info("playwright.first_login_done", username=username, storage=str(state_file))
-    return True
+    return FirstLoginResult(ok=True)
 
 
 def first_login(
@@ -353,7 +408,8 @@ def first_login(
     viewport: Optional[dict[str, int]] = None,
     headless: Optional[bool] = None,
     fingerprint=None,
-) -> bool:
+    totp_seed: Optional[str] = None,
+) -> FirstLoginResult:
     """Synchronous wrapper around the async stealth login.
 
     If ``fingerprint`` (a :class:`~app.accounts.device_factory.DeviceFingerprint`)
@@ -364,7 +420,7 @@ def first_login(
     proxy_url = (proxy_url or "").strip()
     if not proxy_url:
         logger.error("playwright.proxy_required", username=username)
-        return False
+        return FirstLoginResult(ok=False, error="proxy required")
 
     device_settings = None
     fp_locale = None
@@ -396,5 +452,6 @@ def first_login(
             user_agent=user_agent,
             viewport=viewport,
             headless=headless,
+            totp_seed=totp_seed,
         )
     )

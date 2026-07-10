@@ -260,6 +260,7 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
         method=probe.method,
         ig_username=probe.ig_username,
         error=probe.error,
+        error_code=probe.error_code,
         challenge=probe.challenge,
     )
     if probe.ok:

@@ -57,6 +57,7 @@ class EventLevel(str, enum.Enum):
 class DiagnosticRunKind(str, enum.Enum):
     connection_test = "connection_test"
     publish_job = "publish_job"
+    first_login = "first_login"
 
 
 class DiagnosticRunStatus(str, enum.Enum):

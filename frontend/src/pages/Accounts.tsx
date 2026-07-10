@@ -22,6 +22,7 @@ import { CountryFlag, countryCodeToFlag } from "../components/CountryFlag";
 import { DiagnosticLogPanel } from "../components/DiagnosticLogPanel";
 import { Loader } from "../components/Loader";
 import { Modal } from "../components/Modal";
+import { isSessionMissing, SessionSetupModal } from "../components/SessionSetupModal";
 import { StatusBadge } from "../components/StatusBadge";
 import { useToast } from "../context/ToastContext";
 import type {
@@ -50,16 +51,6 @@ function sessionSourceLabel(source: AccountOut["session_source"]): string {
   if (source === "database") return "sessionid в БД";
   if (source === "session_file") return "Файл cookies";
   return "Нет сессии";
-}
-
-function isMissingSessionError(error: string | null | undefined): boolean {
-  if (!error) return false;
-  const lower = error.toLowerCase();
-  return (
-    lower.includes("session_id") ||
-    error.includes("файла сессии") ||
-    error.includes("нет файла сессии")
-  );
 }
 
 type StepVisual = "pending" | "running" | "ok" | "warn" | "fail";
@@ -104,6 +95,7 @@ export function Accounts() {
   const [editingProxy, setEditingProxy] = useState<ProxyOut | null>(null);
   const [assigningAccount, setAssigningAccount] = useState<AccountOut | null>(null);
   const [sessionAccount, setSessionAccount] = useState<AccountOut | null>(null);
+  const [sessionSetupAccount, setSessionSetupAccount] = useState<AccountOut | null>(null);
   const [connectionAccount, setConnectionAccount] = useState<AccountOut | null>(null);
   const [testingAll, setTestingAll] = useState(false);
   const [testAllProgress, setTestAllProgress] = useState({ done: 0, total: 0, ok: 0 });
@@ -160,6 +152,10 @@ export function Accounts() {
     setSessionAccount(null);
     await reload();
     push("Сессия сохранена", "success");
+  };
+  const onSessionSetupCompleted = async () => {
+    setSessionSetupAccount(null);
+    await reload();
   };
 
   const testAllConnections = useCallback(async () => {
@@ -641,11 +637,9 @@ export function Accounts() {
             setConnectionAccount(null);
           }
         }}
-        onOpenSession={() => {
-          if (connectionAccount) {
-            setSessionAccount(connectionAccount);
-            setConnectionAccount(null);
-          }
+        onOpenSessionSetup={(acc) => {
+          setConnectionAccount(null);
+          setSessionSetupAccount(acc);
         }}
         onResult={(account, result) => {
           if (result.proxy_label) {
@@ -682,6 +676,12 @@ export function Accounts() {
             )
           );
         }}
+      />
+      <SessionSetupModal
+        account={sessionSetupAccount}
+        open={sessionSetupAccount !== null}
+        onClose={() => setSessionSetupAccount(null)}
+        onCompleted={onSessionSetupCompleted}
       />
       <SessionModal
         account={sessionAccount}
@@ -957,14 +957,14 @@ function ConnectionModal({
   open,
   onClose,
   onOpenProxy,
-  onOpenSession,
+  onOpenSessionSetup,
   onResult,
 }: {
   account: AccountOut | null;
   open: boolean;
   onClose: () => void;
   onOpenProxy: () => void;
-  onOpenSession: () => void;
+  onOpenSessionSetup: (account: AccountOut) => void;
   onResult?: (account: AccountOut, result: AccountConnectionTestOut) => void;
 }) {
   const { push } = useToast();
@@ -1006,6 +1006,10 @@ function ConnectionModal({
       const data = await api.accounts.testConnection(account.username);
       setResult(data);
       onResult?.(account, data);
+      if (!data.instagram_auth.ok && isSessionMissing(data.instagram_auth)) {
+        onOpenSessionSetup(account);
+        return;
+      }
       push(
         data.overall_ok
           ? `@${account.username}: готов к автопостингу`
@@ -1058,8 +1062,7 @@ function ConnectionModal({
       : "pending";
 
   const missingSession =
-    result?.instagram_auth.error != null &&
-    isMissingSessionError(result.instagram_auth.error);
+    result?.instagram_auth != null && isSessionMissing(result.instagram_auth);
 
   return (
     <Modal
@@ -1246,9 +1249,9 @@ function ConnectionModal({
                 ? "btn-primary text-sm shadow-lg shadow-brand-500/20 ring-2 ring-brand-400/60"
                 : "btn-ghost text-xs"
             }
-            onClick={onOpenSession}
+            onClick={() => account && onOpenSessionSetup(account)}
           >
-            <KeyRound size={14} /> Импортировать сессию
+            <KeyRound size={14} /> Настроить сессию
           </button>
         </div>
       </div>

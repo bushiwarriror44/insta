@@ -363,6 +363,7 @@ class ProbeSessionResult:
     method: Literal["sessionid", "session_file", "none"]
     ig_username: Optional[str] = None
     error: Optional[str] = None
+    error_code: Optional[Literal["session_missing", "session_expired", "challenge_required"]] = None
     challenge: bool = False
 
 
@@ -399,6 +400,7 @@ def probe_session_auth(
                 ok=False,
                 method="sessionid",
                 error="session_id недействителен или истёк",
+                error_code="session_expired",
             )
         except HardCheckpoint as exc:
             return ProbeSessionResult(
@@ -406,6 +408,7 @@ def probe_session_auth(
                 method="sessionid",
                 challenge=True,
                 error=str(exc),
+                error_code="challenge_required",
             )
         except AuthenticationError as exc:
             return ProbeSessionResult(ok=False, method="sessionid", error=str(exc))
@@ -415,6 +418,7 @@ def probe_session_auth(
                 method="sessionid",
                 challenge=True,
                 error=str(exc),
+                error_code="challenge_required",
             )
         except PleaseWaitFewMinutes as exc:
             return ProbeSessionResult(ok=False, method="sessionid", error=str(exc))
@@ -427,6 +431,7 @@ def probe_session_auth(
                 "Нет session_id в БД и нет файла сессии на диске. "
                 "Импортируйте sessionid через панель «Сессия»."
             ),
+            error_code="session_missing",
         )
 
     client = _fresh_client()
@@ -443,6 +448,7 @@ def probe_session_auth(
             ok=False,
             method="session_file",
             error="Файл сессии устарел или недействителен",
+            error_code="session_expired",
         )
     except HardCheckpoint as exc:
         return ProbeSessionResult(
@@ -450,6 +456,7 @@ def probe_session_auth(
             method="session_file",
             challenge=True,
             error=str(exc),
+            error_code="challenge_required",
         )
     except ChallengeRequired as exc:
         return ProbeSessionResult(
@@ -457,6 +464,7 @@ def probe_session_auth(
             method="session_file",
             challenge=True,
             error=str(exc),
+            error_code="challenge_required",
         )
     except PleaseWaitFewMinutes as exc:
         return ProbeSessionResult(ok=False, method="session_file", error=str(exc))

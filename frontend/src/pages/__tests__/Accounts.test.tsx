@@ -14,6 +14,7 @@ const apiMock = vi.hoisted(() => ({
     updateSession: vi.fn(),
     getSession: vi.fn(),
     testConnection: vi.fn(),
+    firstLogin: vi.fn(),
     pause: vi.fn(),
     resume: vi.fn(),
   },
@@ -319,6 +320,58 @@ describe("Accounts page", () => {
     );
     await waitFor(() =>
       expect(within(modal).getByText(/готов к автопостингу/i)).toBeInTheDocument()
+    );
+  });
+
+  it("opens session setup modal when connection test reports missing session", async () => {
+    apiMock.accounts.testConnection.mockResolvedValue({
+      username: "alice",
+      proxy_assigned: true,
+      proxy_label: "res-de-1",
+      proxy_health: {
+        ok: true,
+        ip: "203.0.113.1",
+        geo_country: "DE",
+        instagram_reachable: true,
+        geo_mismatch: false,
+      },
+      session_storage: {
+        has_session_id: false,
+        session_file_exists: false,
+        device_file_exists: true,
+        session_source: "none",
+      },
+      instagram_auth: {
+        ok: false,
+        method: "none",
+        error: "Нет session_id в БД",
+        error_code: "session_missing",
+        challenge: false,
+      },
+      overall_ok: false,
+      checked_at: "2026-06-29T10:00:00Z",
+      run_id: 2,
+      logs: [],
+    });
+
+    renderAccounts();
+    await screen.findByText("@alice");
+    fireEvent.click(
+      screen.getByRole("button", { name: /^подключение для alice$/i })
+    );
+    const connHeading = await screen.findByRole("heading", {
+      name: /подключение · @alice/i,
+    });
+    const connModal = connHeading.closest("div.card") as HTMLElement;
+    fireEvent.click(within(connModal).getByRole("button", { name: /запустить проверку/i }));
+
+    await waitFor(() =>
+      expect(apiMock.accounts.testConnection).toHaveBeenCalledWith("alice")
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: /настройка сессии · @alice/i })
+      ).toBeInTheDocument()
     );
   });
 

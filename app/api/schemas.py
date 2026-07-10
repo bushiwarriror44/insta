@@ -155,6 +155,9 @@ class InstagramAuthStepOut(BaseModel):
     method: Literal["sessionid", "session_file", "none"]
     ig_username: Optional[str] = None
     error: Optional[str] = None
+    error_code: Optional[
+        Literal["session_missing", "session_expired", "challenge_required"]
+    ] = None
     challenge: bool = False
 
 
@@ -167,7 +170,7 @@ class DiagnosticLogLineOut(BaseModel):
 
 class DiagnosticRunOut(BaseModel):
     id: int
-    kind: Literal["connection_test", "publish_job"]
+    kind: Literal["connection_test", "publish_job", "first_login"]
     account_id: int
     account_username: Optional[str] = None
     job_id: Optional[int] = None
@@ -188,6 +191,16 @@ class AccountConnectionTestOut(BaseModel):
     overall_ok: bool
     checked_at: datetime
     run_id: int
+    logs: list[DiagnosticLogLineOut] = Field(default_factory=list)
+
+
+class FirstLoginOut(BaseModel):
+    run_id: int
+    ok: bool
+    challenge: bool = False
+    session_imported: bool = False
+    connection_test: Optional[AccountConnectionTestOut] = None
+    error: Optional[str] = None
     logs: list[DiagnosticLogLineOut] = Field(default_factory=list)
 
 
