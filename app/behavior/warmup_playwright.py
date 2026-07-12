@@ -115,6 +115,20 @@ def _viewport_from_resolution(resolution: str | None) -> dict[str, int]:
     return {"width": 412, "height": 915}
 
 
+def _desktop_ua() -> str:
+    """Desktop Chrome UA — Instagram web login is more reliable than mobile."""
+    chrome_majors = ["122.0.6261.105", "124.0.6367.171", "125.0.6422.165", "126.0.6478.122"]
+    chrome_major = random.choice(chrome_majors)
+    return (
+        f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        f"(KHTML, like Gecko) Chrome/{chrome_major} Safari/537.36"
+    )
+
+
+def _desktop_viewport() -> dict[str, int]:
+    return {"width": 1280, "height": 800}
+
+
 _PROXY_REGEX = re.compile(r"^(?P<scheme>[a-zA-Z]+)://(?:(?P<user>[^:@]+)(?::(?P<pwd>[^@]*))?@)?(?P<host>.+)$")
 
 
@@ -196,6 +210,20 @@ async def _first_visible_selector(page, selectors: list[str]) -> str | None:
     return None
 
 
+async def _fill_login_field(page, selectors: list[str], text: str) -> str:
+    """Fill a login field in a way that works with React-controlled inputs."""
+    selector = await _first_visible_selector(page, selectors)
+    if selector is None:
+        raise RuntimeError("login form fields not found")
+    loc = page.locator(selector).first
+    await loc.wait_for(state="visible", timeout=15000)
+    await loc.click(timeout=5000)
+    await _human_wait(0.15, 0.4)
+    await loc.fill("")
+    await loc.press_sequentially(text, delay=random.randint(40, 120))
+    return selector
+
+
 async def _accept_cookie_banner(page) -> None:
     """Best-effort accept of Meta / Instagram consent banners."""
     selectors = [
@@ -268,6 +296,25 @@ async def _try_submit_totp(page, totp_seed: str | None) -> bool:
         except Exception:
             continue
     return False
+
+
+async def _is_still_on_login_page(page) -> bool:
+    url = (page.url or "").lower()
+    if "accounts/login" in url:
+        return True
+    return await _first_visible_selector(page, _USERNAME_SELECTORS) is not None
+
+
+async def _save_login_debug(page, username: str) -> Path | None:
+    """Save a screenshot to help diagnose failed browser logins."""
+    try:
+        out = _storage_dir(username) / "login_debug.png"
+        await page.screenshot(path=str(out), full_page=True)
+        logger.info("playwright.login_debug_saved", username=username, path=str(out), url=page.url)
+        return out
+    except Exception as exc:
+        logger.warning("playwright.login_debug_failed", username=username, error=str(exc))
+        return None
 
 
 async def _detect_challenge(page) -> bool:
@@ -573,9 +620,9 @@ async def _async_first_login(
             "timezone_id": timezone_id,
             "user_agent": user_agent,
             "viewport": viewport,
-            "device_scale_factor": 3,
-            "has_touch": True,
-            "is_mobile": True,
+            "device_scale_factor": 1,
+            "has_touch": False,
+            "is_mobile": False,
         }
         if state_file.exists():
             context_kwargs["storage_state"] = str(state_file)
@@ -613,26 +660,32 @@ async def _async_first_login(
                     await _human_wait(1.0, 2.0)
                     await _accept_cookie_banner(page)
 
-                await _human_type_first_match(page, _USERNAME_SELECTORS, username)
+                await _fill_login_field(page, _USERNAME_SELECTORS, username)
                 await _human_wait(0.7, 1.6)
-                await _human_type_first_match(
-                    page, _PASSWORD_SELECTORS, password, click_first=False
-                )
+                password_selector = await _fill_login_field(page, _PASSWORD_SELECTORS, password)
                 await _human_wait(0.7, 1.6)
-                submit_sel = await _first_visible_selector(
-                    page,
-                    ['button[type="submit"]', 'button:has-text("Log in")', 'button:has-text("Log In")'],
-                )
-                if submit_sel is None:
-                    raise RuntimeError("login submit button not found")
-                submit = page.locator(submit_sel).first
-                box = await submit.bounding_box()
-                if box:
-                    cx = box["x"] + box["width"] / 2
-                    cy = box["y"] + box["height"] / 2
-                    await page.mouse.move(cx, cy, steps=random.randint(8, 18))
-                    await asyncio.sleep(random.uniform(0.1, 0.3))
-                await submit.click()
+                password_loc = page.locator(password_selector).first
+                try:
+                    await password_loc.press("Enter")
+                except Exception:
+                    submit_sel = await _first_visible_selector(
+                        page,
+                        [
+                            'button[type="submit"]',
+                            'button:has-text("Log in")',
+                            'button:has-text("Log In")',
+                        ],
+                    )
+                    if submit_sel is None:
+                        raise RuntimeError("login submit button not found")
+                    submit = page.locator(submit_sel).first
+                    box = await submit.bounding_box()
+                    if box:
+                        cx = box["x"] + box["width"] / 2
+                        cy = box["y"] + box["height"] / 2
+                        await page.mouse.move(cx, cy, steps=random.randint(8, 18))
+                        await asyncio.sleep(random.uniform(0.1, 0.3))
+                    await submit.click()
             except Exception as exc:
                 logger.error("playwright.login_form_failed", username=username, error=str(exc))
                 await context.close()
@@ -681,11 +734,13 @@ async def _async_first_login(
 
         session_id, cookie_names = await _resolve_instagram_sessionid(context, page, state_file)
         if not session_id:
+            debug_path = await _save_login_debug(page, username)
             logger.error(
                 "playwright.sessionid_missing",
                 username=username,
                 cookie_names=list(cookie_names),
                 page_url=page.url,
+                debug_screenshot=str(debug_path) if debug_path else None,
             )
             await context.storage_state(path=str(state_file))
             await context.close()
@@ -700,7 +755,12 @@ async def _async_first_login(
             login_error = await _detect_login_error(page)
             if login_error:
                 return FirstLoginResult(ok=False, error=login_error, cookie_names=cookie_names)
-            if cookie_names:
+            if await _is_still_on_login_page(page):
+                err = (
+                    "Браузер остался на странице логина — Instagram не принял учётные данные "
+                    "или блокирует автоматический вход"
+                )
+            elif cookie_names:
                 preview = ", ".join(cookie_names[:10])
                 suffix = f" (+{len(cookie_names) - 10})" if len(cookie_names) > 10 else ""
                 err = (
@@ -709,6 +769,8 @@ async def _async_first_login(
                 )
             else:
                 err = "Instagram не выдал sessionid — проверьте пароль, 2FA или challenge"
+            if debug_path is not None:
+                err = f"{err}. Скриншот: {debug_path.name}"
             return FirstLoginResult(ok=False, error=err, cookie_names=cookie_names)
 
         await context.storage_state(path=str(state_file))
@@ -753,10 +815,9 @@ def first_login(
             device_settings = None
 
     if user_agent is None:
-        user_agent = _ua_for_device(device_settings, fallback_ua=None)
+        user_agent = _desktop_ua()
     if viewport is None:
-        resolution = (device_settings or {}).get("resolution")
-        viewport = _viewport_from_resolution(resolution)
+        viewport = _desktop_viewport()
 
     if locale == "en_US" and fp_locale:
         locale = fp_locale

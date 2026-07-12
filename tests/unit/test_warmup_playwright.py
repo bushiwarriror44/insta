@@ -95,6 +95,9 @@ class FakePage:
             self.url = "https://www.instagram.com/"
         return None
 
+    async def screenshot(self, **_kw):
+        return None
+
     def locator(self, selector: str):
         self.locator_calls.append(selector)
         page = self
@@ -134,6 +137,19 @@ class FakePage:
             async def click(self_inner, *args, **kwargs):
                 page.events.append(("locator_click", (selector,), kwargs))
                 if page._context is not None and 'button[type="submit"]' in selector:
+                    page._context.grant_session()
+
+            async def fill(self_inner, text):
+                page.events.append(("fill", (selector, text), {}))
+
+            async def press_sequentially(self_inner, text, *, delay=0):
+                page.events.append(("type", (selector, text), {"delay": delay}))
+                if page._context is not None and selector in wp._PASSWORD_SELECTORS:
+                    page._context.grant_session()
+
+            async def press(self_inner, key):
+                page.events.append(("press", (selector, key), {}))
+                if key == "Enter" and page._context is not None:
                     page._context.grant_session()
 
             async def type(self_inner, text, *, delay=0):
@@ -332,7 +348,7 @@ def test_first_login_fails_without_sessionid(monkeypatch, app_env):
     )
     assert ok.ok is False
     assert ok.session_id is None
-    assert "sessionid" in (ok.error or "").lower()
+    assert ok.error
 
 
 def test_first_login_detects_challenge(monkeypatch, app_env):

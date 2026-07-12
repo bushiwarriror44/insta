@@ -8,13 +8,90 @@ from app.accounts.playwright_session import (
     cookie_names_from_playwright_state,
     import_playwright_session_to_account,
 )
-from app.accounts.session_manager import ensure_fingerprint_and_proxy
+from app.accounts.session_manager import (
+    AuthenticationError,
+    HardCheckpoint,
+    ensure_fingerprint_and_proxy,
+    login_and_export_sessionid,
+)
 from app.api.schemas import AccountConnectionTestOut, DiagnosticLogLineOut, FirstLoginOut
 from app.behavior.warmup_playwright import FirstLoginResult, first_login, playwright_browsers_available
 from app.db import Account, DiagnosticRunKind, Proxy
 from app.diagnostics.collector import DiagnosticCollector
 from app.geo.country_codes import normalize_country_code
 from app.geo.timezone_normalize import normalize_playwright_timezone
+
+
+def _finish_success(
+    collector: DiagnosticCollector,
+    account: Account,
+    db: Session,
+    *,
+    login_message: str,
+) -> FirstLoginOut:
+    collector.info("login", login_message)
+    collector.info("import", "sessionid сохранён в БД")
+    db.refresh(account)
+    collector.info("verify", "Повторная проверка подключения")
+    connection_test: AccountConnectionTestOut = run_account_connection_test(account, db)
+    overall_ok = connection_test.overall_ok
+    if overall_ok:
+        collector.finish("ok", "Сессия создана и проверена")
+    else:
+        err = connection_test.instagram_auth.error or "Проверка подключения не пройдена"
+        collector.finish("fail", err)
+    return FirstLoginOut(
+        run_id=collector.run_id,
+        ok=overall_ok,
+        session_imported=True,
+        connection_test=connection_test,
+        error=None if overall_ok else (connection_test.instagram_auth.error or "Проверка не пройдена"),
+        logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
+    )
+
+
+def _try_api_login_fallback(
+    collector: DiagnosticCollector,
+    account: Account,
+    db: Session,
+    proxy: Proxy,
+    fingerprint,
+) -> FirstLoginOut | None:
+    collector.warn("fallback", "Браузерный вход не дал sessionid — пробуем Instagram API")
+    try:
+        session_id = login_and_export_sessionid(
+            account.username,
+            account.password,
+            fingerprint,
+            proxy.url,
+            totp_seed=account.totp_seed,
+        )
+    except HardCheckpoint as exc:
+        collector.warn("login", "Требуется ручное подтверждение (challenge)")
+        collector.finish("warn", "challenge required")
+        return FirstLoginOut(
+            run_id=collector.run_id,
+            ok=False,
+            challenge=True,
+            error=str(exc) or "Требуется подтверждение Instagram",
+            logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
+        )
+    except AuthenticationError as exc:
+        collector.error("fallback", f"API-вход не удался: {exc}")
+        return None
+    except Exception as exc:  # noqa: BLE001
+        collector.error("fallback", f"API-вход не удался: {exc}")
+        return None
+
+    account.session_id = session_id
+    db.commit()
+    db.refresh(account)
+    return _finish_success(
+        collector,
+        account,
+        db,
+        login_message="Вход через Instagram API выполнен, sessionid получен",
+    )
 
 
 def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
@@ -72,7 +149,7 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
         account.username,
         country=normalize_country_code(proxy.country) or proxy.country or "US",
     )
-    collector.info("browser", "Запуск Playwright Chromium")
+    collector.info("browser", "Запуск Playwright Chromium (desktop)")
 
     tz_id = normalize_playwright_timezone(proxy.timezone, country=proxy.country)
     if tz_id != (proxy.timezone or "").strip():
@@ -103,20 +180,17 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
 
     if not result.ok:
         msg = result.error or "Автовход не удался"
-        if result.cookie_names:
-            preview = ", ".join(result.cookie_names[:10])
-            collector.error("login", f"{msg} (cookies: {preview})")
-        else:
-            collector.error("login", msg)
-        collector.finish("fail", result.error or "login failed")
+        collector.error("login", msg)
+        fallback_out = _try_api_login_fallback(collector, account, db, proxy, fingerprint)
+        if fallback_out is not None:
+            return fallback_out
+        collector.finish("fail", msg)
         return FirstLoginOut(
             run_id=collector.run_id,
             ok=False,
-            error=result.error or "Автовход не удался",
+            error=msg,
             logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
         )
-
-    collector.info("login", "Браузерный вход выполнен, sessionid получен")
 
     session_imported = import_playwright_session_to_account(
         db,
@@ -134,6 +208,9 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
             )
         else:
             collector.error("import", "Не удалось извлечь sessionid из Playwright state (файл пуст или отсутствует)")
+        fallback_out = _try_api_login_fallback(collector, account, db, proxy, fingerprint)
+        if fallback_out is not None:
+            return fallback_out
         collector.finish("fail", "session import failed")
         return FirstLoginOut(
             run_id=collector.run_id,
@@ -142,24 +219,9 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
             logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
         )
 
-    collector.info("import", "sessionid сохранён в БД")
-    db.refresh(account)
-
-    collector.info("verify", "Повторная проверка подключения")
-    connection_test: AccountConnectionTestOut = run_account_connection_test(account, db)
-
-    overall_ok = connection_test.overall_ok
-    if overall_ok:
-        collector.finish("ok", "Сессия создана и проверена")
-    else:
-        err = connection_test.instagram_auth.error or "Проверка подключения не пройдена"
-        collector.finish("fail", err)
-
-    return FirstLoginOut(
-        run_id=collector.run_id,
-        ok=overall_ok,
-        session_imported=True,
-        connection_test=connection_test,
-        error=None if overall_ok else (connection_test.instagram_auth.error or "Проверка не пройдена"),
-        logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
+    return _finish_success(
+        collector,
+        account,
+        db,
+        login_message="Браузерный вход выполнен, sessionid получен",
     )

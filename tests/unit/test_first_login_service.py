@@ -115,6 +115,40 @@ def test_first_login_service_normalizes_invalid_proxy_timezone(
     assert captured["timezone_id"] == "America/New_York"
 
 
+def test_first_login_service_api_fallback_after_playwright_fail(
+    db_session, make_account, make_proxy, monkeypatch
+):
+    proxy = make_proxy(label="px-api")
+    account = make_account(username="apiuser", proxy=proxy)
+
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.playwright_browsers_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.first_login",
+        lambda **kwargs: FirstLoginResult(
+            ok=False,
+            error="Instagram не выдал sessionid (cookies: csrftoken)",
+            cookie_names=("csrftoken",),
+        ),
+    )
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.login_and_export_sessionid",
+        lambda *args, **kwargs: "f" * 40,
+    )
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.run_account_connection_test",
+        lambda acc, db: _connection_ok(acc.username),
+    )
+
+    out = run_account_first_login(account, db_session)
+    assert out.ok is True
+    assert out.session_imported is True
+    db_session.refresh(account)
+    assert account.session_id == "f" * 40
+
+
 def test_first_login_service_no_playwright(db_session, make_account, monkeypatch):
     account = make_account(username="nopw")
 

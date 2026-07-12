@@ -357,6 +357,32 @@ def login_or_resume(
     return client
 
 
+def login_and_export_sessionid(
+    username: str,
+    password: str,
+    fingerprint: DeviceFingerprint,
+    proxy_url: str,
+    *,
+    totp_seed: str | None = None,
+) -> str:
+    """Password-login via instagrapi and return the resulting sessionid."""
+    from app.accounts.session_cookie import MIN_SESSIONID_LEN
+    from app.accounts.session_export import export_sessionid
+
+    login_or_resume(
+        username=username,
+        password=password,
+        fingerprint=fingerprint,
+        proxy_url=proxy_url,
+        totp_seed=totp_seed,
+        session_id=None,
+    )
+    exported = export_sessionid(username)
+    if exported is None or len(exported.session_id) < MIN_SESSIONID_LEN:
+        raise AuthenticationError("API login completed but sessionid is missing")
+    return exported.session_id
+
+
 @dataclass(frozen=True)
 class ProbeSessionResult:
     ok: bool
