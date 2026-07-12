@@ -6,10 +6,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import select
 
-from app.accounts.session_manager import HardCheckpoint
 from app.config import settings
 from app.db import (
-    Account,
     AccountStatus,
     DailyStat,
     Event,
@@ -147,14 +145,11 @@ def test_backoff_clamps_to_active_window(worker_env, db_session, make_account):
     # a 60s exponential backoff would otherwise fall at ~23:31 (outside window).
     account = make_account(timezone="UTC", active_hour_start=10, active_hour_end=22)
 
-    real_now = _dt.now
-
     class _FrozenDateTime(_dt):
         @classmethod
         def now(cls, tz=None):  # type: ignore[override]
             return _dt(2026, 5, 8, 23, 30, 0, tzinfo=tz or timezone.utc)
 
-    import datetime as _datetime_mod
 
     orig_dt = wm.datetime
     wm.datetime = _FrozenDateTime  # type: ignore[assignment]

@@ -97,7 +97,6 @@ def test_load_app_versions_from_file_parses(tmp_path):
     from app.accounts.device_factory import (
         load_app_versions_from_file,
         set_app_versions,
-        _APP_VERSIONS,
     )
 
     payload = [

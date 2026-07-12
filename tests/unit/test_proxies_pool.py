@@ -8,7 +8,6 @@ import pytest
 import respx
 
 from app.config import settings
-from app.db import Proxy
 from app.proxies.pool import (
     HealthSnapshot,
     ProxyError,

@@ -1,6 +1,7 @@
 import {
   CheckCircle2,
   Copy,
+  Download,
   ExternalLink,
   KeyRound,
   Network,
@@ -1279,6 +1280,11 @@ function SessionModal({
   const [exportData, setExportData] = useState<AccountSessionOut | null>(null);
   const [exportLoading, setExportLoading] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [fileImportBusy, setFileImportBusy] = useState(false);
+  const [downloadBusy, setDownloadBusy] = useState<
+    "cookies" | "playwright" | "fingerprint" | null
+  >(null);
 
   useEffect(() => {
     if (!open) return;
@@ -1287,6 +1293,8 @@ function SessionModal({
     setExportData(null);
     setExportError(null);
     setVerifyResult(null);
+    setImportFile(null);
+    setDownloadBusy(null);
   }, [open, account?.username]);
 
   useEffect(() => {
@@ -1356,6 +1364,53 @@ function SessionModal({
       push((err as Error).message, "error");
     } finally {
       setVerifying(false);
+    }
+  }
+
+  async function submitFileImport() {
+    if (!account || !importFile) return;
+    setFileImportBusy(true);
+    try {
+      const result = await api.accounts.importCookiesFile(account.username, importFile);
+      push(
+        `Cookies импортированы (${result.format === "dolphin" ? "Dolphin" : "Playwright"})`,
+        "success"
+      );
+      setImportFile(null);
+      await onSaved();
+      await verifySession();
+    } catch (err) {
+      push((err as Error).message, "error");
+    } finally {
+      setFileImportBusy(false);
+    }
+  }
+
+  async function downloadExport(
+    kind: "cookies" | "playwright" | "fingerprint",
+    fn: (username: string) => Promise<void>
+  ) {
+    if (!account) return;
+    setDownloadBusy(kind);
+    try {
+      await fn(account.username);
+      push("Файл скачан", "success");
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (msg.includes("404") || msg.toLowerCase().includes("не найден")) {
+        push(
+          kind === "playwright"
+            ? "Playwright state.json ещё не создан — сначала выполните автовход"
+            : kind === "fingerprint"
+              ? "Device fingerprint не найден для этого аккаунта"
+              : "Сессия не найдена — импортируйте cookies или войдите в аккаунт",
+          "error"
+        );
+      } else {
+        push(msg, "error");
+      }
+    } finally {
+      setDownloadBusy(null);
     }
   }
 
@@ -1487,6 +1542,28 @@ function SessionModal({
               Импортируйте после подтверждения challenge в Dolphin на том же прокси.
             </p>
           </div>
+          <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 space-y-3">
+            <div className="text-sm text-slate-400">Импорт из файла</div>
+            <p className="text-xs text-slate-500">
+              Поддерживаются JSON cookies Dolphin и Playwright state.json
+            </p>
+            <input
+              type="file"
+              accept=".json,application/json"
+              aria-label="Импорт cookies из файла"
+              className="block w-full text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:bg-slate-800 file:text-slate-200"
+              onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+            />
+            <button
+              type="button"
+              className="btn-primary text-sm"
+              disabled={!importFile || fileImportBusy || busy}
+              onClick={submitFileImport}
+            >
+              <Download size={14} />
+              {fileImportBusy ? "Импорт…" : "Импортировать из файла"}
+            </button>
+          </div>
         </form>
       ) : (
         <div className="space-y-4">
@@ -1520,6 +1597,56 @@ function SessionModal({
               </button>
             </>
           ) : null}
+          <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 space-y-2">
+            <div className="text-sm text-slate-300">Для Dolphin / миграции</div>
+            <p className="text-xs text-slate-500">
+              Скачайте полный набор cookies, Playwright state или device fingerprint для переноса
+              в Dolphin.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                className="btn-ghost text-sm justify-start"
+                disabled={!!downloadBusy || !account}
+                onClick={() => downloadExport("cookies", api.accounts.exportCookies)}
+              >
+                <Download size={14} className={downloadBusy === "cookies" ? "animate-pulse" : ""} />
+                {downloadBusy === "cookies" ? "Скачивание…" : "Скачать cookies (Dolphin)"}
+              </button>
+              <button
+                type="button"
+                className="btn-ghost text-sm justify-start"
+                disabled={!!downloadBusy || !account}
+                onClick={() =>
+                  downloadExport("playwright", api.accounts.exportPlaywrightState)
+                }
+              >
+                <Download
+                  size={14}
+                  className={downloadBusy === "playwright" ? "animate-pulse" : ""}
+                />
+                {downloadBusy === "playwright"
+                  ? "Скачивание…"
+                  : "Скачать Playwright state.json"}
+              </button>
+              <button
+                type="button"
+                className="btn-ghost text-sm justify-start"
+                disabled={!!downloadBusy || !account}
+                onClick={() =>
+                  downloadExport("fingerprint", api.accounts.exportDeviceFingerprint)
+                }
+              >
+                <Download
+                  size={14}
+                  className={downloadBusy === "fingerprint" ? "animate-pulse" : ""}
+                />
+                {downloadBusy === "fingerprint"
+                  ? "Скачивание…"
+                  : "Скачать device fingerprint"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </Modal>

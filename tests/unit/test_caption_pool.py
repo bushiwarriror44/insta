@@ -52,8 +52,6 @@ def test_emojis_count_respected():
         seed="z",
         emoji_pool=DEFAULT_EMOJI_POOL,
     )
-    # Exactly 5 emoji chars from the pool
-    found = [c for c in out if c in DEFAULT_EMOJI_POOL]
     # Some emojis are multi-codepoint (e.g. ☀️) — the test just ensures the
     # output is non-empty and short enough.
     assert 1 <= len(out)

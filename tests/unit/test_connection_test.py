@@ -216,7 +216,7 @@ def test_proxy_check_returns_instagram_reachable(api_client, monkeypatch):
 
 
 def test_run_account_connection_test_no_proxy(db_session, make_proxy):
-    proxy = make_proxy()
+    make_proxy()
     account = _make_account(db_session, username="noprx", proxy=None)
     result = run_account_connection_test(account, db_session)
     assert result.overall_ok is False

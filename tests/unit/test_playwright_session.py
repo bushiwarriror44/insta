@@ -8,7 +8,7 @@ from app.accounts.playwright_session import (
 
 
 def test_sessionid_from_playwright_state_reads_cookie(app_env, db_session, make_account):
-    account = make_account(username="pwuser")
+    make_account(username="pwuser")
     state_dir = app_env.tmp_path / "playwright" / "pwuser"
     state_dir.mkdir(parents=True)
     state_file = state_dir / "state.json"

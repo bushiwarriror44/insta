@@ -4,7 +4,7 @@ from __future__ import annotations
 from instagrapi.exceptions import ClientError
 
 from app.behavior import warmup_instagrapi as warmup_module
-from tests.conftest import FakeFeedItem, FakeInstagrapiClient, FakeMedia, FakeReelsTray
+from tests.conftest import FakeInstagrapiClient, FakeMedia, FakeReelsTray
 
 
 def _no_sleep(monkeypatch):

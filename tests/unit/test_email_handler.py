@@ -6,9 +6,8 @@ the graceful-degradation paths (missing dependency, login failure, no code).
 from __future__ import annotations
 
 import builtins
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
 
 from app.accounts import email_handler as eh
 

@@ -6,7 +6,6 @@ import sys
 import types
 from pathlib import Path
 
-import pytest
 
 from app.behavior import warmup_playwright as wp
 
@@ -205,7 +204,7 @@ def _patch_async_playwright(monkeypatch, page: FakePage) -> FakePW:
 
 def test_first_login_happy_path(monkeypatch, app_env):
     page = FakePage(has_login_form=True, already_logged_in=False)
-    pw = _patch_async_playwright(monkeypatch, page)
+    _patch_async_playwright(monkeypatch, page)
 
     monkeypatch.setattr(wp, "asyncio", _SyncAsyncio())
 
@@ -229,7 +228,7 @@ def test_first_login_happy_path(monkeypatch, app_env):
 
 def test_first_login_skips_form_when_already_logged_in(monkeypatch, app_env):
     page = FakePage(has_login_form=False, already_logged_in=True)
-    pw = _patch_async_playwright(monkeypatch, page)
+    _patch_async_playwright(monkeypatch, page)
     monkeypatch.setattr(wp, "asyncio", _SyncAsyncio())
 
     ok = wp.first_login(
@@ -247,7 +246,7 @@ def test_first_login_skips_form_when_already_logged_in(monkeypatch, app_env):
 
 def test_first_login_detects_challenge(monkeypatch, app_env):
     page = FakePage(has_login_form=True, has_challenge=True, already_logged_in=False)
-    pw = _patch_async_playwright(monkeypatch, page)
+    _patch_async_playwright(monkeypatch, page)
     monkeypatch.setattr(wp, "asyncio", _SyncAsyncio())
 
     ok = wp.first_login(

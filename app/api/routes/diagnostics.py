@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import AuthDep, get_db
 from app.api.schemas import DiagnosticLogLineOut, DiagnosticRunOut
-from app.db import Account, DiagnosticRun, DiagnosticRunKind, PostJob
+from app.db import Account, DiagnosticRun, DiagnosticRunKind
 from app.diagnostics.collector import load_run_lines
 
 router = APIRouter(prefix="/api/diagnostic-runs", tags=["diagnostics"], dependencies=[AuthDep])

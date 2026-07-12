@@ -1,5 +1,4 @@
 """API tests for account first-login endpoint."""
-from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient

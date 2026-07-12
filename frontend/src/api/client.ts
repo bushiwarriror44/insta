@@ -5,6 +5,7 @@ import type {
   AccountProxyUpdate,
   AccountSessionOut,
   AccountSessionUpdate,
+  CookiesImportOut,
   DashboardSummary,
   DiagnosticRunOut,
   EnqueueIn,
@@ -118,6 +119,37 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   return undefined as T;
 }
 
+async function downloadFile(path: string, filename: string): Promise<void> {
+  const res = await fetch(buildUrl(path), {
+    method: "GET",
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    let detail: unknown = null;
+    try {
+      detail = await res.json();
+    } catch {
+      detail = await res.text().catch(() => null);
+    }
+    const message =
+      (detail && typeof detail === "object" && "detail" in detail
+        ? String((detail as { detail: unknown }).detail)
+        : typeof detail === "string"
+          ? detail
+          : `HTTP ${res.status}`) || `HTTP ${res.status}`;
+    throw new ApiError(res.status, message, detail);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 export const api = {
   health: () => request<Health>("/api/health"),
   dashboard: () => request<DashboardSummary>("/api/dashboard"),
@@ -160,6 +192,29 @@ export const api = {
         `/api/accounts/${encodeURIComponent(username)}/first-login`,
         { method: "POST" }
       ),
+    exportCookies: (username: string) =>
+      downloadFile(
+        `/api/accounts/${encodeURIComponent(username)}/cookies/export`,
+        `cookies_${username}.json`
+      ),
+    exportPlaywrightState: (username: string) =>
+      downloadFile(
+        `/api/accounts/${encodeURIComponent(username)}/playwright-state`,
+        `state_${username}.json`
+      ),
+    exportDeviceFingerprint: (username: string) =>
+      downloadFile(
+        `/api/accounts/${encodeURIComponent(username)}/device-fingerprint`,
+        `device_${username}.json`
+      ),
+    importCookiesFile: (username: string, file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      return request<CookiesImportOut>(
+        `/api/accounts/${encodeURIComponent(username)}/cookies/import`,
+        { method: "POST", formData: fd }
+      );
+    },
   },
 
   proxies: {

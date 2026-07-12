@@ -1,7 +1,6 @@
 """Tests for app.video.uniquifier (subprocess-mocked)."""
 from __future__ import annotations
 
-import json
 import subprocess
 
 import pytest

@@ -42,7 +42,6 @@ from app.config import settings
 from app.db import (
     Account,
     AccountStatus,
-    DailyStat,
     DiagnosticRunKind,
     Event,
     EventLevel,

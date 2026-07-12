@@ -134,6 +134,13 @@ class AccountSessionOut(BaseModel):
     session_file_exists: bool
 
 
+class CookiesImportOut(BaseModel):
+    format: Literal["dolphin", "playwright_state"]
+    session_id_imported: bool
+    playwright_state_saved: bool
+    session_file_cleared: bool
+
+
 class ProxyHealthStepOut(BaseModel):
     ok: bool
     ip: Optional[str] = None

@@ -402,6 +402,117 @@ def test_accounts_update_session_clears_session_file(api_client, app_env):
     assert not path.exists()
 
 
+def _create_account(api_client, username: str, proxy_label: str = "px-dolphin"):
+    api_client.post(
+        "/api/proxies",
+        json={"label": proxy_label, "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/accounts",
+        json={"username": username, "password": "secret", "proxy_label": proxy_label},
+    )
+
+
+def test_accounts_export_cookies(api_client, app_env):
+    import json
+
+    from app.accounts.playwright_session import playwright_state_path
+
+    _create_account(api_client, "expuser", "px-exp")
+    state_dir = playwright_state_path("expuser").parent
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "cookies": [{"name": "sessionid", "value": "j" * 40, "domain": ".instagram.com"}],
+                "origins": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    res = api_client.get("/api/accounts/expuser/cookies/export")
+    assert res.status_code == 200, res.text
+    assert res.headers["content-type"].startswith("application/json")
+    body = res.json()
+    assert isinstance(body, list)
+    assert body[0]["name"] == "sessionid"
+
+
+def test_accounts_export_cookies_404(api_client):
+    _create_account(api_client, "noexp", "px-noexp")
+    res = api_client.get("/api/accounts/noexp/cookies/export")
+    assert res.status_code == 404
+
+
+def test_accounts_export_playwright_state(api_client, app_env):
+    import json
+
+    from app.accounts.playwright_session import playwright_state_path
+
+    _create_account(api_client, "pwexp", "px-pwexp")
+    path = playwright_state_path("pwexp")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"cookies": [], "origins": []}), encoding="utf-8")
+    res = api_client.get("/api/accounts/pwexp/playwright-state")
+    assert res.status_code == 200, res.text
+    assert "application/json" in res.headers["content-type"]
+
+
+def test_accounts_export_playwright_state_404(api_client):
+    _create_account(api_client, "nopw", "px-nopw")
+    res = api_client.get("/api/accounts/nopw/playwright-state")
+    assert res.status_code == 404
+
+
+def test_accounts_export_device_fingerprint(api_client, app_env):
+    from app.accounts.device_factory import generate_fingerprint, save_fingerprint
+
+    _create_account(api_client, "fpexp", "px-fpexp")
+    save_fingerprint("fpexp", generate_fingerprint(country="US"))
+    res = api_client.get("/api/accounts/fpexp/device-fingerprint")
+    assert res.status_code == 200, res.text
+    assert "application/json" in res.headers["content-type"]
+
+
+def test_accounts_export_device_fingerprint_404(api_client):
+    _create_account(api_client, "nofp", "px-nofp")
+    res = api_client.get("/api/accounts/nofp/device-fingerprint")
+    assert res.status_code == 404
+
+
+def test_accounts_import_cookies_dolphin(api_client, app_env):
+    import json
+
+    from app.accounts.playwright_session import playwright_state_path
+
+    _create_account(api_client, "impuser", "px-imp")
+    sid = "k" * 40
+    payload = json.dumps(
+        [{"name": "sessionid", "value": sid, "domain": ".instagram.com"}]
+    ).encode("utf-8")
+    res = api_client.post(
+        "/api/accounts/impuser/cookies/import",
+        files={"file": ("cookies.json", io.BytesIO(payload), "application/json")},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["format"] == "dolphin"
+    assert body["session_id_imported"] is True
+    assert playwright_state_path("impuser").exists()
+    listed = api_client.get("/api/accounts").json()
+    row = next(a for a in listed if a["username"] == "impuser")
+    assert row["has_session_id"] is True
+
+
+def test_accounts_import_cookies_bad_format(api_client):
+    _create_account(api_client, "badimp", "px-badimp")
+    res = api_client.post(
+        "/api/accounts/badimp/cookies/import",
+        files={"file": ("bad.json", io.BytesIO(b'{"nope": true}'), "application/json")},
+    )
+    assert res.status_code == 400
+
+
 def test_accounts_update_proxy_rejects_missing_proxy(api_client):
     api_client.post(
         "/api/proxies",

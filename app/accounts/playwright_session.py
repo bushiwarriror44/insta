@@ -15,6 +15,14 @@ def playwright_state_path(username: str) -> Path:
     return settings.playwright_dir / username / "state.json"
 
 
+def save_playwright_state(username: str, state: dict) -> Path:
+    """Persist Playwright storage state JSON for *username*."""
+    path = playwright_state_path(username)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
 def sessionid_from_playwright_state(username: str) -> str | None:
     """Extract Instagram sessionid cookie from Playwright storage state."""
     path = playwright_state_path(username)

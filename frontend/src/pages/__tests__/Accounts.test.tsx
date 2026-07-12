@@ -15,6 +15,10 @@ const apiMock = vi.hoisted(() => ({
     getSession: vi.fn(),
     testConnection: vi.fn(),
     firstLogin: vi.fn(),
+    exportCookies: vi.fn(),
+    exportPlaywrightState: vi.fn(),
+    exportDeviceFingerprint: vi.fn(),
+    importCookiesFile: vi.fn(),
     pause: vi.fn(),
     resume: vi.fn(),
   },
@@ -235,6 +239,88 @@ describe("Accounts page", () => {
     );
     await waitFor(() =>
       expect(screen.getByDisplayValue(sessionId)).toBeInTheDocument()
+    );
+  });
+
+  it("shows Dolphin export buttons on export tab", async () => {
+    apiMock.accounts.getSession.mockResolvedValue({
+      session_id: "c".repeat(40),
+      source: "database",
+      session_file_exists: true,
+    });
+
+    renderAccounts();
+    await screen.findByText("@alice");
+    fireEvent.click(screen.getByRole("button", { name: /сессия для alice/i }));
+    await screen.findByRole("heading", { name: /сессия · @alice/i });
+    fireEvent.click(screen.getByRole("button", { name: /^экспорт$/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /скачать cookies \(dolphin\)/i })).toBeInTheDocument()
+    );
+    expect(
+      screen.getByRole("button", { name: /скачать playwright state\.json/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /скачать device fingerprint/i })
+    ).toBeInTheDocument();
+  });
+
+  it("can import cookies from file in session modal", async () => {
+    const updatedAccount = { ...account, has_session_id: true };
+    apiMock.accounts.list
+      .mockResolvedValueOnce([account])
+      .mockResolvedValueOnce([updatedAccount]);
+    apiMock.accounts.importCookiesFile.mockResolvedValue({
+      format: "dolphin",
+      session_id_imported: true,
+      playwright_state_saved: true,
+      session_file_cleared: true,
+    });
+    apiMock.accounts.testConnection.mockResolvedValue({
+      username: "alice",
+      proxy_assigned: true,
+      proxy_label: "res-de-1",
+      proxy_health: {
+        ok: true,
+        ip: "1.2.3.4",
+        geo_country: "DE",
+        instagram_reachable: true,
+        geo_mismatch: false,
+      },
+      session_storage: {
+        has_session_id: true,
+        session_file_exists: false,
+        device_file_exists: true,
+        session_source: "database",
+      },
+      instagram_auth: {
+        ok: true,
+        method: "sessionid",
+        ig_username: "alice",
+        challenge: false,
+      },
+      overall_ok: true,
+      checked_at: "2026-06-29T10:00:00Z",
+    });
+
+    renderAccounts();
+    await screen.findByText("@alice");
+    fireEvent.click(screen.getByRole("button", { name: /сессия для alice/i }));
+    const heading = await screen.findByRole("heading", { name: /сессия · @alice/i });
+    const modal = heading.closest("div.card") as HTMLElement;
+
+    const file = new File(['[{"name":"sessionid","value":"' + "d".repeat(40) + '"}]'], "cookies.json", {
+      type: "application/json",
+    });
+    const input = within(modal).getByLabelText(/импорт cookies из файла/i);
+    fireEvent.change(input, { target: { files: [file] } });
+    fireEvent.click(
+      within(modal).getByRole("button", { name: /импортировать из файла/i })
+    );
+
+    await waitFor(() =>
+      expect(apiMock.accounts.importCookiesFile).toHaveBeenCalledWith("alice", file)
     );
   });
 

@@ -239,6 +239,60 @@ describe("body serialization", () => {
     expect(init.method).toBe("POST");
     expect(out.overall_ok).toBe(true);
   });
+
+  it("downloads cookies export as file", async () => {
+    const createObjectURL = vi.fn(() => "blob:mock");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL,
+      revokeObjectURL,
+    });
+    const clickSpy = vi.fn();
+    const anchor = document.createElement("a");
+    anchor.click = clickSpy;
+    const createElSpy = vi.spyOn(document, "createElement").mockReturnValue(anchor);
+    const appendSpy = vi.spyOn(document.body, "appendChild").mockImplementation(() => anchor);
+
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify([{ name: "sessionid", value: "x" }]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    );
+
+    await api.accounts.exportCookies("alice");
+    const { url } = getCall();
+    expect(url).toBe("/api/accounts/alice/cookies/export");
+    expect(clickSpy).toHaveBeenCalled();
+    expect(anchor.download).toBe("cookies_alice.json");
+
+    createElSpy.mockRestore();
+    appendSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("imports cookies file via multipart POST", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      makeResponse({
+        json: {
+          format: "dolphin",
+          session_id_imported: true,
+          playwright_state_saved: true,
+          session_file_cleared: false,
+        },
+      })
+    );
+    const file = new File(['[{"name":"sessionid","value":"' + "a".repeat(40) + '"}]'], "c.json", {
+      type: "application/json",
+    });
+    const out = await api.accounts.importCookiesFile("alice", file);
+    const { url, init } = getCall();
+    expect(url).toBe("/api/accounts/alice/cookies/import");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeInstanceOf(FormData);
+    expect(out.format).toBe("dolphin");
+  });
 });
 
 describe("response handling", () => {

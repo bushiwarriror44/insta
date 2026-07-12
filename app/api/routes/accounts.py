@@ -1,15 +1,20 @@
 """Account management endpoints."""
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.accounts.connection_test import run_account_connection_test
+from app.accounts.cookie_formats import CookieFormatError, import_cookies_data, write_dolphin_cookies_export
+from app.accounts.device_factory import device_path, load_fingerprint
 from app.accounts.first_login_service import run_account_first_login
+from app.accounts.playwright_session import playwright_state_path
 from app.accounts.session_export import export_sessionid
 from app.accounts.session_manager import (
     clear_session_file,
@@ -24,6 +29,7 @@ from app.api.schemas import (
     AccountProxyUpdate,
     AccountSessionOut,
     AccountSessionUpdate,
+    CookiesImportOut,
     FirstLoginOut,
 )
 from app.db import Account, AccountStatus, DailyStat, Proxy
@@ -211,6 +217,95 @@ def get_account_session(username: str, db: Session = Depends(get_db)) -> Account
         session_id=exported.session_id,
         source=exported.source,
         session_file_exists=exported.session_file_exists,
+    )
+
+
+@router.get("/{username}/cookies/export")
+def export_account_cookies(username: str, db: Session = Depends(get_db)) -> FileResponse:
+    account = db.scalar(select(Account).where(Account.username == username))
+    if account is None:
+        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+    try:
+        export_path = write_dolphin_cookies_export(username, db_session_id=account.session_id)
+    except CookieFormatError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(
+        path=export_path,
+        media_type="application/json",
+        filename=f"cookies_{username}.json",
+    )
+
+
+@router.get("/{username}/playwright-state")
+def export_playwright_state(username: str, db: Session = Depends(get_db)) -> FileResponse:
+    account = db.scalar(select(Account).where(Account.username == username))
+    if account is None:
+        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+    path = playwright_state_path(username)
+    if not path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Playwright state.json не найден — сначала выполните автовход",
+        )
+    return FileResponse(
+        path=path,
+        media_type="application/json",
+        filename=f"state_{username}.json",
+    )
+
+
+@router.get("/{username}/device-fingerprint")
+def export_device_fingerprint(username: str, db: Session = Depends(get_db)) -> FileResponse:
+    account = db.scalar(select(Account).where(Account.username == username))
+    if account is None:
+        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+    path = device_path(username)
+    if not path.exists():
+        fp = load_fingerprint(username)
+        if fp is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Device fingerprint не найден для этого аккаунта",
+            )
+    return FileResponse(
+        path=path,
+        media_type="application/json",
+        filename=f"device_{username}.json",
+    )
+
+
+@router.post("/{username}/cookies/import", response_model=CookiesImportOut)
+async def import_account_cookies(
+    username: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> CookiesImportOut:
+    account = db.scalar(select(Account).where(Account.username == username))
+    if account is None:
+        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Файл пуст")
+
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="Некорректный JSON") from exc
+
+    try:
+        result = import_cookies_data(username, data)
+    except CookieFormatError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    account.session_id = result.session_id
+    db.commit()
+
+    return CookiesImportOut(
+        format=result.format,
+        session_id_imported=True,
+        playwright_state_saved=result.playwright_state_saved,
+        session_file_cleared=result.session_file_cleared,
     )
 
 

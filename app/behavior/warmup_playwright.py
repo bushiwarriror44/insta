@@ -72,7 +72,6 @@ def _ua_for_device(device_settings: dict | None, fallback_ua: str | None) -> str
     """
     if device_settings:
         android_release = device_settings.get("android_release", "13")
-        manufacturer = device_settings.get("manufacturer", "samsung")
         model = device_settings.get("model", "SM-S908B")
         # Pin a recent stable mobile Chrome major; rotated occasionally per call
         # to avoid a single static UA across all sessions.
