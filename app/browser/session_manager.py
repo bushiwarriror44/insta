@@ -1,0 +1,410 @@
+"""In-memory interactive Playwright browser sessions streamed via noVNC."""
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import time
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from app.accounts.backup_codes import consume_next_backup_code
+from app.accounts.device_factory import load_fingerprint
+from app.accounts.login_identifier import resolve_login_identifier
+from app.accounts.playwright_session import (
+    import_playwright_session_to_account,
+    playwright_state_path,
+    sessionid_from_playwright_state_data,
+    storage_state_has_session,
+)
+from app.behavior.warmup_playwright import (
+    _INSTAGRAM_LOGIN_URL,
+    _INSTAGRAM_URL,
+    _accept_cookie_banner,
+    _accept_language_for_locale,
+    _apply_stealth_context,
+    _browser_launch_args,
+    _desktop_ua,
+    _desktop_viewport,
+    _detect_2fa_required,
+    _detect_challenge,
+    _dismiss_post_login_modals,
+    _ensure_login_page,
+    _fill_login_field,
+    _has_auth_cookies,
+    _human_wait,
+    _is_logged_in,
+    _parse_proxy,
+    _simulate_pre_login_behavior,
+    _submit_login_form,
+    _try_submit_totp,
+    playwright_browsers_available,
+    submit_verification_code,
+)
+from app.browser.vnc_stack import VncStack, allocate_ports, vnc_stack_available
+from app.config import settings
+from app.geo.timezone_normalize import normalize_playwright_timezone
+from app.logging_setup import get_logger
+
+logger = get_logger(__name__)
+
+
+class BrowserSessionStatus(str, Enum):
+    starting = "starting"
+    running = "running"
+    awaiting_code = "awaiting_code"
+    saved = "saved"
+    error = "error"
+    stopped = "stopped"
+
+
+@dataclass
+class BrowserSessionState:
+    username: str
+    status: BrowserSessionStatus = BrowserSessionStatus.starting
+    awaiting_code: bool = False
+    error: str | None = None
+    display: int = 0
+    ws_port: int = 0
+    vnc_path: str = ""
+    page_url: str | None = None
+    started_at: float = field(default_factory=time.monotonic)
+    vnc_stack: VncStack | None = None
+    pw: Any = None
+    browser: Any = None
+    context: Any = None
+    page: Any = None
+    poll_task: asyncio.Task | None = None
+    auto_stop_task: asyncio.Task | None = None
+
+
+class BrowserSessionManager:
+    def __init__(self) -> None:
+        self._sessions: dict[str, BrowserSessionState] = {}
+        self._lock = asyncio.Lock()
+        self._display_counter = settings.browser_display_base
+
+    def _next_display(self) -> int:
+        self._display_counter += 1
+        if self._display_counter > 180:
+            self._display_counter = settings.browser_display_base + 1
+        return self._display_counter
+
+    def get(self, username: str) -> BrowserSessionState | None:
+        return self._sessions.get(username)
+
+    def status_dict(self, username: str) -> dict[str, Any]:
+        session = self._sessions.get(username)
+        if session is None:
+            return {
+                "username": username,
+                "status": BrowserSessionStatus.stopped.value,
+                "awaiting_code": False,
+                "vnc_path": None,
+                "page_url": None,
+                "error": None,
+            }
+        return {
+            "username": username,
+            "status": session.status.value,
+            "awaiting_code": session.awaiting_code,
+            "vnc_path": session.vnc_path or None,
+            "page_url": session.page_url,
+            "error": session.error,
+        }
+
+    async def start_session(
+        self,
+        account,
+        proxy,
+        *,
+        autofill_login: bool = True,
+    ) -> BrowserSessionState:
+        username = account.username
+        async with self._lock:
+            existing = self._sessions.get(username)
+            if existing and existing.status not in (
+                BrowserSessionStatus.stopped,
+                BrowserSessionStatus.error,
+                BrowserSessionStatus.saved,
+            ):
+                return existing
+
+            if existing:
+                await self._cleanup_session(existing, remove=False)
+
+            if not settings.browser_vnc_enabled:
+                raise RuntimeError("Interactive browser disabled (set BROWSER_VNC_ENABLED=true)")
+            if not vnc_stack_available():
+                raise RuntimeError("Xvfb/x11vnc/websockify not installed on server")
+            if not playwright_browsers_available():
+                raise RuntimeError("Chromium not installed — run install-playwright on server")
+
+            display = self._next_display()
+            rfb_port, ws_port = allocate_ports(display)
+            vnc = VncStack(display=display, rfb_port=rfb_port, ws_port=ws_port)
+            session = BrowserSessionState(
+                username=username,
+                display=display,
+                ws_port=ws_port,
+                vnc_path=f"api/accounts/{username}/browser/vnc/ws",
+                vnc_stack=vnc,
+            )
+            self._sessions[username] = session
+
+        try:
+            await vnc.start()
+            await self._launch_browser(session, account, proxy, autofill_login=autofill_login)
+            session.status = BrowserSessionStatus.running
+            session.poll_task = asyncio.create_task(self._poll_session(session, account))
+            timeout_sec = settings.browser_session_timeout_min * 60
+            session.auto_stop_task = asyncio.create_task(self._auto_stop(username, timeout_sec))
+            return session
+        except Exception as exc:
+            session.status = BrowserSessionStatus.error
+            session.error = str(exc)
+            logger.error("browser_session.start_failed", username=username, error=str(exc))
+            await self._cleanup_session(session)
+            raise
+
+    async def _launch_browser(self, session: BrowserSessionState, account, proxy, *, autofill_login: bool) -> None:
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError as exc:
+            raise RuntimeError("playwright not installed") from exc
+
+        stealth_apply = None
+        try:
+            from playwright_stealth import stealth_async  # type: ignore
+
+            stealth_apply = stealth_async
+        except ImportError:
+            try:
+                from playwright_stealth import Stealth  # type: ignore
+
+                stealth_instance = Stealth()
+
+                async def _apply(page):
+                    await stealth_instance.apply_stealth_async(page)
+
+                stealth_apply = _apply
+            except ImportError:
+                pass
+
+        fingerprint = load_fingerprint(account.username)
+        device_settings = fingerprint.settings if fingerprint else None
+        locale = getattr(fingerprint, "locale", None) or "en-US"
+        tz_id = normalize_playwright_timezone(proxy.timezone, country=proxy.country)
+
+        proxy_arg = _parse_proxy(proxy.url)
+        if not proxy_arg:
+            raise RuntimeError("proxy required for interactive browser")
+
+        state_file = playwright_state_path(account.username)
+        display_env = os.environ.copy()
+        display_env["DISPLAY"] = vnc_stack_display(session)
+
+        session.pw = await async_playwright().start()
+        session.browser = await session.pw.chromium.launch(
+            headless=False,
+            ignore_default_args=["--enable-automation"],
+            args=_browser_launch_args(),
+            proxy=proxy_arg,
+            env=display_env,
+        )
+
+        context_kwargs: dict[str, Any] = {
+            "locale": locale.replace("_", "-"),
+            "timezone_id": tz_id,
+            "user_agent": _desktop_ua(),
+            "viewport": _desktop_viewport(),
+            "device_scale_factor": 1,
+            "has_touch": False,
+            "is_mobile": False,
+            "color_scheme": "light",
+            "extra_http_headers": {
+                "Accept-Language": _accept_language_for_locale(locale),
+            },
+        }
+        if state_file.exists() and storage_state_has_session(account.username):
+            context_kwargs["storage_state"] = str(state_file)
+
+        session.context = await session.browser.new_context(**context_kwargs)
+        await _apply_stealth_context(session.context)
+        session.page = await session.context.new_page()
+        if stealth_apply is not None:
+            try:
+                await stealth_apply(session.page)
+            except Exception:
+                pass
+
+        page = session.page
+        if state_file.exists() and storage_state_has_session(account.username):
+            await page.goto(_INSTAGRAM_URL, wait_until="domcontentloaded", timeout=45000)
+        else:
+            await page.goto(_INSTAGRAM_LOGIN_URL, wait_until="domcontentloaded", timeout=45000)
+
+        await _human_wait(1.0, 2.0)
+        await _accept_cookie_banner(page)
+        session.page_url = page.url
+
+        if autofill_login and not await _is_logged_in(session.context, page):
+            login_id = resolve_login_identifier(account)
+            try:
+                await _ensure_login_page(page)
+                await _simulate_pre_login_behavior(page)
+                await _fill_login_field(page, password=False, text=login_id)
+                await _human_wait(0.8, 1.6)
+                await _fill_login_field(page, password=True, text=account.password)
+                await _submit_login_form(page)
+                await _human_wait(2.0, 4.0)
+                await _try_submit_totp(page, account.totp_seed)
+                await _dismiss_post_login_modals(page)
+            except Exception as exc:
+                logger.warning("browser_session.autofill_failed", username=account.username, error=str(exc))
+
+        session.page_url = page.url
+        await self._refresh_code_state(session)
+
+    async def _poll_session(self, session: BrowserSessionState, account) -> None:
+        while session.status in (BrowserSessionStatus.running, BrowserSessionStatus.awaiting_code):
+            try:
+                if session.page is None or session.context is None:
+                    break
+                if await _is_logged_in(session.context, session.page):
+                    session.awaiting_code = False
+                    if session.status == BrowserSessionStatus.awaiting_code:
+                        session.status = BrowserSessionStatus.running
+                else:
+                    await self._refresh_code_state(session)
+                session.page_url = session.page.url
+            except Exception as exc:
+                logger.warning("browser_session.poll_error", username=session.username, error=str(exc))
+            await asyncio.sleep(2.0)
+
+    async def _refresh_code_state(self, session: BrowserSessionState) -> None:
+        if session.page is None:
+            return
+        needs_code = await _detect_2fa_required(session.page) or await _detect_challenge(session.page)
+        session.awaiting_code = needs_code
+        if needs_code and session.status == BrowserSessionStatus.running:
+            session.status = BrowserSessionStatus.awaiting_code
+
+    async def submit_code(self, db: Session, account, code: str | None) -> bool:
+        session = self._sessions.get(account.username)
+        if session is None or session.page is None:
+            raise RuntimeError("No active browser session for this account")
+
+        resolved = (code or "").strip()
+        if not resolved:
+            resolved = consume_next_backup_code(db, account) or ""
+        if not resolved:
+            raise ValueError("Verification code is required")
+
+        ok = await submit_verification_code(session.page, resolved)
+        if not ok:
+            raise RuntimeError("Could not find a verification code field on the page")
+
+        await _human_wait(2.0, 4.0)
+        await _dismiss_post_login_modals(session.page)
+        await self._refresh_code_state(session)
+        session.page_url = session.page.url
+        if await _is_logged_in(session.context, session.page):
+            session.status = BrowserSessionStatus.running
+            session.awaiting_code = False
+        return ok
+
+    async def save_session(self, db: Session, account) -> dict[str, Any]:
+        session = self._sessions.get(account.username)
+        if session is None or session.context is None:
+            raise RuntimeError("No active browser session for this account")
+
+        if session.page is None or not await _is_logged_in(session.context, session.page):
+            raise RuntimeError(
+                "Сначала войдите в Instagram в браузере — sessionid не найден в cookies"
+            )
+
+        state_file = playwright_state_path(account.username)
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        await session.context.storage_state(path=str(state_file))
+        data = json.loads(state_file.read_text(encoding="utf-8"))
+        session_id = sessionid_from_playwright_state_data(data)
+        imported = import_playwright_session_to_account(db, account, session_id=session_id)
+        if not imported:
+            raise RuntimeError("Could not extract sessionid from browser state")
+
+        session.status = BrowserSessionStatus.saved
+        session.awaiting_code = False
+        return {
+            "session_imported": True,
+            "session_id_saved": bool(session_id),
+        }
+
+    async def stop_session(self, username: str) -> None:
+        async with self._lock:
+            session = self._sessions.get(username)
+            if session is None:
+                return
+            await self._cleanup_session(session)
+            session.status = BrowserSessionStatus.stopped
+
+    async def _auto_stop(self, username: str, timeout_sec: float) -> None:
+        await asyncio.sleep(timeout_sec)
+        session = self._sessions.get(username)
+        if session is None:
+            return
+        if session.status in (BrowserSessionStatus.stopped, BrowserSessionStatus.saved):
+            return
+        logger.info("browser_session.auto_stop", username=username, timeout_sec=timeout_sec)
+        await self.stop_session(username)
+
+    async def _cleanup_session(self, session: BrowserSessionState, *, remove: bool = True) -> None:
+        for task in (session.poll_task, session.auto_stop_task):
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+        if session.page is not None:
+            try:
+                await session.page.close()
+            except Exception:
+                pass
+        if session.context is not None:
+            try:
+                await session.context.close()
+            except Exception:
+                pass
+        if session.browser is not None:
+            try:
+                await session.browser.close()
+            except Exception:
+                pass
+        if session.pw is not None:
+            try:
+                await session.pw.stop()
+            except Exception:
+                pass
+        if session.vnc_stack is not None:
+            session.vnc_stack.stop()
+
+        session.page = None
+        session.context = None
+        session.browser = None
+        session.pw = None
+        session.vnc_stack = None
+
+        if remove:
+            self._sessions.pop(session.username, None)
+
+
+def vnc_stack_display(session: BrowserSessionState) -> str:
+    return f":{session.display}"
+
+
+browser_session_manager = BrowserSessionManager()

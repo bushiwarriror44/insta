@@ -13,6 +13,7 @@ from app.accounts.playwright_session import (
     cookie_names_from_playwright_state,
     import_playwright_session_to_account,
     login_debug_screenshot_path,
+    storage_state_has_session,
 )
 from app.accounts.session_manager import (
     AuthenticationError,
@@ -115,13 +116,14 @@ def _try_api_login_fallback(
     try:
         session_id = _attempt(login_id)
     except HardCheckpoint as exc:
-        collector.warn("login", "Требуется ручное подтверждение (challenge)")
+        collector.warn("login", "Требуется ручное подтверждение (challenge) — откройте вкладку «Браузер»")
         collector.finish("warn", "challenge required")
         return (
             FirstLoginOut(
                 run_id=collector.run_id,
                 ok=False,
                 challenge=True,
+                browser_tab_hint=True,
                 error=str(exc) or "Требуется подтверждение Instagram",
                 logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
             ),
@@ -144,13 +146,14 @@ def _try_api_login_fallback(
             try:
                 session_id = _attempt(email)
             except HardCheckpoint as exc:
-                collector.warn("login", "Требуется ручное подтверждение (challenge)")
+                collector.warn("login", "Требуется ручное подтверждение (challenge) — откройте вкладку «Браузер»")
                 collector.finish("warn", "challenge required")
                 return (
                     FirstLoginOut(
                         run_id=collector.run_id,
                         ok=False,
                         challenge=True,
+                        browser_tab_hint=True,
                         error=str(exc) or "Требуется подтверждение Instagram",
                         logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
                     ),
@@ -240,6 +243,15 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
             logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
         )
 
+    if (account.session_id or "").strip() and storage_state_has_session(account.username):
+        collector.info("session", "Сессия уже сохранена (браузер) — проверяем подключение")
+        return _finish_success(
+            collector,
+            account,
+            db,
+            login_message="Используется сохранённая сессия из браузера",
+        )
+
     login_id = resolve_login_identifier(account)
     log_account_credentials(collector, account, proxy)
     collector.info("start", f"Автовход через браузер для @{account.username}")
@@ -269,13 +281,14 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
     )
 
     if result.challenge:
-        collector.warn("login", "Требуется ручное подтверждение (challenge)")
+        collector.warn("login", "Требуется ручное подтверждение (challenge) — откройте вкладку «Браузер»")
         _log_playwright_failure_diagnostics(collector, account, result)
         collector.finish("warn", "challenge required")
         return FirstLoginOut(
             run_id=collector.run_id,
             ok=False,
             challenge=True,
+            browser_tab_hint=True,
             error=result.error or "Требуется подтверждение Instagram",
             login_debug_available=_login_debug_available(account.username, result),
             logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],

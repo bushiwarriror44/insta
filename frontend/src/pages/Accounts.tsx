@@ -4,6 +4,7 @@ import {
   Download,
   ExternalLink,
   KeyRound,
+  MonitorPlay,
   Network,
   Pencil,
   Pause,
@@ -24,7 +25,9 @@ import { DiagnosticLogPanel } from "../components/DiagnosticLogPanel";
 import { Loader } from "../components/Loader";
 import { Modal } from "../components/Modal";
 import { isSessionMissing, SessionSetupModal } from "../components/SessionSetupModal";
+import { InstagramBrowserPanel } from "../components/InstagramBrowserPanel";
 import { StatusBadge } from "../components/StatusBadge";
+import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import type {
   AccountConnectionTestOut,
@@ -88,6 +91,8 @@ function ConnectionStepRow({
 
 export function Accounts() {
   const { push } = useToast();
+  const { state: authState } = useAuth();
+  const adminToken = authState.state === "authed" ? authState.token : null;
   const [accounts, setAccounts] = useState<AccountOut[]>([]);
   const [proxies, setProxies] = useState<ProxyOut[]>([]);
   const [loading, setLoading] = useState(true);
@@ -97,6 +102,7 @@ export function Accounts() {
   const [assigningAccount, setAssigningAccount] = useState<AccountOut | null>(null);
   const [sessionAccount, setSessionAccount] = useState<AccountOut | null>(null);
   const [sessionSetupAccount, setSessionSetupAccount] = useState<AccountOut | null>(null);
+  const [browserAccount, setBrowserAccount] = useState<AccountOut | null>(null);
   const [connectionAccount, setConnectionAccount] = useState<AccountOut | null>(null);
   const [testingAll, setTestingAll] = useState(false);
   const [testAllProgress, setTestAllProgress] = useState({ done: 0, total: 0, ok: 0 });
@@ -460,7 +466,7 @@ export function Accounts() {
                         {a.has_session_id ? (
                           <span
                             className="ml-2 text-[10px] uppercase tracking-wide text-brand-300"
-                            title="Импортирована cookie сессии браузера"
+                            title="Сессия сохранена — используется для автопостинга"
                           >
                             Сессия
                           </span>
@@ -478,15 +484,25 @@ export function Accounts() {
                           </span>
                         ) : null}
                       </div>
-                      <a
-                        href={`https://www.instagram.com/${encodeURIComponent(a.username)}/`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="mt-1 inline-flex items-center gap-1 text-xs font-normal text-brand-300 hover:text-brand-200"
-                      >
-                        <ExternalLink size={12} />
-                        Открыть Instagram
-                      </a>
+                      <div className="flex flex-col items-start gap-1">
+                        <a
+                          href={`https://www.instagram.com/${encodeURIComponent(a.username)}/`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-xs font-normal text-brand-300 hover:text-brand-200"
+                        >
+                          <ExternalLink size={12} />
+                          Профиль
+                        </a>
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 text-xs font-normal text-sky-300 hover:text-sky-200"
+                          onClick={() => setBrowserAccount(a)}
+                        >
+                          <MonitorPlay size={12} />
+                          Браузер Instagram
+                        </button>
+                      </div>
                     </td>
                     <td>
                       <StatusBadge value={a.status} />
@@ -684,6 +700,16 @@ export function Accounts() {
         onClose={() => setSessionSetupAccount(null)}
         onCompleted={onSessionSetupCompleted}
       />
+      <Modal
+        open={browserAccount !== null}
+        onClose={() => setBrowserAccount(null)}
+        title={`Браузер · @${browserAccount?.username ?? ""}`}
+        widthClass="max-w-5xl"
+      >
+        {browserAccount ? (
+          <InstagramBrowserPanel username={browserAccount.username} adminToken={adminToken} />
+        ) : null}
+      </Modal>
       <SessionModal
         account={sessionAccount}
         open={sessionAccount !== null}
@@ -727,6 +753,8 @@ function AddAccountModal({
     login_identifier: "",
     email: "",
     email_password: "",
+    account_line: "",
+    backup_codes: "",
   });
 
   useEffect(() => {
@@ -750,6 +778,8 @@ function AddAccountModal({
         login_identifier: form.login_identifier?.trim() ? form.login_identifier.trim() : null,
         email: form.email?.trim() ? form.email.trim() : null,
         email_password: form.email_password?.trim() ? form.email_password : null,
+        account_line: form.account_line?.trim() ? form.account_line.trim() : null,
+        backup_codes: form.backup_codes?.trim() ? form.backup_codes.trim() : null,
       };
       await api.accounts.create(payload);
       await onSaved();
@@ -767,6 +797,8 @@ function AddAccountModal({
         login_identifier: "",
         email: "",
         email_password: "",
+        account_line: "",
+        backup_codes: "",
       });
     } catch (err) {
       push((err as Error).message, "error");
@@ -826,6 +858,24 @@ function AddAccountModal({
           <p className="text-xs text-slate-500 mt-1">
             Если входите по email или телефону, а не по @username выше — укажите здесь.
           </p>
+        </div>
+        <div>
+          <label className="label">Строка аккаунта (необязательно)</label>
+          <textarea
+            className="input min-h-[72px] font-mono text-xs"
+            value={form.account_line ?? ""}
+            onChange={(e) => setForm({ ...form, account_line: e.target.value })}
+            placeholder="user:pass:BACKUP CODES:url"
+          />
+        </div>
+        <div>
+          <label className="label">Backup-коды 2FA (необязательно)</label>
+          <textarea
+            className="input min-h-[56px] font-mono text-xs"
+            value={form.backup_codes ?? ""}
+            onChange={(e) => setForm({ ...form, backup_codes: e.target.value })}
+            placeholder="JUJW WLWP QGPU …"
+          />
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>

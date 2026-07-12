@@ -111,6 +111,8 @@ class AccountIn(BaseModel):
     login_identifier: Optional[str] = Field(default=None, max_length=200)
     email: Optional[str] = Field(default=None, max_length=200)
     email_password: Optional[str] = Field(default=None, max_length=500)
+    backup_codes: Optional[str] = Field(default=None, max_length=4000)
+    account_line: Optional[str] = Field(default=None, max_length=8000)
 
     @model_validator(mode="after")
     def _validate_business_rules(self) -> "AccountIn":
@@ -207,10 +209,39 @@ class FirstLoginOut(BaseModel):
     run_id: int
     ok: bool
     challenge: bool = False
+    browser_tab_hint: bool = False
     session_imported: bool = False
     connection_test: Optional[AccountConnectionTestOut] = None
     error: Optional[str] = None
     login_debug_available: bool = False
+    logs: list[DiagnosticLogLineOut] = Field(default_factory=list)
+
+
+class BrowserSessionOut(BaseModel):
+    username: str
+    status: Literal[
+        "starting",
+        "running",
+        "awaiting_code",
+        "saved",
+        "error",
+        "stopped",
+    ]
+    awaiting_code: bool = False
+    vnc_path: Optional[str] = None
+    page_url: Optional[str] = None
+    error: Optional[str] = None
+
+
+class BrowserCodeIn(BaseModel):
+    code: Optional[str] = Field(default=None, max_length=64)
+
+
+class BrowserSaveOut(BrowserSessionOut):
+    session_imported: bool = False
+    session_id_saved: bool = False
+    overall_ok: bool = False
+    connection_test: Optional["AccountConnectionTestOut"] = None
     logs: list[DiagnosticLogLineOut] = Field(default_factory=list)
 
 

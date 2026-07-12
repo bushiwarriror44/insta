@@ -3,10 +3,13 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import accounts, dashboard, diagnostics, events, health, jobs, proxies, publications, videos
+from app.api.routes import accounts, browser, dashboard, diagnostics, events, health, jobs, proxies, publications, videos
 from app.config import settings
 from app.db import init_db
 from app.logging_setup import configure_logging, get_logger
@@ -49,12 +52,17 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(dashboard.router)
     app.include_router(accounts.router)
+    app.include_router(browser.router)
     app.include_router(proxies.router)
     app.include_router(videos.router)
     app.include_router(jobs.router)
     app.include_router(diagnostics.router)
     app.include_router(publications.router)
     app.include_router(events.router)
+
+    novnc_dir = Path("/usr/share/novnc")
+    if novnc_dir.is_dir():
+        app.mount("/novnc", StaticFiles(directory=str(novnc_dir)), name="novnc")
 
     return app
 

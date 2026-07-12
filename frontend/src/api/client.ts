@@ -5,6 +5,8 @@ import type {
   AccountProxyUpdate,
   AccountSessionOut,
   AccountSessionUpdate,
+  BrowserSaveOut,
+  BrowserSessionOut,
   CookiesImportOut,
   DashboardSummary,
   DiagnosticRunOut,
@@ -262,6 +264,33 @@ export const api = {
     fetchLoginDebugScreenshot: (username: string) =>
       fetchObjectUrl(
         `/api/accounts/${encodeURIComponent(username)}/login-debug-screenshot`
+      ),
+    browserStart: (username: string) =>
+      request<BrowserSessionOut>(
+        `/api/accounts/${encodeURIComponent(username)}/browser/start`,
+        { method: "POST" }
+      ),
+    browserStatus: (username: string) =>
+      request<BrowserSessionOut>(
+        `/api/accounts/${encodeURIComponent(username)}/browser/status`
+      ),
+    browserSubmitCode: (username: string, code: string | null) =>
+      request<BrowserSessionOut>(
+        `/api/accounts/${encodeURIComponent(username)}/browser/code`,
+        { method: "POST", body: { code } }
+      ),
+    browserSave: (username: string, opts?: { stopAfterSave?: boolean }) =>
+      request<BrowserSaveOut>(
+        `/api/accounts/${encodeURIComponent(username)}/browser/save`,
+        {
+          method: "POST",
+          query: opts?.stopAfterSave ? { stop_after_save: true } : undefined,
+        }
+      ),
+    browserStop: (username: string) =>
+      request<BrowserSessionOut>(
+        `/api/accounts/${encodeURIComponent(username)}/browser/stop`,
+        { method: "DELETE" }
       ),
     exportDeviceFingerprint: (username: string) =>
       downloadFile(

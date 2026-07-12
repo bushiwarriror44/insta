@@ -45,3 +45,18 @@ def require_token(authorization: Optional[str] = Header(default=None)) -> None:
 
 
 AuthDep = Depends(require_token)
+
+
+def verify_ws_token(authorization: Optional[str], token_query: Optional[str] = None) -> bool:
+    """Return True when the Bearer/?token= value matches ``settings.admin_token``."""
+    expected = settings.admin_token
+    if not expected:
+        return True
+
+    provided: str | None = None
+    if authorization and authorization.lower().startswith("bearer "):
+        provided = authorization.split(" ", 1)[1].strip()
+    elif token_query:
+        provided = token_query.strip()
+
+    return bool(provided and provided == expected)

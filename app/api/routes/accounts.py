@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.accounts.backup_codes import parse_account_line, serialize_backup_codes
 from app.accounts.connection_test import run_account_connection_test
 from app.accounts.cookie_formats import CookieFormatError, import_cookies_data, write_dolphin_cookies_export
 from app.accounts.device_factory import device_path, load_fingerprint
@@ -149,6 +150,18 @@ def create_account(payload: AccountIn, db: Session = Depends(get_db)) -> Account
         account.email = payload.email or None
     if payload.email_password is not None:
         account.email_password = payload.email_password or None
+    if payload.backup_codes is not None:
+        account.backup_codes = payload.backup_codes.strip() or None
+    if payload.account_line:
+        try:
+            parsed = parse_account_line(payload.account_line)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        account.username = parsed["username"]
+        account.password = parsed["password"]
+        codes = parsed.get("backup_codes") or []
+        if codes:
+            account.backup_codes = serialize_backup_codes(codes)
     if account.status == AccountStatus.blocked:
         account.status = AccountStatus.active
 

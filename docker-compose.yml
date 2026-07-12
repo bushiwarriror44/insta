@@ -27,6 +27,10 @@ services:
       dockerfile: Dockerfile
     container_name: insta-reels-api
     restart: unless-stopped
+    shm_size: "1gb"
+    environment:
+      DISPLAY: ":99"
+      BROWSER_VNC_ENABLED: "true"
     env_file:
       - .env
     volumes:

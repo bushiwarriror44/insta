@@ -111,6 +111,7 @@ class Account(Base):
     email: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     email_password: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     totp_seed: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    backup_codes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     session_id: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
 
     status: Mapped[AccountStatus] = mapped_column(

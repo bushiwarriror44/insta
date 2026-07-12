@@ -21,7 +21,20 @@ const apiMock = vi.hoisted(() => ({
     firstLogin: vi.fn(),
     updateSession: vi.fn(),
     testConnection: vi.fn(),
+    browserStatus: vi.fn().mockResolvedValue({
+      username: "alice",
+      status: "stopped",
+      awaiting_code: false,
+    }),
+    browserStart: vi.fn(),
+    browserSave: vi.fn(),
+    browserStop: vi.fn(),
+    browserSubmitCode: vi.fn(),
   },
+}));
+
+vi.mock("../../context/AuthContext", () => ({
+  useAuth: () => ({ state: { state: "open" } }),
 }));
 
 vi.mock("../../api/client", async () => {
@@ -55,14 +68,15 @@ beforeEach(() => {
 });
 
 describe("SessionSetupModal", () => {
-  it("renders auto and manual tabs", () => {
+  it("renders connection method choice screen first", () => {
     renderModal();
-    expect(screen.getByRole("button", { name: /Автовход/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Ручной импорт/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Создать сессию/i })).toBeInTheDocument();
+    expect(screen.getByText(/Выберите способ подключения/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Автоматически/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Через браузер/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Создать сессию/i })).not.toBeInTheDocument();
   });
 
-  it("calls firstLogin on auto tab", async () => {
+  it("calls firstLogin after choosing auto mode", async () => {
     apiMock.accounts.firstLogin.mockResolvedValue({
       run_id: 1,
       ok: true,
@@ -81,6 +95,7 @@ describe("SessionSetupModal", () => {
       },
     });
     renderModal();
+    fireEvent.click(screen.getByRole("button", { name: /Автоматически/i }));
     fireEvent.click(screen.getByRole("button", { name: /Создать сессию/i }));
     await waitFor(() =>
       expect(apiMock.accounts.firstLogin).toHaveBeenCalledWith("alice")
@@ -90,19 +105,29 @@ describe("SessionSetupModal", () => {
     );
   });
 
-  it("switches to manual tab on challenge", async () => {
+  it("disables Done on browser path until session saved", async () => {
+    renderModal();
+    fireEvent.click(screen.getByRole("button", { name: /Через браузер/i }));
+    const doneBtn = screen.getByRole("button", { name: /Готово/i });
+    expect(doneBtn).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Запустить браузер/i })).toBeInTheDocument();
+  });
+
+  it("switches to browser mode on challenge from auto", async () => {
     apiMock.accounts.firstLogin.mockResolvedValue({
       run_id: 2,
       ok: false,
       challenge: true,
+      browser_tab_hint: true,
       session_imported: false,
       error: "challenge",
       logs: [],
     });
     renderModal();
+    fireEvent.click(screen.getByRole("button", { name: /Автоматически/i }));
     fireEvent.click(screen.getByRole("button", { name: /Создать сессию/i }));
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Ручной импорт/i })).toHaveClass("bg-slate-800")
+      expect(screen.getByRole("button", { name: /Запустить браузер/i })).toBeInTheDocument()
     );
   });
 
@@ -111,6 +136,7 @@ describe("SessionSetupModal", () => {
       new ApiError(405, "Method Not Allowed")
     );
     renderModal();
+    fireEvent.click(screen.getByRole("button", { name: /Автоматически/i }));
     fireEvent.click(screen.getByRole("button", { name: /Создать сессию/i }));
     await waitFor(() =>
       expect(screen.getByText(/Метод не разрешён \(405\)/i)).toBeInTheDocument()

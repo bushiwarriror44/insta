@@ -84,6 +84,37 @@ def test_first_login_service_challenge(db_session, make_account, make_proxy, mon
     assert out.challenge is True
 
 
+def test_first_login_skips_playwright_when_session_exists(
+    db_session, make_account, make_proxy, monkeypatch
+):
+    proxy = make_proxy(label="px-saved")
+    account = make_account(username="saveduser", proxy=proxy)
+    account.session_id = "d" * 40
+    db_session.commit()
+
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.playwright_browsers_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.storage_state_has_session",
+        lambda username: username == "saveduser",
+    )
+
+    def _fail_first_login(**kwargs):
+        raise AssertionError("first_login should not run when session already exists")
+
+    monkeypatch.setattr("app.accounts.first_login_service.first_login", _fail_first_login)
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.run_account_connection_test",
+        lambda acc, db: _connection_ok(acc.username),
+    )
+
+    out = run_account_first_login(account, db_session)
+    assert out.ok is True
+    assert out.session_imported is True
+
+
 def test_first_login_service_normalizes_invalid_proxy_timezone(
     db_session, make_account, make_proxy, monkeypatch
 ):

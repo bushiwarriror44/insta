@@ -104,6 +104,8 @@ export interface AccountIn {
   login_identifier?: string | null;
   email?: string | null;
   email_password?: string | null;
+  backup_codes?: string | null;
+  account_line?: string | null;
 }
 
 export interface AccountProxyUpdate {
@@ -189,11 +191,37 @@ export interface FirstLoginOut {
   run_id: number;
   ok: boolean;
   challenge: boolean;
+  browser_tab_hint?: boolean;
   session_imported: boolean;
   connection_test?: AccountConnectionTestOut | null;
   error?: string | null;
   login_debug_available: boolean;
   logs: DiagnosticLogLine[];
+}
+
+export type BrowserSessionStatus =
+  | "starting"
+  | "running"
+  | "awaiting_code"
+  | "saved"
+  | "error"
+  | "stopped";
+
+export interface BrowserSessionOut {
+  username: string;
+  status: BrowserSessionStatus;
+  awaiting_code: boolean;
+  vnc_path?: string | null;
+  page_url?: string | null;
+  error?: string | null;
+}
+
+export interface BrowserSaveOut extends BrowserSessionOut {
+  session_imported: boolean;
+  session_id_saved: boolean;
+  overall_ok: boolean;
+  connection_test?: AccountConnectionTestOut | null;
+  logs?: DiagnosticLogLine[];
 }
 
 export interface VideoOut {

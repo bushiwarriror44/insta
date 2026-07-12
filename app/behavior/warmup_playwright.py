@@ -500,6 +500,37 @@ async def _try_submit_totp(page, totp_seed: str | None) -> bool:
     return False
 
 
+async def submit_verification_code(page, code: str) -> bool:
+    """Type a 2FA/challenge/backup code into the active Instagram form."""
+    normalized = (code or "").strip().replace(" ", "")
+    if not normalized:
+        return False
+    selectors = [
+        'input[name="verificationCode"]',
+        'input[name="security_code"]',
+        'input[name="email_confirmation_code"]',
+        'input[aria-label*="code" i]',
+        'input[autocomplete="one-time-code"]',
+    ]
+    for sel in selectors:
+        try:
+            loc = page.locator(sel).first
+            if await loc.count() == 0:
+                continue
+            await _human_type(page, sel, normalized, click_first=True)
+            await _human_wait(0.5, 1.2)
+            confirm = page.locator('button[type="submit"]').first
+            if await confirm.count() > 0:
+                await confirm.click()
+            else:
+                await page.keyboard.press("Enter")
+            await _human_wait(2.0, 4.0)
+            return True
+        except Exception:
+            continue
+    return False
+
+
 async def _is_still_on_login_page(page) -> bool:
     url = (page.url or "").lower()
     if "accounts/login" in url:

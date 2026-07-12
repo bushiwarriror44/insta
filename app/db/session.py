@@ -35,6 +35,7 @@ _PENDING_COLUMNS: list[tuple[str, str, str]] = [
     ("accounts", "caption_profile", "VARCHAR(32)"),
     ("accounts", "session_id", "VARCHAR(1000)"),
     ("accounts", "login_identifier", "VARCHAR(200)"),
+    ("accounts", "backup_codes", "TEXT"),
     ("proxies", "last_geo_country", "VARCHAR(8)"),
     ("post_jobs", "post_type", "VARCHAR(32)"),
     ("post_logs", "post_type", "VARCHAR(32)"),

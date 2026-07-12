@@ -1,4 +1,12 @@
-import { CheckCircle2, KeyRound, RefreshCw, Sparkles, XCircle } from "lucide-react";
+import {
+  ArrowLeft,
+  CheckCircle2,
+  KeyRound,
+  MonitorPlay,
+  RefreshCw,
+  Sparkles,
+  XCircle,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { api, formatApiError } from "../api/client";
@@ -6,14 +14,17 @@ import type {
   AccountConnectionTestOut,
   AccountOut,
   AccountSessionUpdate,
+  BrowserSaveOut,
   FirstLoginOut,
   InstagramAuthStepOut,
 } from "../api/types";
 import { DiagnosticLogPanel } from "./DiagnosticLogPanel";
+import { InstagramBrowserPanel } from "./InstagramBrowserPanel";
 import { Modal } from "./Modal";
 import { useToast } from "../context/ToastContext";
+import { useAuth } from "../context/AuthContext";
 
-type Tab = "auto" | "manual";
+type ConnectionMode = "choose" | "auto" | "browser" | "manual";
 
 interface Props {
   account: AccountOut | null;
@@ -35,26 +46,31 @@ export function isSessionMissing(auth: Pick<InstagramAuthStepOut, "error" | "err
 
 export function SessionSetupModal({ account, open, onClose, onCompleted }: Props) {
   const { push } = useToast();
-  const [tab, setTab] = useState<Tab>("auto");
+  const { state: authState } = useAuth();
+  const adminToken = authState.state === "authed" ? authState.token : null;
+  const [connectionMode, setConnectionMode] = useState<ConnectionMode>("choose");
   const [autoBusy, setAutoBusy] = useState(false);
   const [manualBusy, setManualBusy] = useState(false);
   const [sessionId, setSessionId] = useState("");
   const [firstLoginResult, setFirstLoginResult] = useState<FirstLoginOut | null>(null);
   const [connectionResult, setConnectionResult] = useState<AccountConnectionTestOut | null>(null);
+  const [browserSuccess, setBrowserSuccess] = useState(false);
   const [loginDebugUrl, setLoginDebugUrl] = useState<string | null>(null);
   const loginDebugUrlRef = useRef<string | null>(null);
 
   const success =
     firstLoginResult?.ok === true ||
     connectionResult?.overall_ok === true ||
-    firstLoginResult?.connection_test?.overall_ok === true;
+    firstLoginResult?.connection_test?.overall_ok === true ||
+    browserSuccess;
 
   useEffect(() => {
     if (!open) return;
-    setTab("auto");
+    setConnectionMode("choose");
     setSessionId("");
     setFirstLoginResult(null);
     setConnectionResult(null);
+    setBrowserSuccess(false);
     setAutoBusy(false);
     setManualBusy(false);
     if (loginDebugUrlRef.current) {
@@ -109,16 +125,24 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
   }, [open, account?.username, firstLoginResult?.login_debug_available]);
 
   useEffect(() => {
-    if (firstLoginResult?.challenge) {
-      setTab("manual");
+    if (firstLoginResult?.challenge || firstLoginResult?.browser_tab_hint) {
+      setConnectionMode("browser");
     }
-  }, [firstLoginResult?.challenge]);
+  }, [firstLoginResult?.challenge, firstLoginResult?.browser_tab_hint]);
+
+  function handleBrowserSessionSaved(result: BrowserSaveOut) {
+    if (result.connection_test) {
+      setConnectionResult(result.connection_test);
+    }
+    setBrowserSuccess(result.overall_ok === true);
+  }
 
   async function runAutoLogin() {
     if (!account) return;
     setAutoBusy(true);
     setFirstLoginResult(null);
     setConnectionResult(null);
+    setBrowserSuccess(false);
     try {
       const data = await api.accounts.firstLogin(account.username);
       setFirstLoginResult(data);
@@ -128,7 +152,8 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
       if (data.ok) {
         push(`@${account.username}: сессия создана и проверена`, "success");
       } else if (data.challenge) {
-        push("Требуется ручное подтверждение — используйте вкладку «Ручной импорт»", "error");
+        push("Требуется подтверждение — переключитесь на вход через браузер", "error");
+        setConnectionMode("browser");
       } else {
         push(data.error ?? "Автовход не удался", "error");
       }
@@ -149,6 +174,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
     }
     setManualBusy(true);
     setConnectionResult(null);
+    setBrowserSuccess(false);
     try {
       const payload: AccountSessionUpdate = { session_id: trimmed };
       await api.accounts.updateSession(account.username, payload);
@@ -172,27 +198,39 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
   }
 
   const logs =
-    firstLoginResult?.logs ??
     connectionResult?.logs ??
+    firstLoginResult?.logs ??
     firstLoginResult?.connection_test?.logs ??
     [];
+
+  const showBack = connectionMode !== "choose" && !success;
 
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={`Настройка сессии · @${account?.username ?? ""}`}
-      widthClass="max-w-2xl"
+      widthClass="max-w-4xl"
       footer={
         <>
-          <button type="button" onClick={onClose} className="btn-ghost">
-            <XCircle size={16} /> Закрыть
-          </button>
+          {showBack ? (
+            <button
+              type="button"
+              onClick={() => setConnectionMode("choose")}
+              className="btn-ghost"
+            >
+              <ArrowLeft size={16} /> Назад
+            </button>
+          ) : (
+            <button type="button" onClick={onClose} className="btn-ghost">
+              <XCircle size={16} /> Закрыть
+            </button>
+          )}
           {success ? (
             <button type="button" className="btn-primary" onClick={handleDone}>
               <CheckCircle2 size={16} /> Готово
             </button>
-          ) : tab === "auto" ? (
+          ) : connectionMode === "choose" ? null : connectionMode === "auto" ? (
             <button
               type="button"
               className="btn-primary"
@@ -201,6 +239,16 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
             >
               <Sparkles size={16} className={autoBusy ? "animate-spin" : ""} />
               {autoBusy ? "Создание сессии…" : "Создать сессию"}
+            </button>
+          ) : connectionMode === "browser" ? (
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={!browserSuccess}
+              onClick={handleDone}
+              title={browserSuccess ? undefined : "Сначала сохраните сессию в браузере"}
+            >
+              <CheckCircle2 size={16} /> Готово
             </button>
           ) : (
             <button
@@ -223,45 +271,80 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
           тем, через который вы входите в Instagram.
         </div>
 
-        <div className="flex gap-1 p-1 rounded-lg bg-slate-900/60 border border-slate-800">
-          <button
-            type="button"
-            className={`flex-1 text-sm py-1.5 rounded-md ${
-              tab === "auto" ? "bg-slate-800 text-white" : "text-slate-400 hover:text-slate-200"
-            }`}
-            onClick={() => setTab("auto")}
-          >
-            Автовход
-          </button>
-          <button
-            type="button"
-            className={`flex-1 text-sm py-1.5 rounded-md ${
-              tab === "manual" ? "bg-slate-800 text-white" : "text-slate-400 hover:text-slate-200"
-            }`}
-            onClick={() => setTab("manual")}
-          >
-            Ручной импорт
-          </button>
-        </div>
-
-        {tab === "auto" ? (
+        {connectionMode === "choose" ? (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-300">Выберите способ подключения:</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                className="rounded-xl border border-slate-700 bg-slate-900/50 p-4 text-left hover:border-brand-500/50 hover:bg-slate-900 transition-colors"
+                onClick={() => setConnectionMode("auto")}
+              >
+                <div className="flex items-center gap-2 text-white font-medium mb-2">
+                  <Sparkles size={18} className="text-brand-400" />
+                  Автоматически
+                </div>
+                <p className="text-xs text-slate-400">
+                  Сервер выполнит вход через Playwright. Подходит, если 2FA настроена через TOTP seed.
+                </p>
+              </button>
+              <button
+                type="button"
+                className="rounded-xl border border-slate-700 bg-slate-900/50 p-4 text-left hover:border-sky-500/50 hover:bg-slate-900 transition-colors"
+                onClick={() => setConnectionMode("browser")}
+              >
+                <div className="flex items-center gap-2 text-white font-medium mb-2">
+                  <MonitorPlay size={18} className="text-sky-400" />
+                  Через браузер
+                </div>
+                <p className="text-xs text-slate-400">
+                  Интерактивный вход в noVNC: 2FA, challenge и backup-коды вручную. Сессия сохраняется
+                  для автопостинга.
+                </p>
+              </button>
+            </div>
+            <button
+              type="button"
+              className="text-xs text-slate-500 hover:text-slate-300 underline"
+              onClick={() => setConnectionMode("manual")}
+            >
+              Другой способ: вставить sessionid вручную
+            </button>
+          </div>
+        ) : connectionMode === "auto" ? (
           <div className="space-y-3 text-sm">
             <ol className="list-decimal list-inside space-y-2 text-slate-300">
-              <li>Убедитесь, что прокси назначен и Instagram доступен (шаги 1–3 проверки подключения).</li>
+              <li>Убедитесь, что прокси назначен и Instagram доступен.</li>
               <li>Нажмите «Создать сессию» — сервер выполнит вход через Playwright Chromium.</li>
               <li>Если на аккаунте включена 2FA, укажите TOTP seed в настройках аккаунта.</li>
               <li>После успеха sessionid сохранится в БД и запустится повторная проверка.</li>
             </ol>
             <p className="text-xs text-slate-400">
-              Если входите по email или телефону, укажите это в настройках аккаунта в поле «Логин Instagram».
+              Если входите по email или телефону, укажите это в настройках аккаунта в поле «Логин
+              Instagram».
             </p>
             {firstLoginResult?.challenge ? (
               <div className="rounded-lg border border-amber-500/50 bg-amber-950/40 p-3 text-xs text-amber-100">
-                Instagram запросил ручное подтверждение. Перейдите на вкладку «Ручной импорт» и вставьте
-                sessionid из Dolphin или браузера после входа.
+                Instagram запросил подтверждение.{" "}
+                <button
+                  type="button"
+                  className="underline hover:text-amber-50"
+                  onClick={() => setConnectionMode("browser")}
+                >
+                  Перейти к входу через браузер
+                </button>
               </div>
             ) : null}
           </div>
+        ) : connectionMode === "browser" ? (
+          account ? (
+            <InstagramBrowserPanel
+              username={account.username}
+              adminToken={adminToken}
+              mode="setup"
+              onSessionSaved={handleBrowserSessionSaved}
+            />
+          ) : null
         ) : (
           <div className="space-y-4">
             <ol className="list-decimal list-inside space-y-2 text-sm text-slate-300">
@@ -300,6 +383,11 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
                 {(connectionResult ?? firstLoginResult?.connection_test)?.instagram_auth.ig_username}
               </div>
             ) : null}
+            {connectionMode === "browser" ? (
+              <div className="mt-1 text-xs opacity-90">
+                Та же сессия будет использоваться для автопостинга и повторного автовхода.
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -329,7 +417,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
           </div>
         ) : null}
 
-        {!success && !autoBusy && tab === "manual" && (
+        {!success && !autoBusy && connectionMode === "manual" && (
           <button
             type="button"
             className="btn-ghost text-xs"

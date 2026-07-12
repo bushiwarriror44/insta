@@ -808,3 +808,105 @@ def test_events_endpoint_returns_list(api_client):
     res = api_client.get("/api/events")
     assert res.status_code == 200
     assert isinstance(res.json(), list)
+
+
+def test_browser_routes_start_status_code_save_stop(api_client, app_env, monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.browser.session_manager import BrowserSessionStatus, browser_session_manager
+    from app.config import settings
+    from app.db import Account, Proxy
+
+    monkeypatch.setattr(settings, "browser_vnc_enabled", True, raising=True)
+
+    async def _fake_start(account, proxy, **kwargs):
+        browser_session_manager._sessions[account.username] = MagicMock(
+            username=account.username,
+            status=BrowserSessionStatus.running,
+            awaiting_code=False,
+            ws_port=16080,
+            vnc_path=f"api/accounts/{account.username}/browser/vnc/ws",
+            page_url="https://www.instagram.com/",
+            error=None,
+        )
+        return browser_session_manager._sessions[account.username]
+
+    monkeypatch.setattr(browser_session_manager, "start_session", _fake_start)
+    monkeypatch.setattr(
+        browser_session_manager,
+        "status_dict",
+        lambda username: {
+            "username": username,
+            "status": "running",
+            "awaiting_code": False,
+            "vnc_path": f"api/accounts/{username}/browser/vnc/ws",
+            "page_url": "https://www.instagram.com/",
+            "error": None,
+        },
+    )
+    monkeypatch.setattr(browser_session_manager, "submit_code", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        browser_session_manager,
+        "save_session",
+        AsyncMock(return_value={"session_imported": True, "session_id_saved": True}),
+    )
+    monkeypatch.setattr(browser_session_manager, "stop_session", AsyncMock())
+
+    def _connection_ok(acc, db):
+        from datetime import datetime, timezone
+
+        from app.api.schemas import (
+            AccountConnectionTestOut,
+            InstagramAuthStepOut,
+            ProxyHealthStepOut,
+            SessionStorageStepOut,
+        )
+
+        username = acc.username
+        return AccountConnectionTestOut(
+            username=username,
+            proxy_assigned=True,
+            proxy_label="br-proxy",
+            proxy_health=ProxyHealthStepOut(ok=True, instagram_reachable=True),
+            session_storage=SessionStorageStepOut(
+                has_session_id=True,
+                session_file_exists=False,
+                device_file_exists=True,
+                session_source="database",
+            ),
+            instagram_auth=InstagramAuthStepOut(ok=True, method="sessionid", challenge=False),
+            overall_ok=True,
+            checked_at=datetime.now(timezone.utc),
+            run_id=1,
+            logs=[],
+        )
+
+    monkeypatch.setattr(
+        "app.api.routes.browser.run_account_connection_test",
+        _connection_ok,
+    )
+
+    db = app_env.SessionLocal()
+    proxy = Proxy(label="br-proxy", url="http://u:p@1.2.3.4:8080", country="US")
+    db.add(proxy)
+    db.commit()
+    account = Account(username="browser_user", password="secret", proxy_id=proxy.id)
+    db.add(account)
+    db.commit()
+
+    start = api_client.post("/api/accounts/browser_user/browser/start")
+    assert start.status_code == 200
+    assert start.json()["status"] == "running"
+
+    code = api_client.post("/api/accounts/browser_user/browser/code", json={"code": "123456"})
+    assert code.status_code == 200
+
+    save = api_client.post("/api/accounts/browser_user/browser/save")
+    assert save.status_code == 200
+    body = save.json()
+    assert body["session_imported"] is True
+    assert body["overall_ok"] is True
+    assert body["connection_test"]["overall_ok"] is True
+
+    stop = api_client.delete("/api/accounts/browser_user/browser/stop")
+    assert stop.status_code == 200

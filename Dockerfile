@@ -48,7 +48,11 @@ RUN apt-get update && \
         libpango-1.0-0 \
         libcairo2 \
         libgtk-3-0 \
-        libx11-xcb1 && \
+        libx11-xcb1 \
+        xvfb \
+        x11vnc \
+        novnc \
+        websockify && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
@@ -101,7 +105,11 @@ RUN apt-get update && \
         libpango-1.0-0 \
         libcairo2 \
         libgtk-3-0 \
-        libx11-xcb1 && \
+        libx11-xcb1 \
+        xvfb \
+        x11vnc \
+        novnc \
+        websockify && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/venv /opt/venv
