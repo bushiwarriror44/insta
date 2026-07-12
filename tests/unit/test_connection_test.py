@@ -223,6 +223,8 @@ def test_run_account_connection_test_no_proxy(db_session, make_proxy):
     assert result.proxy_assigned is False
     assert result.run_id > 0
     assert any(line.step == "proxy" for line in result.logs)
+    assert any(line.step == "account" for line in result.logs)
+    assert any("Пароль:" in line.message for line in result.logs if line.step == "account")
 
 
 def test_diagnostic_runs_list_after_connection_test(api_client, monkeypatch):

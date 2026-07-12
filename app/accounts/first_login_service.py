@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
+from app.accounts.account_diagnostics import log_account_credentials
 from app.accounts.connection_test import run_account_connection_test
 from app.accounts.login_identifier import (
     is_account_not_found_error,
@@ -240,9 +241,8 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
         )
 
     login_id = resolve_login_identifier(account)
+    log_account_credentials(collector, account, proxy)
     collector.info("start", f"Автовход через браузер для @{account.username}")
-    if login_id.lower() != account.username.lower():
-        collector.info("browser", f"Логин Instagram: {login_id}")
     collector.info("proxy", f"Прокси {proxy.label}")
 
     fingerprint = ensure_fingerprint_and_proxy(
@@ -289,6 +289,8 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
         if fallback_out is not None:
             return fallback_out
         final_error = api_err or msg
+        if api_err and "Неверный пароль" in api_err:
+            final_error = api_err
         collector.finish("fail", final_error)
         return FirstLoginOut(
             run_id=collector.run_id,

@@ -6,6 +6,7 @@ from typing import Literal
 
 from sqlalchemy.orm import Session
 
+from app.accounts.account_diagnostics import log_account_credentials
 from app.accounts.device_factory import device_path
 from app.accounts.session_export import export_sessionid
 from app.accounts.session_manager import (
@@ -86,6 +87,9 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
         kind=DiagnosticRunKind.connection_test,
         account_id=account.id,
     )
+
+    proxy_for_log = db.get(Proxy, account.proxy_id) if account.proxy_id else None
+    log_account_credentials(collector, account, proxy_for_log)
 
     file_exists = session_path(username).exists()
     device_exists = device_path(username).exists()

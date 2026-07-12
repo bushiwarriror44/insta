@@ -629,6 +629,37 @@ def _instagram_sessionid_from_cookies(cookies: list) -> str | None:
     return sessionid_from_cookies_array(cookies)
 
 
+def _has_auth_cookies(cookies: list) -> bool:
+    """True when Instagram auth cookies indicate a logged-in session."""
+    for item in cookies:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        value = item.get("value")
+        if not isinstance(name, str) or not isinstance(value, str):
+            continue
+        stripped = value.strip()
+        if not stripped:
+            continue
+        if name == "sessionid" and len(stripped) >= 31:
+            return True
+        if name == "ds_user_id":
+            return True
+    return False
+
+
+def _is_guest_browse_url(url: str) -> bool:
+    path = (url or "").split("?", 1)[0].rstrip("/")
+    return path in ("https://www.instagram.com", "https://www.instagram.com/explore")
+
+
+def _guest_explore_error_message() -> str:
+    return (
+        "Вход не выполнен — открыт гостевой Explore без sessionid. "
+        "Скорее всего неверный пароль или логин."
+    )
+
+
 def _cookie_names(cookies: list) -> tuple[str, ...]:
     names: list[str] = []
     for item in cookies:
@@ -686,9 +717,9 @@ async def _resolve_instagram_sessionid(
     deadline = time.monotonic() + timeout_sec
     last_names: tuple[str, ...] = ()
     nav_targets = (
+        f"{_INSTAGRAM_URL}/accounts/onetap/",
         _INSTAGRAM_URL,
         f"{_INSTAGRAM_URL}/explore/",
-        f"{_INSTAGRAM_URL}/accounts/onetap/",
     )
     nav_index = 0
 
@@ -761,19 +792,9 @@ async def _dismiss_post_login_modals(page) -> None:
 
 
 async def _is_logged_in(context, page) -> bool:
-    """True when sessionid cookie exists or login form is gone with nav visible."""
+    """True only when Instagram auth cookies (sessionid or ds_user_id) are present."""
     cookies = await _gather_instagram_cookies(context)
-    if _instagram_sessionid_from_cookies(cookies):
-        return True
-    try:
-        username_sel = await _first_visible_selector(page, _USERNAME_SELECTORS)
-        if username_sel:
-            return False
-        nav_visible = await page.locator('a[href="/explore/"]').count() > 0
-        home_visible = await page.locator('a[href="/"]').count() > 0
-        return nav_visible or home_visible
-    except Exception:
-        return False
+    return _has_auth_cookies(cookies)
 
 
 def playwright_browsers_available() -> bool:
@@ -912,6 +933,17 @@ async def _async_first_login(
             except Exception:
                 pass
 
+            try:
+                await page.goto(
+                    f"{_INSTAGRAM_URL}/accounts/onetap/",
+                    wait_until="domcontentloaded",
+                    timeout=25000,
+                )
+                await _human_wait(2.0, 4.0)
+                await _dismiss_post_login_modals(page)
+            except Exception:
+                pass
+
             await _try_submit_totp(page, totp_seed)
             await _human_wait(3.0, 6.0)
             await _dismiss_post_login_modals(page)
@@ -999,6 +1031,10 @@ async def _async_first_login(
                     "Браузер остался на странице логина — Instagram не принял учётные данные "
                     "или блокирует автоматический вход"
                 )
+            elif _is_guest_browse_url(failure_page_url) and (
+                "sessionid" not in cookie_names and "ds_user_id" not in cookie_names
+            ):
+                err = _guest_explore_error_message()
             elif cookie_names:
                 preview = ", ".join(cookie_names[:10])
                 suffix = f" (+{len(cookie_names) - 10})" if len(cookie_names) > 10 else ""

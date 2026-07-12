@@ -61,6 +61,36 @@ def test_viewport_from_resolution_falls_back():
     assert wp._viewport_from_resolution("garbage") == {"width": 412, "height": 915}
 
 
+def test_has_auth_cookies_sessionid():
+    cookies = [{"name": "sessionid", "value": "a" * 40}]
+    assert wp._has_auth_cookies(cookies) is True
+
+
+def test_has_auth_cookies_ds_user_id():
+    cookies = [{"name": "ds_user_id", "value": "12345"}]
+    assert wp._has_auth_cookies(cookies) is True
+
+
+def test_has_auth_cookies_guest_only():
+    cookies = [
+        {"name": "csrftoken", "value": "x"},
+        {"name": "datr", "value": "y"},
+    ]
+    assert wp._has_auth_cookies(cookies) is False
+
+
+def test_is_guest_browse_url():
+    assert wp._is_guest_browse_url("https://www.instagram.com/explore/") is True
+    assert wp._is_guest_browse_url("https://www.instagram.com/explore/?foo=1") is True
+    assert wp._is_guest_browse_url("https://www.instagram.com/accounts/login/") is False
+
+
+def test_guest_explore_error_message():
+    msg = wp._guest_explore_error_message()
+    assert "гостевой Explore" in msg
+    assert "пароль" in msg.lower()
+
+
 def test_accept_language_for_locale():
     assert wp._accept_language_for_locale("en-US") == "en-US,en;q=0.9"
 

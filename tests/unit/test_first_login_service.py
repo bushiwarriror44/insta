@@ -182,6 +182,45 @@ def test_first_login_service_bad_password_message(
     assert out.ok is False
     assert "Неверный пароль" in (out.error or "")
     assert out.login_debug_available is True
+    account_logs = [line.message for line in out.logs if line.step == "account"]
+    assert any("Пароль:" in m for m in account_logs)
+    assert any("Логин Instagram:" in m for m in account_logs)
+
+
+def test_first_login_service_guest_explore_error_and_bad_password(
+    db_session, make_account, make_proxy, monkeypatch
+):
+    from app.accounts.session_manager import AuthenticationError
+
+    proxy = make_proxy(label="px-guest")
+    account = make_account(username="guestpw", proxy=proxy, password="wrong")
+
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.playwright_browsers_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.first_login",
+        lambda **kwargs: FirstLoginResult(
+            ok=False,
+            error=(
+                "Вход не выполнен — открыт гостевой Explore без sessionid. "
+                "Скорее всего неверный пароль или логин."
+            ),
+            page_url="https://www.instagram.com/explore/",
+            login_debug_saved=True,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.login_and_export_sessionid",
+        lambda *a, **k: (_ for _ in ()).throw(AuthenticationError("bad password")),
+    )
+
+    out = run_account_first_login(account, db_session)
+    assert out.ok is False
+    assert out.error == "Неверный пароль — обновите пароль аккаунта в панели"
+    login_msgs = [line.message for line in out.logs if line.step == "login"]
+    assert any("гостевой Explore" in m for m in login_msgs)
 
 
 def test_first_login_service_account_not_found_retries_email(
