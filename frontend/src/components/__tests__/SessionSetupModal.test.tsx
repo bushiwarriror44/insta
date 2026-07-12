@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ToastProvider } from "../../context/ToastContext";
+import { ApiError } from "../../api/client";
 import { SessionSetupModal } from "../SessionSetupModal";
 
 const account = {
@@ -23,9 +24,13 @@ const apiMock = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("../../api/client", () => ({
-  api: apiMock,
-}));
+vi.mock("../../api/client", async () => {
+  const actual = await vi.importActual<typeof import("../../api/client")>("../../api/client");
+  return {
+    ...actual,
+    api: apiMock,
+  };
+});
 
 function renderModal(open = true) {
   const onCompleted = vi.fn();
@@ -98,6 +103,17 @@ describe("SessionSetupModal", () => {
     fireEvent.click(screen.getByRole("button", { name: /Создать сессию/i }));
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /Ручной импорт/i })).toHaveClass("bg-slate-800")
+    );
+  });
+
+  it("shows helpful toast on 405 Method Not Allowed", async () => {
+    apiMock.accounts.firstLogin.mockRejectedValue(
+      new ApiError(405, "Method Not Allowed")
+    );
+    renderModal();
+    fireEvent.click(screen.getByRole("button", { name: /Создать сессию/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/Метод не разрешён \(405\)/i)).toBeInTheDocument()
     );
   });
 });

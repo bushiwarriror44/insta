@@ -1,7 +1,7 @@
 import { CheckCircle2, KeyRound, RefreshCw, Sparkles, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { api } from "../api/client";
+import { api, formatApiError } from "../api/client";
 import type {
   AccountConnectionTestOut,
   AccountOut,
@@ -82,7 +82,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
         push(data.error ?? "Автовход не удался", "error");
       }
     } catch (err) {
-      push((err as Error).message, "error");
+      push(formatApiError(err), "error");
     } finally {
       setAutoBusy(false);
     }
@@ -109,7 +109,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
         push(test.instagram_auth.error ?? "Проверка сессии не пройдена", "error");
       }
     } catch (err) {
-      push((err as Error).message, "error");
+      push(formatApiError(err), "error");
     } finally {
       setManualBusy(false);
     }

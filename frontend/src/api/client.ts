@@ -35,6 +35,27 @@ export class ApiError extends Error {
   }
 }
 
+/** User-facing API error text with hints for common status codes. */
+export function formatApiError(err: unknown): string {
+  if (!(err instanceof ApiError)) {
+    return err instanceof Error ? err.message : "Неизвестная ошибка";
+  }
+  const detail = err.message;
+  if (err.status === 405 || detail.toLowerCase().includes("method not allowed")) {
+    return (
+      "Метод не разрешён (405). Не открывайте API-URL в адресной строке браузера — " +
+      "используйте кнопку «Создать сессию» в модале. Обновите страницу (Ctrl+Shift+R)."
+    );
+  }
+  if (err.status === 401) {
+    return "Требуется авторизация (401). Войдите в панель с ADMIN_TOKEN.";
+  }
+  if (err.status === 503 && detail.toLowerCase().includes("playwright")) {
+    return `${detail} Выполните на сервере: docker compose exec reels-api python -m app.cli install-playwright`;
+  }
+  return detail || `HTTP ${err.status}`;
+}
+
 type Method = "GET" | "POST" | "PUT" | "DELETE";
 
 interface RequestOptions {
@@ -83,12 +104,23 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     body = JSON.stringify(opts.body);
   }
 
+  const method = opts.method ?? "GET";
+
   const res = await fetch(buildUrl(path, opts.query), {
-    method: opts.method ?? "GET",
+    method,
     headers,
     body,
     signal: opts.signal,
+    redirect: method === "GET" ? "follow" : "manual",
   });
+
+  if (method !== "GET" && res.status >= 300 && res.status < 400) {
+    throw new ApiError(
+      res.status,
+      "Запрос был перенаправлен — обновите страницу (Ctrl+Shift+R) или проверьте nginx (POST не должен редиректиться в GET)",
+      null
+    );
+  }
 
   if (!res.ok) {
     let detail: unknown = null;

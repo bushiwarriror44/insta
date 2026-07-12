@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, api, configureAuth } from "../client";
+import { ApiError, api, configureAuth, formatApiError } from "../client";
 
 interface FakeResponseInit {
   status?: number;
@@ -293,6 +293,25 @@ describe("body serialization", () => {
     expect(init.body).toBeInstanceOf(FormData);
     expect(out.format).toBe("dolphin");
   });
+
+  it("uses manual redirect for POST requests", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      makeResponse({ status: 200, json: { run_id: 1, ok: true, logs: [] } })
+    );
+    await api.accounts.firstLogin("alice");
+    const { init } = getCall();
+    expect(init.method).toBe("POST");
+    expect(init.redirect).toBe("manual");
+  });
+
+  it("rejects POST redirect responses", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(null, { status: 302, headers: { Location: "/elsewhere" } })
+    );
+    await expect(api.accounts.firstLogin("alice")).rejects.toMatchObject({
+      status: 302,
+    });
+  });
 });
 
 describe("response handling", () => {
@@ -347,6 +366,18 @@ describe("error handling", () => {
       expect((err as ApiError).status).toBe(502);
       expect((err as ApiError).message).toBe("Bad gateway");
     }
+  });
+
+  it("formatApiError explains 405 Method Not Allowed", () => {
+    const msg = formatApiError(new ApiError(405, "Method Not Allowed"));
+    expect(msg).toContain("405");
+    expect(msg).toContain("Создать сессию");
+  });
+
+  it("formatApiError explains 401 auth", () => {
+    const msg = formatApiError(new ApiError(401, "Missing or invalid Authorization header"));
+    expect(msg).toContain("401");
+    expect(msg).toContain("ADMIN_TOKEN");
   });
 });
 
