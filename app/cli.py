@@ -292,13 +292,14 @@ def cmd_first_login(username: str) -> None:
     fp = ensure_fingerprint_and_proxy(username, country=(proxy.country or "US"))
 
     from app.behavior.warmup_playwright import first_login
+    from app.geo.timezone_normalize import normalize_playwright_timezone
 
     success = first_login(
         username=username,
         password=account.password,
         proxy_url=proxy.url,
         locale=fp.locale,
-        timezone_id=(proxy.timezone or "UTC"),
+        timezone_id=normalize_playwright_timezone(proxy.timezone, country=proxy.country),
         user_agent=None,
         fingerprint=fp,
         totp_seed=account.totp_seed,

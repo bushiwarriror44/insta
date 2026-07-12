@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Optional
 
 from app.config import settings
+from app.geo.timezone_normalize import normalize_playwright_timezone
 from app.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -441,16 +442,22 @@ def first_login(
 
     headless = settings.playwright_headless if headless is None else headless
 
-    return asyncio.run(
-        _async_first_login(
-            username=username,
-            password=password,
-            proxy_url=proxy_url,
-            locale=locale.replace("_", "-"),
-            timezone_id=timezone_id,
-            user_agent=user_agent,
-            viewport=viewport,
-            headless=headless,
-            totp_seed=totp_seed,
+    timezone_id = normalize_playwright_timezone(timezone_id)
+
+    try:
+        return asyncio.run(
+            _async_first_login(
+                username=username,
+                password=password,
+                proxy_url=proxy_url,
+                locale=locale.replace("_", "-"),
+                timezone_id=timezone_id,
+                user_agent=user_agent,
+                viewport=viewport,
+                headless=headless,
+                totp_seed=totp_seed,
+            )
         )
-    )
+    except Exception as exc:  # noqa: BLE001 - surface Playwright failures to caller
+        logger.error("playwright.first_login_failed", username=username, error=str(exc))
+        return FirstLoginResult(ok=False, error=str(exc))

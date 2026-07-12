@@ -11,6 +11,7 @@ from app.behavior.warmup_playwright import FirstLoginResult, first_login, playwr
 from app.db import Account, DiagnosticRunKind, Proxy
 from app.diagnostics.collector import DiagnosticCollector
 from app.geo.country_codes import normalize_country_code
+from app.geo.timezone_normalize import normalize_playwright_timezone
 
 
 def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
@@ -70,11 +71,18 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
     )
     collector.info("browser", "Запуск Playwright Chromium")
 
+    tz_id = normalize_playwright_timezone(proxy.timezone, country=proxy.country)
+    if tz_id != (proxy.timezone or "").strip():
+        collector.info(
+            "browser",
+            f"Часовой пояс прокси «{proxy.timezone}» заменён на {tz_id} (Playwright требует IANA)",
+        )
+
     result: FirstLoginResult = first_login(
         username=account.username,
         password=account.password,
         proxy_url=proxy.url,
-        timezone_id=proxy.timezone or "UTC",
+        timezone_id=tz_id,
         fingerprint=fingerprint,
         totp_seed=account.totp_seed,
     )

@@ -77,6 +77,37 @@ def test_first_login_service_challenge(db_session, make_account, make_proxy, mon
     assert out.challenge is True
 
 
+def test_first_login_service_normalizes_invalid_proxy_timezone(
+    db_session, make_account, make_proxy, monkeypatch
+):
+    proxy = make_proxy(label="px-tz", country="US", timezone="+9 UTC")
+    account = make_account(username="tzuser", proxy=proxy)
+    captured: dict = {}
+
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.playwright_browsers_available",
+        lambda: True,
+    )
+
+    def _fake_first_login(**kwargs):
+        captured.update(kwargs)
+        return FirstLoginResult(ok=True)
+
+    monkeypatch.setattr("app.accounts.first_login_service.first_login", _fake_first_login)
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.import_playwright_session_to_account",
+        lambda db, acc: True,
+    )
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.run_account_connection_test",
+        lambda acc, db: _connection_ok(acc.username),
+    )
+
+    out = run_account_first_login(account, db_session)
+    assert out.ok is True
+    assert captured["timezone_id"] == "America/New_York"
+
+
 def test_first_login_service_no_playwright(db_session, make_account, monkeypatch):
     account = make_account(username="nopw")
 
