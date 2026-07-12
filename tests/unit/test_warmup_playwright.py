@@ -80,13 +80,20 @@ class FakePage:
         self._has_login_form = has_login_form
         self._has_challenge = has_challenge
         self._already_logged_in = already_logged_in
+        self.url = "https://www.instagram.com/accounts/login/"
         self.events: list[tuple[str, tuple, dict]] = []
         self.mouse = self
         self.locator_calls: list[str] = []
         self._context: FakeContext | None = None
 
-    async def goto(self, *args, **kwargs):
-        self.events.append(("goto", args, kwargs))
+    async def goto(self, url, *args, **kwargs):
+        self.url = url if isinstance(url, str) else url
+        self.events.append(("goto", (url,), kwargs))
+
+    async def wait_for_function(self, *_a, **_kw):
+        if self._context is not None and self._context.session_id:
+            self.url = "https://www.instagram.com/"
+        return None
 
     def locator(self, selector: str):
         self.locator_calls.append(selector)
@@ -98,7 +105,15 @@ class FakePage:
                 return self_inner
 
             async def count(self_inner):
-                if selector == 'input[name="username"]':
+                if selector in wp._USERNAME_SELECTORS:
+                    return 1 if page._has_login_form and not page._already_logged_in else 0
+                if selector in wp._PASSWORD_SELECTORS:
+                    return 1 if page._has_login_form and not page._already_logged_in else 0
+                if selector in (
+                    'button[type="submit"]',
+                    'button:has-text("Log in")',
+                    'button:has-text("Log In")',
+                ):
                     return 1 if page._has_login_form and not page._already_logged_in else 0
                 if selector == 'a[href="/explore/"]':
                     return 1 if page._already_logged_in else 0
@@ -163,6 +178,8 @@ class FakeContext:
     def grant_session(self) -> None:
         if self._pending_session_id:
             self.session_id = self._pending_session_id
+            if self.page is not None:
+                self.page.url = "https://www.instagram.com/"
 
     async def new_page(self):
         return self.page
@@ -303,7 +320,7 @@ def test_first_login_fails_without_sessionid(monkeypatch, app_env):
     page = FakePage(has_login_form=True, already_logged_in=False)
     _patch_async_playwright(monkeypatch, page, session_id=None)
     monkeypatch.setattr(wp, "asyncio", _SyncAsyncio())
-    monkeypatch.setattr(wp, "_SESSIONID_POLL_TIMEOUT_SEC", 0.2)
+    monkeypatch.setattr(wp, "_SESSIONID_POLL_TIMEOUT_SEC", 0.5)
 
     ok = wp.first_login(
         username="noid",

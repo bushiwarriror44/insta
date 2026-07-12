@@ -33,6 +33,7 @@ Anti-detection notes:
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 import re
 import time
@@ -40,6 +41,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from app.accounts.playwright_session import sessionid_from_playwright_state_data
 from app.accounts.session_cookie import sessionid_from_cookies_array
 from app.config import settings
 from app.geo.timezone_normalize import normalize_playwright_timezone
@@ -54,6 +56,7 @@ class FirstLoginResult:
     challenge: bool = False
     error: str | None = None
     session_id: str | None = None
+    cookie_names: tuple[str, ...] = ()
 
 
 def _storage_dir(username: str) -> Path:
@@ -165,6 +168,34 @@ async def _human_type(page, selector: str, text: str, *, click_first: bool = Tru
     await locator.type(text, delay=random.randint(50, 180))
 
 
+async def _human_type_first_match(page, selectors: list[str], text: str, *, click_first: bool = True) -> str:
+    """Type into the first visible field matching any *selectors*."""
+    last_exc: Exception | None = None
+    for selector in selectors:
+        try:
+            loc = page.locator(selector).first
+            if await loc.count() == 0:
+                continue
+            await _human_type(page, selector, text, click_first=click_first)
+            return selector
+        except Exception as exc:
+            last_exc = exc
+            continue
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("login form fields not found")
+
+
+async def _first_visible_selector(page, selectors: list[str]) -> str | None:
+    for selector in selectors:
+        try:
+            if await page.locator(selector).first.count() > 0:
+                return selector
+        except Exception:
+            continue
+    return None
+
+
 async def _accept_cookie_banner(page) -> None:
     """Best-effort accept of Meta / Instagram consent banners."""
     selectors = [
@@ -244,7 +275,11 @@ async def _detect_challenge(page) -> bool:
         "text=Suspicious Login",
         "text=We Detected An Unusual Login Attempt",
         "text=Help us confirm",
+        "text=Confirm it's you",
+        "text=checkpoint",
         'input[name="security_code"]',
+        'input[name="email_confirmation_code"]',
+        'input[aria-label*="security code" i]',
     ]
     for sel in challenge_selectors:
         try:
@@ -255,8 +290,65 @@ async def _detect_challenge(page) -> bool:
     return False
 
 
+async def _detect_login_error(page) -> str | None:
+    """Return a human-readable login error when IG shows one on the page."""
+    error_selectors = [
+        "text=Sorry, your password was incorrect",
+        "text=The password you entered is incorrect",
+        "text=The username you entered doesn't belong to an account",
+        "text=There was a problem logging you into Instagram",
+        "text=Please check your username and try again",
+        "text=incorrect password",
+        "text=Неверный пароль",
+        "text=Couldn't log in",
+    ]
+    for sel in error_selectors:
+        try:
+            loc = page.locator(sel).first
+            if await loc.count() > 0:
+                text = (await loc.inner_text()).strip()
+                if text:
+                    return text
+                return sel.replace("text=", "")
+        except Exception:
+            continue
+    return None
+
+
+async def _detect_2fa_required(page) -> bool:
+    selectors = [
+        'input[name="verificationCode"]',
+        'input[aria-label*="code" i]',
+        'input[autocomplete="one-time-code"]',
+        "text=Two-factor authentication",
+        "text=Enter the 6-digit code",
+        "text=security code",
+    ]
+    for sel in selectors:
+        try:
+            if await page.locator(sel).count() > 0:
+                return True
+        except Exception:
+            continue
+    return False
+
+
 _INSTAGRAM_URL = "https://www.instagram.com"
-_SESSIONID_POLL_TIMEOUT_SEC = 30.0
+_INSTAGRAM_LOGIN_URL = "https://www.instagram.com/accounts/login/"
+_SESSIONID_POLL_TIMEOUT_SEC = 60.0
+_USERNAME_SELECTORS = [
+    'input[name="username"]',
+    'input[aria-label*="username" i]',
+    'input[aria-label*="phone" i]',
+    'input[aria-label*="email" i]',
+    'input[autocomplete="username"]',
+]
+_PASSWORD_SELECTORS = [
+    'input[name="password"]',
+    'input[aria-label*="password" i]',
+    'input[type="password"]',
+    'input[autocomplete="current-password"]',
+]
 
 
 def _instagram_sessionid_from_cookies(cookies: list) -> str | None:
@@ -264,19 +356,101 @@ def _instagram_sessionid_from_cookies(cookies: list) -> str | None:
     return sessionid_from_cookies_array(cookies)
 
 
-async def _wait_for_instagram_sessionid(context, timeout_sec: float = _SESSIONID_POLL_TIMEOUT_SEC) -> str | None:
-    """Poll browser cookies until Instagram sessionid appears or timeout."""
-    deadline = time.monotonic() + timeout_sec
-    while time.monotonic() < deadline:
+def _cookie_names(cookies: list) -> tuple[str, ...]:
+    names: list[str] = []
+    for item in cookies:
+        if isinstance(item, dict):
+            name = item.get("name")
+            if isinstance(name, str) and name:
+                names.append(name)
+    return tuple(sorted(set(names)))
+
+
+async def _gather_instagram_cookies(context) -> list:
+    """Collect cookies from all Instagram origins in the browser context."""
+    seen: set[tuple[str, str]] = set()
+    merged: list = []
+    url_candidates = (
+        None,
+        _INSTAGRAM_URL,
+        "https://instagram.com",
+        "https://i.instagram.com",
+    )
+    for url in url_candidates:
         try:
-            cookies = await context.cookies(_INSTAGRAM_URL)
-            session_id = _instagram_sessionid_from_cookies(cookies)
-            if session_id:
-                return session_id
+            cookies = await context.cookies(url) if url else await context.cookies()
+        except Exception:
+            continue
+        for item in cookies:
+            if not isinstance(item, dict):
+                continue
+            key = (str(item.get("name", "")), str(item.get("domain", "")))
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(item)
+    return merged
+
+
+async def _sessionid_from_saved_storage(context, state_file: Path) -> str | None:
+    """Persist storage state and extract sessionid (covers HttpOnly cookies)."""
+    try:
+        await context.storage_state(path=str(state_file))
+        data = json.loads(state_file.read_text(encoding="utf-8"))
+        return sessionid_from_playwright_state_data(data)
+    except Exception:
+        return None
+
+
+async def _resolve_instagram_sessionid(
+    context,
+    page,
+    state_file: Path,
+    *,
+    timeout_sec: float = _SESSIONID_POLL_TIMEOUT_SEC,
+) -> tuple[str | None, tuple[str, ...]]:
+    """Poll cookies and storage state until sessionid appears or timeout."""
+    deadline = time.monotonic() + timeout_sec
+    last_names: tuple[str, ...] = ()
+    nav_targets = (
+        _INSTAGRAM_URL,
+        f"{_INSTAGRAM_URL}/explore/",
+        f"{_INSTAGRAM_URL}/accounts/onetap/",
+    )
+    nav_index = 0
+
+    while time.monotonic() < deadline:
+        if await _detect_challenge(page):
+            return None, last_names
+
+        login_error = await _detect_login_error(page)
+        if login_error:
+            logger.warning("playwright.login_error_text", error=login_error, url=page.url)
+            return None, last_names
+
+        await _dismiss_post_login_modals(page)
+
+        cookies = await _gather_instagram_cookies(context)
+        last_names = _cookie_names(cookies)
+        session_id = _instagram_sessionid_from_cookies(cookies)
+        if session_id:
+            return session_id, last_names
+
+        session_id = await _sessionid_from_saved_storage(context, state_file)
+        if session_id:
+            return session_id, last_names
+
+        try:
+            target = nav_targets[nav_index % len(nav_targets)]
+            nav_index += 1
+            if target not in page.url:
+                await page.goto(target, wait_until="domcontentloaded", timeout=25000)
         except Exception:
             pass
-        await asyncio.sleep(random.uniform(0.5, 1.0))
-    return None
+
+        await asyncio.sleep(random.uniform(0.8, 1.6))
+
+    return None, last_names
 
 
 async def _dismiss_post_login_modals(page) -> None:
@@ -293,28 +467,34 @@ async def _dismiss_post_login_modals(page) -> None:
         'button:has-text("Turn on Notifications")',
         'div[role="button"]:has-text("Not Now")',
         'div[role="button"]:has-text("Not now")',
+        '[role="button"]:has-text("Not Now")',
+        '[role="button"]:has-text("Not now")',
+        'button:has-text("Continue")',
+        'div[role="button"]:has-text("Continue")',
     ]
-    for sel in selectors:
-        try:
-            loc = page.locator(sel).first
-            if await loc.count() > 0:
-                await loc.click(timeout=3000)
-                await _human_wait(0.5, 1.2)
-        except Exception:
-            continue
+    for _ in range(3):
+        clicked = False
+        for sel in selectors:
+            try:
+                loc = page.locator(sel).first
+                if await loc.count() > 0:
+                    await loc.click(timeout=3000)
+                    await _human_wait(0.4, 1.0)
+                    clicked = True
+            except Exception:
+                continue
+        if not clicked:
+            break
 
 
 async def _is_logged_in(context, page) -> bool:
     """True when sessionid cookie exists or login form is gone with nav visible."""
+    cookies = await _gather_instagram_cookies(context)
+    if _instagram_sessionid_from_cookies(cookies):
+        return True
     try:
-        cookies = await context.cookies(_INSTAGRAM_URL)
-        if _instagram_sessionid_from_cookies(cookies):
-            return True
-    except Exception:
-        pass
-    try:
-        login_visible = await page.locator('input[name="username"]').count() > 0
-        if login_visible:
+        username_sel = await _first_visible_selector(page, _USERNAME_SELECTORS)
+        if username_sel:
             return False
         nav_visible = await page.locator('a[href="/explore/"]').count() > 0
         home_visible = await page.locator('a[href="/"]').count() > 0
@@ -424,12 +604,28 @@ async def _async_first_login(
         already_logged_in = await _is_logged_in(context, page)
         if not already_logged_in:
             try:
-                await _human_type(page, 'input[name="username"]', username)
+                if "accounts/login" not in page.url:
+                    await page.goto(
+                        _INSTAGRAM_LOGIN_URL,
+                        wait_until="domcontentloaded",
+                        timeout=45000,
+                    )
+                    await _human_wait(1.0, 2.0)
+                    await _accept_cookie_banner(page)
+
+                await _human_type_first_match(page, _USERNAME_SELECTORS, username)
                 await _human_wait(0.7, 1.6)
-                await _human_type(page, 'input[name="password"]', password, click_first=False)
+                await _human_type_first_match(
+                    page, _PASSWORD_SELECTORS, password, click_first=False
+                )
                 await _human_wait(0.7, 1.6)
-                # Move to submit and click with a tiny offset for realism.
-                submit = page.locator('button[type="submit"]').first
+                submit_sel = await _first_visible_selector(
+                    page,
+                    ['button[type="submit"]', 'button:has-text("Log in")', 'button:has-text("Log In")'],
+                )
+                if submit_sel is None:
+                    raise RuntimeError("login submit button not found")
+                submit = page.locator(submit_sel).first
                 box = await submit.bounding_box()
                 if box:
                     cx = box["x"] + box["width"] / 2
@@ -444,9 +640,33 @@ async def _async_first_login(
                 return FirstLoginResult(ok=False, error=str(exc))
 
             await _human_wait(3.0, 6.0)
+            try:
+                await page.wait_for_function(
+                    "() => !window.location.pathname.includes('/accounts/login')",
+                    timeout=25000,
+                )
+            except Exception:
+                pass
+
             await _try_submit_totp(page, totp_seed)
             await _human_wait(3.0, 6.0)
             await _dismiss_post_login_modals(page)
+
+            login_error = await _detect_login_error(page)
+            if login_error:
+                await context.storage_state(path=str(state_file))
+                await context.close()
+                await browser.close()
+                return FirstLoginResult(ok=False, error=login_error)
+
+            if await _detect_2fa_required(page) and not (totp_seed or "").strip():
+                await context.storage_state(path=str(state_file))
+                await context.close()
+                await browser.close()
+                return FirstLoginResult(
+                    ok=False,
+                    error="Требуется 2FA — укажите TOTP seed в настройках аккаунта",
+                )
 
             if await _detect_challenge(page):
                 logger.warning("playwright.challenge_detected", username=username)
@@ -455,31 +675,48 @@ async def _async_first_login(
                 await browser.close()
                 return FirstLoginResult(ok=False, challenge=True, error="challenge required")
 
-        try:
-            await page.goto("https://www.instagram.com/explore/", wait_until="domcontentloaded", timeout=30000)
-        except Exception:
-            pass
-        await _human_wait(2.0, 4.0)
+        await _human_wait(1.0, 2.0)
         await _dismiss_post_login_modals(page)
-        await _human_scroll(page, total_scrolls=random.randint(3, 6))
+        await _human_scroll(page, total_scrolls=random.randint(2, 4))
 
-        session_id = await _wait_for_instagram_sessionid(context)
+        session_id, cookie_names = await _resolve_instagram_sessionid(context, page, state_file)
         if not session_id:
-            logger.error("playwright.sessionid_missing", username=username)
+            logger.error(
+                "playwright.sessionid_missing",
+                username=username,
+                cookie_names=list(cookie_names),
+                page_url=page.url,
+            )
             await context.storage_state(path=str(state_file))
             await context.close()
             await browser.close()
-            return FirstLoginResult(
-                ok=False,
-                error="Instagram не выдал sessionid — проверьте пароль, 2FA или challenge",
-            )
+            if await _detect_challenge(page):
+                return FirstLoginResult(
+                    ok=False,
+                    challenge=True,
+                    error="challenge required",
+                    cookie_names=cookie_names,
+                )
+            login_error = await _detect_login_error(page)
+            if login_error:
+                return FirstLoginResult(ok=False, error=login_error, cookie_names=cookie_names)
+            if cookie_names:
+                preview = ", ".join(cookie_names[:10])
+                suffix = f" (+{len(cookie_names) - 10})" if len(cookie_names) > 10 else ""
+                err = (
+                    f"Instagram не выдал sessionid (cookies: {preview}{suffix}). "
+                    "Проверьте пароль, 2FA или challenge"
+                )
+            else:
+                err = "Instagram не выдал sessionid — проверьте пароль, 2FA или challenge"
+            return FirstLoginResult(ok=False, error=err, cookie_names=cookie_names)
 
         await context.storage_state(path=str(state_file))
         await context.close()
         await browser.close()
 
     logger.info("playwright.first_login_done", username=username, storage=str(state_file))
-    return FirstLoginResult(ok=True, session_id=session_id)
+    return FirstLoginResult(ok=True, session_id=session_id, cookie_names=cookie_names)
 
 
 def first_login(

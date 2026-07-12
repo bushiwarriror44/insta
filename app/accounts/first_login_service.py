@@ -102,7 +102,12 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
         )
 
     if not result.ok:
-        collector.error("login", result.error or "Автовход не удался")
+        msg = result.error or "Автовход не удался"
+        if result.cookie_names:
+            preview = ", ".join(result.cookie_names[:10])
+            collector.error("login", f"{msg} (cookies: {preview})")
+        else:
+            collector.error("login", msg)
         collector.finish("fail", result.error or "login failed")
         return FirstLoginOut(
             run_id=collector.run_id,
