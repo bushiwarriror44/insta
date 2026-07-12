@@ -54,6 +54,34 @@ from app.logging_setup import get_logger
 
 logger = get_logger(__name__)
 
+_GOTO_WARNING_MESSAGE = (
+    "Instagram не открылся через прокси (HTTP-ошибка). "
+    "Введите instagram.com вручную в браузере или смените прокси/режим на Десктоп."
+)
+
+
+async def _navigate_browser_page(page, *, url: str, username: str) -> str | None:
+    """Navigate to ``url``; on failure keep the page on about:blank and return a warning."""
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        return None
+    except Exception as exc:
+        logger.warning(
+            "browser_session.goto_failed",
+            username=username,
+            url=url,
+            error=str(exc),
+        )
+        try:
+            await page.goto("about:blank", wait_until="domcontentloaded", timeout=15000)
+        except Exception as blank_exc:
+            logger.warning(
+                "browser_session.blank_fallback_failed",
+                username=username,
+                error=str(blank_exc),
+            )
+        return _GOTO_WARNING_MESSAGE
+
 
 class BrowserSessionStatus(str, Enum):
     starting = "starting"
@@ -70,6 +98,7 @@ class BrowserSessionState:
     status: BrowserSessionStatus = BrowserSessionStatus.starting
     awaiting_code: bool = False
     error: str | None = None
+    launch_warning: str | None = None
     display: int = 0
     ws_port: int = 0
     vnc_path: str = ""
@@ -111,6 +140,7 @@ class BrowserSessionManager:
                 "page_url": None,
                 "error": None,
                 "login_surface": None,
+                "warning": None,
             }
         return {
             "username": username,
@@ -120,6 +150,7 @@ class BrowserSessionManager:
             "page_url": session.page_url,
             "error": session.error,
             "login_surface": session.login_surface,
+            "warning": session.launch_warning,
         }
 
     async def start_session(
@@ -264,15 +295,22 @@ class BrowserSessionManager:
 
         page = session.page
         if state_file.exists() and storage_state_has_session(account.username):
-            await page.goto(_INSTAGRAM_URL, wait_until="domcontentloaded", timeout=45000)
+            warning = await _navigate_browser_page(
+                page, url=_INSTAGRAM_URL, username=account.username
+            )
         else:
-            await page.goto(_INSTAGRAM_LOGIN_URL, wait_until="domcontentloaded", timeout=45000)
+            warning = await _navigate_browser_page(
+                page, url=_INSTAGRAM_LOGIN_URL, username=account.username
+            )
+        if warning:
+            session.launch_warning = warning
 
         await _human_wait(1.0, 2.0)
-        await _accept_cookie_banner(page)
+        if not session.launch_warning:
+            await _accept_cookie_banner(page)
         session.page_url = page.url
 
-        if autofill_login and not await _is_logged_in(session.context, page):
+        if autofill_login and not session.launch_warning and not await _is_logged_in(session.context, page):
             login_id = resolve_login_identifier(account)
             try:
                 await _ensure_login_page(page)

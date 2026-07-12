@@ -234,6 +234,7 @@ class BrowserSessionOut(BaseModel):
     page_url: Optional[str] = None
     error: Optional[str] = None
     login_surface: Optional[Literal["mobile", "desktop"]] = None
+    warning: Optional[str] = None
 
 
 class BrowserCodeIn(BaseModel):

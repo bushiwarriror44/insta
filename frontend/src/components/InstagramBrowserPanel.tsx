@@ -192,6 +192,13 @@ export function InstagramBrowserPanel({
         </div>
       ) : null}
 
+      {session?.status === "running" && session.warning ? (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-950/30 p-3 text-sm text-amber-100">
+          Браузер запущен, но Instagram не загрузился автоматически — откройте вручную в окне
+          справа. {session.warning}
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" className="btn-primary" disabled={busy || !!active} onClick={startBrowser}>
           <MonitorPlay size={16} className={busy ? "animate-spin" : ""} />

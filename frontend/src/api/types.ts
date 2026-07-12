@@ -219,6 +219,7 @@ export interface BrowserSessionOut {
   page_url?: string | null;
   error?: string | null;
   login_surface?: LoginSurface | null;
+  warning?: string | null;
 }
 
 export interface BrowserSaveOut extends BrowserSessionOut {

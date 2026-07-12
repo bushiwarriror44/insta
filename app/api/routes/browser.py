@@ -13,6 +13,9 @@ from app.api.schemas import BrowserCodeIn, BrowserSaveOut, BrowserSessionOut, Di
 from app.behavior.playwright_surface import resolve_playwright_surface
 from app.browser.session_manager import browser_session_manager
 from app.db import Account, Proxy
+from app.logging_setup import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/accounts", tags=["browser"])
 
@@ -154,5 +157,11 @@ async def browser_vnc_websocket(
                         await websocket.send_text(payload)
 
             await asyncio.gather(client_to_upstream(), upstream_to_client())
-    except Exception:
+    except Exception as exc:
+        logger.exception(
+            "browser.vnc_ws_proxy_failed",
+            username=username,
+            ws_port=session.ws_port,
+            error=str(exc),
+        )
         await websocket.close(code=status.WS_1011_INTERNAL_ERROR)

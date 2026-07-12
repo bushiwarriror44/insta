@@ -126,3 +126,92 @@ async def test_start_session_uses_mobile_surface(monkeypatch):
     await mgr.start_session(account, proxy, surface="mobile")
     assert captured["surface"] == "mobile"
     assert captured["vnc_screen"] == "430x932x24"
+
+
+@pytest.mark.asyncio
+async def test_start_session_survives_goto_failure(monkeypatch):
+    from app.config import settings
+    import app.browser.session_manager as sm
+    from app.browser.session_manager import _GOTO_WARNING_MESSAGE
+
+    monkeypatch.setattr(settings, "browser_vnc_enabled", True)
+    monkeypatch.setattr(sm, "vnc_stack_available", lambda: True)
+    monkeypatch.setattr(sm, "playwright_browsers_available", lambda: True)
+
+    cleanup_called = False
+
+    async def fake_cleanup(session, *, remove=True):
+        nonlocal cleanup_called
+        cleanup_called = True
+
+    class FakeVnc:
+        async def start(self):
+            return None
+
+        def stop(self):
+            return None
+
+    monkeypatch.setattr(sm, "VncStack", lambda **kwargs: FakeVnc())
+    monkeypatch.setattr(sm, "allocate_ports", lambda _d: (5900, 6080))
+
+    page = AsyncMock()
+    page.url = "about:blank"
+
+    async def failing_goto(url, **kwargs):
+        if "instagram" in url:
+            raise RuntimeError("net::ERR_HTTP_RESPONSE_CODE_FAILURE")
+        return None
+
+    page.goto = failing_goto
+
+    context = AsyncMock()
+    context.new_page = AsyncMock(return_value=page)
+
+    browser = AsyncMock()
+    browser.new_context = AsyncMock(return_value=context)
+
+    pw = AsyncMock()
+    pw.chromium.launch = AsyncMock(return_value=browser)
+    pw.stop = AsyncMock()
+
+    playwright_manager = MagicMock()
+    playwright_manager.start = AsyncMock(return_value=pw)
+
+    def fake_async_playwright():
+        return playwright_manager
+
+    monkeypatch.setattr(sm, "load_fingerprint", lambda _u: None)
+    monkeypatch.setattr(sm, "playwright_state_path", lambda _u: __import__("pathlib").Path("/tmp/none"))
+    monkeypatch.setattr(sm, "storage_state_has_session", lambda _u: False)
+    monkeypatch.setattr(sm, "_apply_stealth_context", AsyncMock())
+    monkeypatch.setattr(sm, "_human_wait", AsyncMock())
+    monkeypatch.setattr(sm, "_is_logged_in", AsyncMock(return_value=False))
+    monkeypatch.setattr(sm, "_accept_cookie_banner", AsyncMock())
+    monkeypatch.setattr(sm, "stealth_async", None, raising=False)
+
+    fake_module = __import__("types").ModuleType("playwright.async_api")
+    fake_module.async_playwright = fake_async_playwright
+    monkeypatch.setitem(__import__("sys").modules, "playwright.async_api", fake_module)
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "playwright_stealth",
+        __import__("types").ModuleType("playwright_stealth"),
+    )
+
+    mgr = BrowserSessionManager()
+    mgr._cleanup_session = fake_cleanup  # type: ignore[method-assign]
+    mgr._refresh_code_state = AsyncMock()  # type: ignore[method-assign]
+    account = MagicMock(username="alice", password="secret", totp_seed=None)
+    proxy = MagicMock(url="http://u:p@1.2.3.4:8080", timezone="UTC", country="US")
+
+    monkeypatch.setattr(mgr, "_poll_session", AsyncMock())
+    monkeypatch.setattr(mgr, "_auto_stop", AsyncMock())
+
+    session = await mgr.start_session(account, proxy, surface="mobile")
+
+    assert session.status == BrowserSessionStatus.running
+    assert session.launch_warning == _GOTO_WARNING_MESSAGE
+    assert cleanup_called is False
+    data = mgr.status_dict("alice")
+    assert data["status"] == "running"
+    assert data["warning"] == _GOTO_WARNING_MESSAGE
