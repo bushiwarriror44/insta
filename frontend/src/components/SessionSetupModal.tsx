@@ -1,5 +1,5 @@
 import { CheckCircle2, KeyRound, RefreshCw, Sparkles, XCircle } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { api, formatApiError } from "../api/client";
 import type {
@@ -41,6 +41,8 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
   const [sessionId, setSessionId] = useState("");
   const [firstLoginResult, setFirstLoginResult] = useState<FirstLoginOut | null>(null);
   const [connectionResult, setConnectionResult] = useState<AccountConnectionTestOut | null>(null);
+  const [loginDebugUrl, setLoginDebugUrl] = useState<string | null>(null);
+  const loginDebugUrlRef = useRef<string | null>(null);
 
   const success =
     firstLoginResult?.ok === true ||
@@ -55,7 +57,56 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
     setConnectionResult(null);
     setAutoBusy(false);
     setManualBusy(false);
+    if (loginDebugUrlRef.current) {
+      URL.revokeObjectURL(loginDebugUrlRef.current);
+      loginDebugUrlRef.current = null;
+    }
+    setLoginDebugUrl(null);
   }, [open, account?.username]);
+
+  useEffect(() => {
+    return () => {
+      if (loginDebugUrlRef.current) {
+        URL.revokeObjectURL(loginDebugUrlRef.current);
+        loginDebugUrlRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!open || !account || !firstLoginResult?.login_debug_available) {
+      if (loginDebugUrlRef.current) {
+        URL.revokeObjectURL(loginDebugUrlRef.current);
+        loginDebugUrlRef.current = null;
+      }
+      setLoginDebugUrl(null);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const url = await api.accounts.fetchLoginDebugScreenshot(account.username);
+        if (cancelled) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        if (loginDebugUrlRef.current) {
+          URL.revokeObjectURL(loginDebugUrlRef.current);
+        }
+        loginDebugUrlRef.current = url;
+        setLoginDebugUrl(url);
+      } catch {
+        if (!cancelled) {
+          setLoginDebugUrl(null);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, account?.username, firstLoginResult?.login_debug_available]);
 
   useEffect(() => {
     if (firstLoginResult?.challenge) {
@@ -259,6 +310,21 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
             />
           </div>
         )}
+
+        {firstLoginResult?.login_debug_available && loginDebugUrl ? (
+          <div className="space-y-2">
+            <div className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+              Скриншот браузера при ошибке
+            </div>
+            <div className="rounded-lg border border-slate-700 bg-slate-950/50 p-2 overflow-auto max-h-80">
+              <img
+                src={loginDebugUrl}
+                alt="Скриншот страницы Instagram при ошибке входа"
+                className="w-full h-auto rounded border border-slate-800"
+              />
+            </div>
+          </div>
+        ) : null}
 
         {!success && !autoBusy && tab === "manual" && (
           <button

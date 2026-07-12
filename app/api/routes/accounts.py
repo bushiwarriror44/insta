@@ -14,7 +14,7 @@ from app.accounts.connection_test import run_account_connection_test
 from app.accounts.cookie_formats import CookieFormatError, import_cookies_data, write_dolphin_cookies_export
 from app.accounts.device_factory import device_path, load_fingerprint
 from app.accounts.first_login_service import run_account_first_login
-from app.accounts.playwright_session import playwright_state_path
+from app.accounts.playwright_session import login_debug_screenshot_path, playwright_state_path
 from app.accounts.session_export import export_sessionid
 from app.accounts.session_manager import (
     clear_session_file,
@@ -233,6 +233,25 @@ def export_account_cookies(username: str, db: Session = Depends(get_db)) -> File
         path=export_path,
         media_type="application/json",
         filename=f"cookies_{username}.json",
+    )
+
+
+@router.get("/{username}/login-debug-screenshot")
+def export_login_debug_screenshot(username: str, db: Session = Depends(get_db)) -> FileResponse:
+    """Return the latest Playwright login failure screenshot for diagnostics."""
+    account = db.scalar(select(Account).where(Account.username == username))
+    if account is None:
+        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+    path = login_debug_screenshot_path(username)
+    if not path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Скриншот не найден — выполните автовход с ошибкой",
+        )
+    return FileResponse(
+        path=path,
+        media_type="image/png",
+        filename=f"login_debug_{username}.png",
     )
 
 

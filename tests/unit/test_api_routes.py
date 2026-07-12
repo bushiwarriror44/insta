@@ -464,6 +464,24 @@ def test_accounts_export_playwright_state_404(api_client):
     assert res.status_code == 404
 
 
+def test_accounts_export_login_debug_screenshot(api_client, app_env):
+    from app.accounts.playwright_session import login_debug_screenshot_path
+
+    _create_account(api_client, "dbgexp", "px-dbgexp")
+    path = login_debug_screenshot_path("dbgexp")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\x89PNG\r\n\x1a\n")
+    res = api_client.get("/api/accounts/dbgexp/login-debug-screenshot")
+    assert res.status_code == 200, res.text
+    assert res.headers["content-type"].startswith("image/png")
+
+
+def test_accounts_export_login_debug_screenshot_404(api_client):
+    _create_account(api_client, "nodbg", "px-nodbg")
+    res = api_client.get("/api/accounts/nodbg/login-debug-screenshot")
+    assert res.status_code == 404
+
+
 def test_accounts_export_device_fingerprint(api_client, app_env):
     from app.accounts.device_factory import generate_fingerprint, save_fingerprint
 

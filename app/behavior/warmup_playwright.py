@@ -41,7 +41,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from app.accounts.playwright_session import sessionid_from_playwright_state_data
+from app.accounts.playwright_session import (
+    sessionid_from_playwright_state,
+    sessionid_from_playwright_state_data,
+    storage_state_has_session,
+)
 from app.accounts.session_cookie import sessionid_from_cookies_array
 from app.config import settings
 from app.geo.timezone_normalize import normalize_playwright_timezone
@@ -57,6 +61,7 @@ class FirstLoginResult:
     error: str | None = None
     session_id: str | None = None
     cookie_names: tuple[str, ...] = ()
+    login_debug_saved: bool = False
 
 
 def _storage_dir(username: str) -> Path:
@@ -397,16 +402,16 @@ async def _is_still_on_login_page(page) -> bool:
     return await _login_form_visible(page)
 
 
-async def _save_login_debug(page, username: str) -> Path | None:
+async def _save_login_debug(page, username: str) -> bool:
     """Save a screenshot to help diagnose failed browser logins."""
     try:
         out = _storage_dir(username) / "login_debug.png"
         await page.screenshot(path=str(out), full_page=True)
         logger.info("playwright.login_debug_saved", username=username, path=str(out), url=page.url)
-        return out
+        return True
     except Exception as exc:
         logger.warning("playwright.login_debug_failed", username=username, error=str(exc))
-        return None
+        return False
 
 
 async def _detect_challenge(page) -> bool:
@@ -717,6 +722,7 @@ async def _async_first_login(
 
     storage = _storage_dir(username)
     state_file = storage / "state.json"
+    login_debug_saved = False
 
     proxy_arg = _parse_proxy(proxy_url) if proxy_url else None
 
@@ -739,8 +745,10 @@ async def _async_first_login(
             "has_touch": False,
             "is_mobile": False,
         }
-        if state_file.exists():
+        if state_file.exists() and storage_state_has_session(username):
             context_kwargs["storage_state"] = str(state_file)
+        elif state_file.exists():
+            logger.info("playwright.skip_guest_storage_state", username=username)
 
         context = await browser.new_context(**context_kwargs)
 
@@ -797,10 +805,13 @@ async def _async_first_login(
                     await submit.click()
             except Exception as exc:
                 logger.error("playwright.login_form_failed", username=username, error=str(exc))
-                await _save_login_debug(page, username)
+                if await _save_login_debug(page, username):
+                    login_debug_saved = True
                 await context.close()
                 await browser.close()
-                return FirstLoginResult(ok=False, error=str(exc))
+                return FirstLoginResult(
+                    ok=False, error=str(exc), login_debug_saved=login_debug_saved
+                )
 
             await _human_wait(3.0, 6.0)
             try:
@@ -817,26 +828,40 @@ async def _async_first_login(
 
             login_error = await _detect_login_error(page)
             if login_error:
+                if await _save_login_debug(page, username):
+                    login_debug_saved = True
                 await context.storage_state(path=str(state_file))
                 await context.close()
                 await browser.close()
-                return FirstLoginResult(ok=False, error=login_error)
+                return FirstLoginResult(
+                    ok=False, error=login_error, login_debug_saved=login_debug_saved
+                )
 
             if await _detect_2fa_required(page) and not (totp_seed or "").strip():
+                if await _save_login_debug(page, username):
+                    login_debug_saved = True
                 await context.storage_state(path=str(state_file))
                 await context.close()
                 await browser.close()
                 return FirstLoginResult(
                     ok=False,
                     error="Требуется 2FA — укажите TOTP seed в настройках аккаунта",
+                    login_debug_saved=login_debug_saved,
                 )
 
             if await _detect_challenge(page):
                 logger.warning("playwright.challenge_detected", username=username)
+                if await _save_login_debug(page, username):
+                    login_debug_saved = True
                 await context.storage_state(path=str(state_file))
                 await context.close()
                 await browser.close()
-                return FirstLoginResult(ok=False, challenge=True, error="challenge required")
+                return FirstLoginResult(
+                    ok=False,
+                    challenge=True,
+                    error="challenge required",
+                    login_debug_saved=login_debug_saved,
+                )
 
         await _human_wait(1.0, 2.0)
         await _dismiss_post_login_modals(page)
@@ -844,13 +869,13 @@ async def _async_first_login(
 
         session_id, cookie_names = await _resolve_instagram_sessionid(context, page, state_file)
         if not session_id:
-            debug_path = await _save_login_debug(page, username)
+            if await _save_login_debug(page, username):
+                login_debug_saved = True
             logger.error(
                 "playwright.sessionid_missing",
                 username=username,
                 cookie_names=list(cookie_names),
                 page_url=page.url,
-                debug_screenshot=str(debug_path) if debug_path else None,
             )
             await context.storage_state(path=str(state_file))
             await context.close()
@@ -861,10 +886,16 @@ async def _async_first_login(
                     challenge=True,
                     error="challenge required",
                     cookie_names=cookie_names,
+                    login_debug_saved=login_debug_saved,
                 )
             login_error = await _detect_login_error(page)
             if login_error:
-                return FirstLoginResult(ok=False, error=login_error, cookie_names=cookie_names)
+                return FirstLoginResult(
+                    ok=False,
+                    error=login_error,
+                    cookie_names=cookie_names,
+                    login_debug_saved=login_debug_saved,
+                )
             if await _is_still_on_login_page(page):
                 err = (
                     "Браузер остался на странице логина — Instagram не принял учётные данные "
@@ -879,9 +910,12 @@ async def _async_first_login(
                 )
             else:
                 err = "Instagram не выдал sessionid — проверьте пароль, 2FA или challenge"
-            if debug_path is not None:
-                err = f"{err}. Скриншот: {debug_path.name}"
-            return FirstLoginResult(ok=False, error=err, cookie_names=cookie_names)
+            return FirstLoginResult(
+                ok=False,
+                error=err,
+                cookie_names=cookie_names,
+                login_debug_saved=login_debug_saved,
+            )
 
         await context.storage_state(path=str(state_file))
         await context.close()

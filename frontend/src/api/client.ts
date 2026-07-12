@@ -182,6 +182,31 @@ async function downloadFile(path: string, filename: string): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
+/** Fetch a binary resource and return an object URL (caller must revoke). */
+async function fetchObjectUrl(path: string): Promise<string> {
+  const res = await fetch(buildUrl(path), {
+    method: "GET",
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    let detail: unknown = null;
+    try {
+      detail = await res.json();
+    } catch {
+      detail = await res.text().catch(() => null);
+    }
+    const message =
+      (detail && typeof detail === "object" && "detail" in detail
+        ? String((detail as { detail: unknown }).detail)
+        : typeof detail === "string"
+          ? detail
+          : `HTTP ${res.status}`) || `HTTP ${res.status}`;
+    throw new ApiError(res.status, message, detail);
+  }
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
 export const api = {
   health: () => request<Health>("/api/health"),
   dashboard: () => request<DashboardSummary>("/api/dashboard"),
@@ -233,6 +258,10 @@ export const api = {
       downloadFile(
         `/api/accounts/${encodeURIComponent(username)}/playwright-state`,
         `state_${username}.json`
+      ),
+    fetchLoginDebugScreenshot: (username: string) =>
+      fetchObjectUrl(
+        `/api/accounts/${encodeURIComponent(username)}/login-debug-screenshot`
       ),
     exportDeviceFingerprint: (username: string) =>
       downloadFile(

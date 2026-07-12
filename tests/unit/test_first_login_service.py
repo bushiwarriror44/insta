@@ -163,7 +163,11 @@ def test_first_login_service_bad_password_message(
     )
     monkeypatch.setattr(
         "app.accounts.first_login_service.first_login",
-        lambda **kwargs: FirstLoginResult(ok=False, error="login form fields not found"),
+        lambda **kwargs: FirstLoginResult(
+            ok=False,
+            error="Браузер остался на странице логина",
+            login_debug_saved=True,
+        ),
     )
 
     def _raise_bad_password(*args, **kwargs):
@@ -177,6 +181,7 @@ def test_first_login_service_bad_password_message(
     out = run_account_first_login(account, db_session)
     assert out.ok is False
     assert "Неверный пароль" in (out.error or "")
+    assert out.login_debug_available is True
 
 
 def test_first_login_service_no_playwright(db_session, make_account, monkeypatch):

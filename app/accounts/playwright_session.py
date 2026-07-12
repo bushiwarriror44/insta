@@ -16,6 +16,15 @@ def playwright_state_path(username: str) -> Path:
     return settings.playwright_dir / username / "state.json"
 
 
+def login_debug_screenshot_path(username: str) -> Path:
+    return settings.playwright_dir / username / "login_debug.png"
+
+
+def storage_state_has_session(username: str) -> bool:
+    """True when Playwright state already contains a valid sessionid."""
+    return sessionid_from_playwright_state(username) is not None
+
+
 def save_playwright_state(username: str, state: dict) -> Path:
     """Persist Playwright storage state JSON for *username*."""
     path = playwright_state_path(username)

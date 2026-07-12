@@ -7,6 +7,7 @@ from app.accounts.connection_test import run_account_connection_test
 from app.accounts.playwright_session import (
     cookie_names_from_playwright_state,
     import_playwright_session_to_account,
+    login_debug_screenshot_path,
 )
 from app.accounts.session_manager import (
     AuthenticationError,
@@ -31,6 +32,12 @@ def _format_auth_error(exc: AuthenticationError) -> str:
     if "rate-limited" in msg:
         return "Instagram временно ограничил вход — повторите позже"
     return str(exc).strip() or "Ошибка аутентификации Instagram"
+
+
+def _login_debug_available(username: str, result: FirstLoginResult | None = None) -> bool:
+    if result is not None and result.login_debug_saved:
+        return True
+    return login_debug_screenshot_path(username).exists()
 
 
 def _finish_success(
@@ -193,12 +200,15 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
             ok=False,
             challenge=True,
             error=result.error or "Требуется подтверждение Instagram",
+            login_debug_available=_login_debug_available(account.username, result),
             logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
         )
 
     if not result.ok:
         msg = result.error or "Автовход не удался"
         collector.error("login", msg)
+        if _login_debug_available(account.username, result):
+            collector.info("browser", "Скриншот ошибки сохранён — см. ниже в модале")
         fallback_out, api_err = _try_api_login_fallback(collector, account, db, proxy, fingerprint)
         if fallback_out is not None:
             return fallback_out
@@ -208,6 +218,7 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
             run_id=collector.run_id,
             ok=False,
             error=final_error,
+            login_debug_available=_login_debug_available(account.username, result),
             logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
         )
 
@@ -235,6 +246,7 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
             run_id=collector.run_id,
             ok=False,
             error=api_err or "Не удалось извлечь sessionid из сохранённого состояния браузера",
+            login_debug_available=_login_debug_available(account.username, result),
             logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
         )
 

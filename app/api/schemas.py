@@ -208,6 +208,7 @@ class FirstLoginOut(BaseModel):
     session_imported: bool = False
     connection_test: Optional[AccountConnectionTestOut] = None
     error: Optional[str] = None
+    login_debug_available: bool = False
     logs: list[DiagnosticLogLineOut] = Field(default_factory=list)
 
 

@@ -190,6 +190,7 @@ export interface FirstLoginOut {
   session_imported: boolean;
   connection_test?: AccountConnectionTestOut | null;
   error?: string | null;
+  login_debug_available: boolean;
   logs: DiagnosticLogLine[];
 }
 
