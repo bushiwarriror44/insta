@@ -64,7 +64,7 @@ interface RequestOptions {
   method?: Method;
   body?: unknown;
   formData?: FormData;
-  query?: Record<string, string | number | undefined | null>;
+  query?: Record<string, string | number | boolean | undefined | null>;
   signal?: AbortSignal;
 }
 
