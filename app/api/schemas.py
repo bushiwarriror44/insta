@@ -235,6 +235,12 @@ class BrowserSessionOut(BaseModel):
     error: Optional[str] = None
     login_surface: Optional[Literal["mobile", "desktop"]] = None
     warning: Optional[str] = None
+    proxy_label: Optional[str] = None
+    proxy_ip: Optional[str] = None
+    proxy_geo_country: Optional[str] = None
+    proxy_country: Optional[str] = None
+    proxy_timezone: Optional[str] = None
+    proxy_instagram_reachable: Optional[bool] = None
 
 
 class BrowserCodeIn(BaseModel):

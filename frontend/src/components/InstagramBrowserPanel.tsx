@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, formatApiError } from "../api/client";
 import type { BrowserSaveOut, BrowserSessionOut, LoginSurface } from "../api/types";
 import { useToast } from "../context/ToastContext";
+import { CountryFlag } from "./CountryFlag";
 
 interface Props {
   username: string;
@@ -196,6 +197,45 @@ export function InstagramBrowserPanel({
         <div className="rounded-lg border border-amber-500/40 bg-amber-950/30 p-3 text-sm text-amber-100">
           Браузер запущен, но Instagram не загрузился автоматически — откройте вручную в окне
           справа. {session.warning}
+        </div>
+      ) : null}
+
+      {session?.proxy_label ? (
+        <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-3 text-sm text-slate-300 space-y-1">
+          <p className="text-xs uppercase tracking-wide text-slate-500">Прокси сессии</p>
+          <p>
+            <span className="text-slate-400">Прокси:</span>{" "}
+            <span className="text-slate-100 font-mono">{session.proxy_label}</span>
+          </p>
+          <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span>
+              <span className="text-slate-400">IP:</span>{" "}
+              <span className="text-slate-100 font-mono">{session.proxy_ip ?? "—"}</span>
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="text-slate-400">Гео:</span>
+              <CountryFlag code={session.proxy_geo_country} showCode />
+            </span>
+            {session.proxy_country ? (
+              <span className="inline-flex items-center gap-1">
+                <span className="text-slate-400">Задано:</span>
+                <CountryFlag code={session.proxy_country} showCode />
+              </span>
+            ) : null}
+            <span>
+              <span className="text-slate-400">Таймзона:</span>{" "}
+              <span className="text-slate-100 font-mono">{session.proxy_timezone ?? "—"}</span>
+            </span>
+            {session.proxy_instagram_reachable != null ? (
+              <span
+                className={
+                  session.proxy_instagram_reachable ? "text-emerald-300" : "text-rose-300"
+                }
+              >
+                Instagram web: {session.proxy_instagram_reachable ? "доступен" : "недоступен"}
+              </span>
+            ) : null}
+          </p>
         </div>
       ) : null}
 

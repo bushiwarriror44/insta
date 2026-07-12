@@ -99,6 +99,12 @@ class BrowserSessionState:
     awaiting_code: bool = False
     error: str | None = None
     launch_warning: str | None = None
+    proxy_label: str | None = None
+    proxy_ip: str | None = None
+    proxy_geo_country: str | None = None
+    proxy_country: str | None = None
+    proxy_timezone: str | None = None
+    proxy_instagram_reachable: bool | None = None
     display: int = 0
     ws_port: int = 0
     vnc_path: str = ""
@@ -141,6 +147,12 @@ class BrowserSessionManager:
                 "error": None,
                 "login_surface": None,
                 "warning": None,
+                "proxy_label": None,
+                "proxy_ip": None,
+                "proxy_geo_country": None,
+                "proxy_country": None,
+                "proxy_timezone": None,
+                "proxy_instagram_reachable": None,
             }
         return {
             "username": username,
@@ -151,6 +163,12 @@ class BrowserSessionManager:
             "error": session.error,
             "login_surface": session.login_surface,
             "warning": session.launch_warning,
+            "proxy_label": session.proxy_label,
+            "proxy_ip": session.proxy_ip,
+            "proxy_geo_country": session.proxy_geo_country,
+            "proxy_country": session.proxy_country,
+            "proxy_timezone": session.proxy_timezone,
+            "proxy_instagram_reachable": session.proxy_instagram_reachable,
         }
 
     async def start_session(
@@ -160,6 +178,7 @@ class BrowserSessionManager:
         *,
         autofill_login: bool = True,
         surface: LoginSurface | str | None = None,
+        proxy_snapshot: Any = None,
     ) -> BrowserSessionState:
         username = account.username
         resolved_surface = resolve_playwright_surface(surface or getattr(account, "login_surface", None))
@@ -197,6 +216,21 @@ class BrowserSessionManager:
                 vnc_path=f"/api/accounts/{username}/browser/vnc/ws",
                 vnc_stack=vnc,
                 login_surface=resolved_surface,
+                proxy_label=getattr(proxy, "label", None),
+                proxy_country=getattr(proxy, "country", None),
+                proxy_timezone=normalize_playwright_timezone(
+                    getattr(proxy, "timezone", None),
+                    country=getattr(proxy, "country", None),
+                ),
+                proxy_ip=(
+                    getattr(proxy_snapshot, "ip", None)
+                    or getattr(proxy, "last_known_ip", None)
+                ),
+                proxy_geo_country=(
+                    getattr(proxy_snapshot, "country", None)
+                    or getattr(proxy, "last_geo_country", None)
+                ),
+                proxy_instagram_reachable=getattr(proxy_snapshot, "instagram_reachable", None),
             )
             self._sessions[username] = session
 

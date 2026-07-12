@@ -14,6 +14,7 @@ from app.behavior.playwright_surface import resolve_playwright_surface
 from app.browser.session_manager import browser_session_manager
 from app.db import Account, Proxy
 from app.logging_setup import get_logger
+from app.proxies.pool import health_check_record
 
 logger = get_logger(__name__)
 
@@ -47,8 +48,15 @@ async def start_browser_session(
     resolved_surface = resolve_playwright_surface(login_surface or account.login_surface)
     account.login_surface = resolved_surface
     db.commit()
+    _healthy, proxy_snapshot, _health_err = health_check_record(db, proxy)
+    db.refresh(proxy)
     try:
-        await browser_session_manager.start_session(account, proxy, surface=resolved_surface)
+        await browser_session_manager.start_session(
+            account,
+            proxy,
+            surface=resolved_surface,
+            proxy_snapshot=proxy_snapshot,
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return BrowserSessionOut(**browser_session_manager.status_dict(username))

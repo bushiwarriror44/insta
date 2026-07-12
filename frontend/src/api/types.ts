@@ -220,6 +220,12 @@ export interface BrowserSessionOut {
   error?: string | null;
   login_surface?: LoginSurface | null;
   warning?: string | null;
+  proxy_label?: string | null;
+  proxy_ip?: string | null;
+  proxy_geo_country?: string | null;
+  proxy_country?: string | null;
+  proxy_timezone?: string | null;
+  proxy_instagram_reachable?: boolean | null;
 }
 
 export interface BrowserSaveOut extends BrowserSessionOut {
