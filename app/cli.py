@@ -579,6 +579,10 @@ def cmd_browser_vnc_diag(
     console.print("  docker compose ps")
     console.print("  ss -tlnp | grep -E ':80|:3000|:8000'")
     console.print("  docker compose logs -f reels-api --tail=50")
+    console.print("\n[yellow]If port 80 is host nginx -> :3000 (not docker directly):[/yellow]")
+    console.print("  outer nginx MUST forward WebSocket Upgrade headers.")
+    console.print("  See deploy/host-nginx.conf.example — copy to /etc/nginx/sites-available/insta")
+    console.print("  sudo nginx -t && sudo systemctl reload nginx")
 
 
 def shutil_which(cmd: str) -> str | None:

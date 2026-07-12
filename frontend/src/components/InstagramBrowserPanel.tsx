@@ -245,8 +245,9 @@ export function InstagramBrowserPanel({
         <div className="rounded-lg border border-slate-700 bg-black/40 overflow-hidden min-h-[360px]">
           {active && vncUrl ? (
             <p className="px-3 py-2 text-xs text-slate-500 border-b border-slate-800">
-              Если noVNC показывает «Failed to connect» — обновите страницу после деплоя и
-              убедитесь, что reverse proxy пропускает WebSocket на <span className="font-mono">/api/</span>.
+              Если noVNC пишет «Failed to connect» — на VPS в <span className="font-mono">/etc/nginx/sites-available/insta</span>{" "}
+              нужны заголовки WebSocket Upgrade (см. <span className="font-mono">deploy/host-nginx.conf.example</span>
+              ), затем <span className="font-mono">nginx -t && systemctl reload nginx</span>.
             </p>
           ) : null}
           {vncUrl ? (
