@@ -22,6 +22,17 @@ from app.geo.country_codes import normalize_country_code
 from app.geo.timezone_normalize import normalize_playwright_timezone
 
 
+def _format_auth_error(exc: AuthenticationError) -> str:
+    msg = str(exc).strip().lower()
+    if "bad password" in msg:
+        return "Неверный пароль — обновите пароль аккаунта в панели"
+    if "2fa" in msg or "verification" in msg:
+        return "Требуется 2FA — добавьте TOTP seed в настройках аккаунта"
+    if "rate-limited" in msg:
+        return "Instagram временно ограничил вход — повторите позже"
+    return str(exc).strip() or "Ошибка аутентификации Instagram"
+
+
 def _finish_success(
     collector: DiagnosticCollector,
     account: Account,
@@ -56,7 +67,7 @@ def _try_api_login_fallback(
     db: Session,
     proxy: Proxy,
     fingerprint,
-) -> FirstLoginOut | None:
+) -> tuple[FirstLoginOut | None, str | None]:
     collector.warn("fallback", "Браузерный вход не дал sessionid — пробуем Instagram API")
     try:
         session_id = login_and_export_sessionid(
@@ -69,28 +80,35 @@ def _try_api_login_fallback(
     except HardCheckpoint as exc:
         collector.warn("login", "Требуется ручное подтверждение (challenge)")
         collector.finish("warn", "challenge required")
-        return FirstLoginOut(
-            run_id=collector.run_id,
-            ok=False,
-            challenge=True,
-            error=str(exc) or "Требуется подтверждение Instagram",
-            logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
+        return (
+            FirstLoginOut(
+                run_id=collector.run_id,
+                ok=False,
+                challenge=True,
+                error=str(exc) or "Требуется подтверждение Instagram",
+                logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
+            ),
+            None,
         )
     except AuthenticationError as exc:
-        collector.error("fallback", f"API-вход не удался: {exc}")
-        return None
+        formatted = _format_auth_error(exc)
+        collector.error("fallback", f"API-вход не удался: {formatted}")
+        return None, formatted
     except Exception as exc:  # noqa: BLE001
         collector.error("fallback", f"API-вход не удался: {exc}")
-        return None
+        return None, str(exc)
 
     account.session_id = session_id
     db.commit()
     db.refresh(account)
-    return _finish_success(
-        collector,
-        account,
-        db,
-        login_message="Вход через Instagram API выполнен, sessionid получен",
+    return (
+        _finish_success(
+            collector,
+            account,
+            db,
+            login_message="Вход через Instagram API выполнен, sessionid получен",
+        ),
+        None,
     )
 
 
@@ -181,14 +199,15 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
     if not result.ok:
         msg = result.error or "Автовход не удался"
         collector.error("login", msg)
-        fallback_out = _try_api_login_fallback(collector, account, db, proxy, fingerprint)
+        fallback_out, api_err = _try_api_login_fallback(collector, account, db, proxy, fingerprint)
         if fallback_out is not None:
             return fallback_out
-        collector.finish("fail", msg)
+        final_error = api_err or msg
+        collector.finish("fail", final_error)
         return FirstLoginOut(
             run_id=collector.run_id,
             ok=False,
-            error=msg,
+            error=final_error,
             logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
         )
 
@@ -208,14 +227,14 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
             )
         else:
             collector.error("import", "Не удалось извлечь sessionid из Playwright state (файл пуст или отсутствует)")
-        fallback_out = _try_api_login_fallback(collector, account, db, proxy, fingerprint)
+        fallback_out, api_err = _try_api_login_fallback(collector, account, db, proxy, fingerprint)
         if fallback_out is not None:
             return fallback_out
-        collector.finish("fail", "session import failed")
+        collector.finish("fail", api_err or "session import failed")
         return FirstLoginOut(
             run_id=collector.run_id,
             ok=False,
-            error="Не удалось извлечь sessionid из сохранённого состояния браузера",
+            error=api_err or "Не удалось извлечь sessionid из сохранённого состояния браузера",
             logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
         )
 

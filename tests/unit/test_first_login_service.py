@@ -149,6 +149,36 @@ def test_first_login_service_api_fallback_after_playwright_fail(
     assert account.session_id == "f" * 40
 
 
+def test_first_login_service_bad_password_message(
+    db_session, make_account, make_proxy, monkeypatch
+):
+    from app.accounts.session_manager import AuthenticationError
+
+    proxy = make_proxy(label="px-bad")
+    account = make_account(username="badpw", proxy=proxy)
+
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.playwright_browsers_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.first_login",
+        lambda **kwargs: FirstLoginResult(ok=False, error="login form fields not found"),
+    )
+
+    def _raise_bad_password(*args, **kwargs):
+        raise AuthenticationError("bad password")
+
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.login_and_export_sessionid",
+        _raise_bad_password,
+    )
+
+    out = run_account_first_login(account, db_session)
+    assert out.ok is False
+    assert "Неверный пароль" in (out.error or "")
+
+
 def test_first_login_service_no_playwright(db_session, make_account, monkeypatch):
     account = make_account(username="nopw")
 

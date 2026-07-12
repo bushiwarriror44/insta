@@ -210,18 +210,110 @@ async def _first_visible_selector(page, selectors: list[str]) -> str | None:
     return None
 
 
-async def _fill_login_field(page, selectors: list[str], text: str) -> str:
+async def _login_field_locator(page, *, password: bool = False):
+    """Return a Playwright locator for the username or password field."""
+    selectors = _PASSWORD_SELECTORS if password else _USERNAME_SELECTORS
+    labels = _PASSWORD_LABELS if password else _USERNAME_LABELS
+
+    found = await _first_visible_selector(page, selectors)
+    if found:
+        loc = page.locator(found).first
+        try:
+            await loc.wait_for(state="visible", timeout=3000)
+            return loc
+        except Exception:
+            pass
+
+    for label in labels:
+        try:
+            loc = page.get_by_label(label, exact=False).first
+            if await loc.count() > 0:
+                await loc.wait_for(state="visible", timeout=3000)
+                return loc
+        except Exception:
+            continue
+
+    for label in labels:
+        try:
+            loc = page.get_by_placeholder(label, exact=False).first
+            if await loc.count() > 0:
+                await loc.wait_for(state="visible", timeout=3000)
+                return loc
+        except Exception:
+            continue
+
+    if not password:
+        try:
+            loc = page.get_by_role("textbox").first
+            if await loc.count() > 0:
+                await loc.wait_for(state="visible", timeout=3000)
+                return loc
+        except Exception:
+            pass
+    else:
+        try:
+            loc = page.get_by_role("textbox", name=re.compile("password|парол", re.I)).first
+            if await loc.count() > 0:
+                return loc
+        except Exception:
+            try:
+                loc = page.locator('input[type="password"]').first
+                if await loc.count() > 0:
+                    return loc
+            except Exception:
+                pass
+
+    return None
+
+
+async def _login_form_visible(page) -> bool:
+    return (await _login_field_locator(page, password=False)) is not None
+
+
+async def _ensure_login_page(page) -> None:
+    """Navigate to Instagram login and wait until the form is interactable."""
+    if "accounts/login" not in (page.url or ""):
+        await page.goto(_INSTAGRAM_LOGIN_URL, wait_until="domcontentloaded", timeout=45000)
+    await _human_wait(1.0, 2.0)
+    await _accept_cookie_banner(page)
+
+    deadline = time.monotonic() + 25.0
+    while time.monotonic() < deadline:
+        if await _login_form_visible(page):
+            return
+        for sel in _LOG_IN_LINK_SELECTORS:
+            try:
+                loc = page.locator(sel).first
+                if await loc.count() > 0:
+                    await loc.click(timeout=3000)
+                    await _human_wait(1.0, 2.0)
+                    await _accept_cookie_banner(page)
+                    break
+            except Exception:
+                continue
+        if "accounts/login" not in (page.url or ""):
+            try:
+                await page.goto(_INSTAGRAM_LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
+            except Exception:
+                pass
+        await asyncio.sleep(0.8)
+
+    raise RuntimeError(
+        f"login form fields not found (url={page.url!r}, title={await page.title()!r})"
+    )
+
+
+async def _fill_login_field(page, *, password: bool, text: str) -> None:
     """Fill a login field in a way that works with React-controlled inputs."""
-    selector = await _first_visible_selector(page, selectors)
-    if selector is None:
-        raise RuntimeError("login form fields not found")
-    loc = page.locator(selector).first
-    await loc.wait_for(state="visible", timeout=15000)
+    loc = await _login_field_locator(page, password=password)
+    if loc is None:
+        raise RuntimeError(
+            f"login form fields not found (url={page.url!r}, title={await page.title()!r})"
+        )
     await loc.click(timeout=5000)
     await _human_wait(0.15, 0.4)
     await loc.fill("")
     await loc.press_sequentially(text, delay=random.randint(40, 120))
-    return selector
 
 
 async def _accept_cookie_banner(page) -> None:
@@ -302,7 +394,7 @@ async def _is_still_on_login_page(page) -> bool:
     url = (page.url or "").lower()
     if "accounts/login" in url:
         return True
-    return await _first_visible_selector(page, _USERNAME_SELECTORS) is not None
+    return await _login_form_visible(page)
 
 
 async def _save_login_debug(page, username: str) -> Path | None:
@@ -385,16 +477,39 @@ _INSTAGRAM_LOGIN_URL = "https://www.instagram.com/accounts/login/"
 _SESSIONID_POLL_TIMEOUT_SEC = 60.0
 _USERNAME_SELECTORS = [
     'input[name="username"]',
+    'input[name="email"]',
     'input[aria-label*="username" i]',
     'input[aria-label*="phone" i]',
     'input[aria-label*="email" i]',
+    'input[aria-label*="логин" i]',
+    'input[aria-label*="телефон" i]',
     'input[autocomplete="username"]',
+    'form#loginForm input[type="text"]',
+    '#loginForm input[type="text"]',
 ]
 _PASSWORD_SELECTORS = [
     'input[name="password"]',
     'input[aria-label*="password" i]',
+    'input[aria-label*="парол" i]',
     'input[type="password"]',
     'input[autocomplete="current-password"]',
+    'form#loginForm input[type="password"]',
+]
+_USERNAME_LABELS = (
+    "Phone number, username, or email",
+    "Mobile number, username or email",
+    "Phone number, username, or email address",
+    "Номер телефона, имя пользователя или эл. адрес",
+    "Telefonnummer, Benutzername oder E-Mail-Adresse",
+)
+_PASSWORD_LABELS = ("Password", "Пароль", "Passwort", "Contraseña")
+_LOG_IN_LINK_SELECTORS = [
+    'a[href="/accounts/login/"]',
+    'a[href*="/accounts/login"]',
+    'text=Log in',
+    'text=Log In',
+    'text=Войти',
+    'text=Anmelden',
 ]
 
 
@@ -651,20 +766,14 @@ async def _async_first_login(
         already_logged_in = await _is_logged_in(context, page)
         if not already_logged_in:
             try:
-                if "accounts/login" not in page.url:
-                    await page.goto(
-                        _INSTAGRAM_LOGIN_URL,
-                        wait_until="domcontentloaded",
-                        timeout=45000,
-                    )
-                    await _human_wait(1.0, 2.0)
-                    await _accept_cookie_banner(page)
-
-                await _fill_login_field(page, _USERNAME_SELECTORS, username)
+                await _ensure_login_page(page)
+                await _fill_login_field(page, password=False, text=username)
                 await _human_wait(0.7, 1.6)
-                password_selector = await _fill_login_field(page, _PASSWORD_SELECTORS, password)
+                await _fill_login_field(page, password=True, text=password)
                 await _human_wait(0.7, 1.6)
-                password_loc = page.locator(password_selector).first
+                password_loc = await _login_field_locator(page, password=True)
+                if password_loc is None:
+                    raise RuntimeError("password field not found after fill")
                 try:
                     await password_loc.press("Enter")
                 except Exception:
@@ -688,6 +797,7 @@ async def _async_first_login(
                     await submit.click()
             except Exception as exc:
                 logger.error("playwright.login_form_failed", username=username, error=str(exc))
+                await _save_login_debug(page, username)
                 await context.close()
                 await browser.close()
                 return FirstLoginResult(ok=False, error=str(exc))

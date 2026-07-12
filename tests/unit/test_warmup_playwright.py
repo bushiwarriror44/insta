@@ -90,6 +90,20 @@ class FakePage:
         self.url = url if isinstance(url, str) else url
         self.events.append(("goto", (url,), kwargs))
 
+    async def title(self):
+        return "Login • Instagram"
+
+    def get_by_label(self, label, exact=False):
+        return self.locator(f"label:{label}")
+
+    def get_by_placeholder(self, placeholder, exact=False):
+        return self.locator(f"placeholder:{placeholder}")
+
+    def get_by_role(self, role, name=None):
+        if name is not None:
+            return self.locator(f"role:{role}:{name}")
+        return self.locator(f"role:{role}")
+
     async def wait_for_function(self, *_a, **_kw):
         if self._context is not None and self._context.session_id:
             self.url = "https://www.instagram.com/"
