@@ -724,6 +724,7 @@ function AddAccountModal({
     active_hour_end: 22,
     caption_profile: "",
     totp_seed: "",
+    login_identifier: "",
     email: "",
     email_password: "",
   });
@@ -746,6 +747,7 @@ function AddAccountModal({
         ...form,
         caption_profile: form.caption_profile?.trim() ? form.caption_profile : null,
         totp_seed: form.totp_seed?.trim() ? form.totp_seed.trim() : null,
+        login_identifier: form.login_identifier?.trim() ? form.login_identifier.trim() : null,
         email: form.email?.trim() ? form.email.trim() : null,
         email_password: form.email_password?.trim() ? form.email_password : null,
       };
@@ -762,6 +764,7 @@ function AddAccountModal({
         active_hour_end: 22,
         caption_profile: "",
         totp_seed: "",
+        login_identifier: "",
         email: "",
         email_password: "",
       });
@@ -810,6 +813,19 @@ function AddAccountModal({
               autoComplete="new-password"
             />
           </div>
+        </div>
+        <div>
+          <label className="label">Логин Instagram (необязательно)</label>
+          <input
+            className="input"
+            value={form.login_identifier ?? ""}
+            onChange={(e) => setForm({ ...form, login_identifier: e.target.value })}
+            placeholder="email, +1234567890 или username"
+            autoComplete="off"
+          />
+          <p className="text-xs text-slate-500 mt-1">
+            Если входите по email или телефону, а не по @username выше — укажите здесь.
+          </p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>

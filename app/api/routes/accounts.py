@@ -80,6 +80,7 @@ def _serialize(account: Account, *, db: Session, today: str) -> AccountOut:
     return AccountOut(
         id=account.id,
         username=account.username,
+        login_identifier=account.login_identifier,
         status=account.status.value,
         proxy_id=account.proxy_id,
         proxy_label=proxy_label,
@@ -142,6 +143,8 @@ def create_account(payload: AccountIn, db: Session = Depends(get_db)) -> Account
         account.session_id = payload.session_id.strip() or None
         if account.session_id:
             clear_session_file(account.username)
+    if payload.login_identifier is not None:
+        account.login_identifier = payload.login_identifier.strip() or None
     if payload.email is not None:
         account.email = payload.email or None
     if payload.email_password is not None:

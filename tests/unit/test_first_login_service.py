@@ -184,6 +184,91 @@ def test_first_login_service_bad_password_message(
     assert out.login_debug_available is True
 
 
+def test_first_login_service_account_not_found_retries_email(
+    db_session, make_account, make_proxy, monkeypatch
+):
+    from app.accounts.session_manager import AuthenticationError
+
+    proxy = make_proxy(label="px-email")
+    account = make_account(username="geuser", proxy=proxy)
+    account.email = "real@example.com"
+    db_session.commit()
+
+    calls: list[str | None] = []
+
+    def _fake_api_login(
+        username,
+        password,
+        fingerprint,
+        proxy_url,
+        *,
+        totp_seed=None,
+        login_identifier=None,
+    ):
+        calls.append(login_identifier)
+        if login_identifier == "geuser":
+            raise AuthenticationError("We can't find an account with geuser")
+        if login_identifier == "real@example.com":
+            return "a" * 40
+        raise AuthenticationError("unexpected login id")
+
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.playwright_browsers_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.first_login",
+        lambda **kwargs: FirstLoginResult(ok=False, error="no sessionid"),
+    )
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.login_and_export_sessionid",
+        _fake_api_login,
+    )
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.run_account_connection_test",
+        lambda acc, db: _connection_ok(acc.username),
+    )
+
+    out = run_account_first_login(account, db_session)
+    assert out.ok is True
+    assert calls == ["geuser", "real@example.com"]
+    db_session.refresh(account)
+    assert account.session_id == "a" * 40
+
+
+def test_first_login_service_passes_login_identifier_to_playwright(
+    db_session, make_account, make_proxy, monkeypatch
+):
+    proxy = make_proxy(label="px-lid")
+    account = make_account(username="paneluser", proxy=proxy)
+    account.login_identifier = "login@example.com"
+    db_session.commit()
+    captured: dict = {}
+
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.playwright_browsers_available",
+        lambda: True,
+    )
+
+    def _fake_first_login(**kwargs):
+        captured.update(kwargs)
+        return FirstLoginResult(ok=True, session_id="b" * 40)
+
+    monkeypatch.setattr("app.accounts.first_login_service.first_login", _fake_first_login)
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.import_playwright_session_to_account",
+        lambda db, acc, **kwargs: True,
+    )
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.run_account_connection_test",
+        lambda acc, db: _connection_ok(acc.username),
+    )
+
+    out = run_account_first_login(account, db_session)
+    assert out.ok is True
+    assert captured.get("login_identifier") == "login@example.com"
+
+
 def test_first_login_service_no_playwright(db_session, make_account, monkeypatch):
     account = make_account(username="nopw")
 

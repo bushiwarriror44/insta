@@ -269,6 +269,7 @@ def login_or_resume(
     verification_code: Optional[str] = None,
     totp_seed: Optional[str] = None,
     session_id: Optional[str] = None,
+    login_identifier: Optional[str] = None,
 ) -> Client:
     """Return a logged-in Client for a single account (one Client per call).
 
@@ -283,6 +284,7 @@ def login_or_resume(
     log = logger.bind(username=username)
     proxy_url = (proxy_url or "").strip()
     stripped_sid = (session_id or "").strip()
+    login_id = (login_identifier or username).strip()
 
     def _fresh_client() -> Client:
         return build_client(
@@ -317,9 +319,9 @@ def login_or_resume(
 
     def _do_login(with_code: Optional[str]) -> None:
         if with_code:
-            client.login(username, password, verification_code=with_code)
+            client.login(login_id, password, verification_code=with_code)
         else:
-            client.login(username, password)
+            client.login(login_id, password)
 
     try:
         _do_login(code)
@@ -364,6 +366,7 @@ def login_and_export_sessionid(
     proxy_url: str,
     *,
     totp_seed: str | None = None,
+    login_identifier: str | None = None,
 ) -> str:
     """Password-login via instagrapi and return the resulting sessionid."""
     from app.accounts.session_cookie import MIN_SESSIONID_LEN
@@ -376,6 +379,7 @@ def login_and_export_sessionid(
         proxy_url=proxy_url,
         totp_seed=totp_seed,
         session_id=None,
+        login_identifier=login_identifier,
     )
     exported = export_sessionid(username)
     if exported is None or len(exported.session_id) < MIN_SESSIONID_LEN:

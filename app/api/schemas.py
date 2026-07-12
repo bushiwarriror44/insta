@@ -69,6 +69,7 @@ class AccountOut(BaseModel):
 
     id: int
     username: str
+    login_identifier: Optional[str] = None
     status: str
     proxy_id: Optional[int] = None
     proxy_label: Optional[str] = None
@@ -107,6 +108,7 @@ class AccountIn(BaseModel):
     caption_profile: Optional[str] = Field(default=None, max_length=32)
     totp_seed: Optional[str] = Field(default=None, max_length=120)
     session_id: Optional[str] = Field(default=None, max_length=1000)
+    login_identifier: Optional[str] = Field(default=None, max_length=200)
     email: Optional[str] = Field(default=None, max_length=200)
     email_password: Optional[str] = Field(default=None, max_length=500)
 

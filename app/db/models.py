@@ -107,6 +107,7 @@ class Account(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     username: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     password: Mapped[str] = mapped_column(String(500))
+    login_identifier: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     email: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     email_password: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     totp_seed: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)

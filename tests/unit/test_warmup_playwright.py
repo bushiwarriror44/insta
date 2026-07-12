@@ -325,6 +325,32 @@ def test_first_login_happy_path(monkeypatch, app_env):
     assert "pwd" in typed_text
 
 
+def test_first_login_uses_login_identifier(monkeypatch, app_env):
+    sid = "c" * 40
+    page = FakePage(has_login_form=True, already_logged_in=False)
+    _patch_async_playwright(
+        monkeypatch, page, session_id=sid, session_id_after_login=True
+    )
+
+    monkeypatch.setattr(wp, "asyncio", _SyncAsyncio())
+    monkeypatch.setattr(wp, "_SESSIONID_POLL_TIMEOUT_SEC", 0.5)
+
+    ok = wp.first_login(
+        username="paneluser",
+        password="pwd",
+        proxy_url="http://u:p@host:1",
+        locale="en_US",
+        timezone_id="UTC",
+        headless=True,
+        login_identifier="login@example.com",
+    )
+    assert ok.ok is True
+    type_calls = [e for e in page.events if e[0] == "type"]
+    typed_text = [e[1][1] for e in type_calls]
+    assert "login@example.com" in typed_text
+    assert "paneluser" not in typed_text
+
+
 def test_first_login_skips_form_when_already_logged_in(monkeypatch, app_env):
     sid = "b" * 40
     page = FakePage(has_login_form=False, already_logged_in=True)

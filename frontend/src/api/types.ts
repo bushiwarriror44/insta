@@ -62,6 +62,7 @@ export const CAPTION_PROFILE_OPTIONS: CaptionProfile[] = [
 export interface AccountOut {
   id: number;
   username: string;
+  login_identifier?: string | null;
   status: AccountStatus | string;
   proxy_id: number | null;
   proxy_label: string | null;
@@ -100,6 +101,7 @@ export interface AccountIn {
   caption_profile?: string | null;
   totp_seed?: string | null;
   session_id?: string | null;
+  login_identifier?: string | null;
   email?: string | null;
   email_password?: string | null;
 }

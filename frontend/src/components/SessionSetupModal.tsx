@@ -252,6 +252,9 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
               <li>Если на аккаунте включена 2FA, укажите TOTP seed в настройках аккаунта.</li>
               <li>После успеха sessionid сохранится в БД и запустится повторная проверка.</li>
             </ol>
+            <p className="text-xs text-slate-400">
+              Если входите по email или телефону, укажите это в настройках аккаунта в поле «Логин Instagram».
+            </p>
             {firstLoginResult?.challenge ? (
               <div className="rounded-lg border border-amber-500/50 bg-amber-950/40 p-3 text-xs text-amber-100">
                 Instagram запросил ручное подтверждение. Перейдите на вкладку «Ручной импорт» и вставьте

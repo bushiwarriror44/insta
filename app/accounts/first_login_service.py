@@ -4,6 +4,10 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from app.accounts.connection_test import run_account_connection_test
+from app.accounts.login_identifier import (
+    is_account_not_found_error,
+    resolve_login_identifier,
+)
 from app.accounts.playwright_session import (
     cookie_names_from_playwright_state,
     import_playwright_session_to_account,
@@ -25,6 +29,11 @@ from app.geo.timezone_normalize import normalize_playwright_timezone
 
 def _format_auth_error(exc: AuthenticationError) -> str:
     msg = str(exc).strip().lower()
+    if is_account_not_found_error(msg):
+        return (
+            "Instagram не находит аккаунт с этим логином — "
+            "укажите email/телефон в поле «Логин Instagram»"
+        )
     if "bad password" in msg:
         return "Неверный пароль — обновите пароль аккаунта в панели"
     if "2fa" in msg or "verification" in msg:
@@ -68,6 +77,23 @@ def _finish_success(
     )
 
 
+def _api_login_session_id(
+    account: Account,
+    fingerprint,
+    proxy: Proxy,
+    *,
+    login_identifier: str,
+) -> str:
+    return login_and_export_sessionid(
+        account.username,
+        account.password,
+        fingerprint,
+        proxy.url,
+        totp_seed=account.totp_seed,
+        login_identifier=login_identifier,
+    )
+
+
 def _try_api_login_fallback(
     collector: DiagnosticCollector,
     account: Account,
@@ -76,14 +102,17 @@ def _try_api_login_fallback(
     fingerprint,
 ) -> tuple[FirstLoginOut | None, str | None]:
     collector.warn("fallback", "Браузерный вход не дал sessionid — пробуем Instagram API")
-    try:
-        session_id = login_and_export_sessionid(
-            account.username,
-            account.password,
-            fingerprint,
-            proxy.url,
-            totp_seed=account.totp_seed,
+    login_id = resolve_login_identifier(account)
+    session_id: str | None = None
+    last_auth_error: AuthenticationError | None = None
+
+    def _attempt(login_identifier: str) -> str:
+        return _api_login_session_id(
+            account, fingerprint, proxy, login_identifier=login_identifier
         )
+
+    try:
+        session_id = _attempt(login_id)
     except HardCheckpoint as exc:
         collector.warn("login", "Требуется ручное подтверждение (challenge)")
         collector.finish("warn", "challenge required")
@@ -98,12 +127,44 @@ def _try_api_login_fallback(
             None,
         )
     except AuthenticationError as exc:
-        formatted = _format_auth_error(exc)
-        collector.error("fallback", f"API-вход не удался: {formatted}")
-        return None, formatted
+        last_auth_error = exc
     except Exception as exc:  # noqa: BLE001
         collector.error("fallback", f"API-вход не удался: {exc}")
         return None, str(exc)
+
+    if session_id is None and last_auth_error is not None:
+        email = (account.email or "").strip()
+        if (
+            is_account_not_found_error(str(last_auth_error))
+            and email
+            and email.lower() != login_id.lower()
+        ):
+            collector.info("fallback", "Повтор входа по email из настроек аккаунта")
+            try:
+                session_id = _attempt(email)
+            except HardCheckpoint as exc:
+                collector.warn("login", "Требуется ручное подтверждение (challenge)")
+                collector.finish("warn", "challenge required")
+                return (
+                    FirstLoginOut(
+                        run_id=collector.run_id,
+                        ok=False,
+                        challenge=True,
+                        error=str(exc) or "Требуется подтверждение Instagram",
+                        logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
+                    ),
+                    None,
+                )
+            except AuthenticationError as exc:
+                last_auth_error = exc
+            except Exception as exc:  # noqa: BLE001
+                collector.error("fallback", f"API-вход не удался: {exc}")
+                return None, str(exc)
+
+    if session_id is None:
+        formatted = _format_auth_error(last_auth_error or AuthenticationError("auth failed"))
+        collector.error("fallback", f"API-вход не удался: {formatted}")
+        return None, formatted
 
     account.session_id = session_id
     db.commit()
@@ -117,6 +178,17 @@ def _try_api_login_fallback(
         ),
         None,
     )
+
+
+def _log_playwright_failure_diagnostics(
+    collector: DiagnosticCollector,
+    account: Account,
+    result: FirstLoginResult,
+) -> None:
+    if result.page_url:
+        collector.info("browser", f"URL после входа: {result.page_url}")
+    if _login_debug_available(account.username, result):
+        collector.info("browser", "Скриншот ошибки сохранён — см. ниже в модале")
 
 
 def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
@@ -167,7 +239,10 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
             logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
         )
 
+    login_id = resolve_login_identifier(account)
     collector.info("start", f"Автовход через браузер для @{account.username}")
+    if login_id.lower() != account.username.lower():
+        collector.info("browser", f"Логин Instagram: {login_id}")
     collector.info("proxy", f"Прокси {proxy.label}")
 
     fingerprint = ensure_fingerprint_and_proxy(
@@ -190,10 +265,12 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
         timezone_id=tz_id,
         fingerprint=fingerprint,
         totp_seed=account.totp_seed,
+        login_identifier=login_id,
     )
 
     if result.challenge:
         collector.warn("login", "Требуется ручное подтверждение (challenge)")
+        _log_playwright_failure_diagnostics(collector, account, result)
         collector.finish("warn", "challenge required")
         return FirstLoginOut(
             run_id=collector.run_id,
@@ -207,8 +284,7 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
     if not result.ok:
         msg = result.error or "Автовход не удался"
         collector.error("login", msg)
-        if _login_debug_available(account.username, result):
-            collector.info("browser", "Скриншот ошибки сохранён — см. ниже в модале")
+        _log_playwright_failure_diagnostics(collector, account, result)
         fallback_out, api_err = _try_api_login_fallback(collector, account, db, proxy, fingerprint)
         if fallback_out is not None:
             return fallback_out
@@ -238,6 +314,7 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
             )
         else:
             collector.error("import", "Не удалось извлечь sessionid из Playwright state (файл пуст или отсутствует)")
+        _log_playwright_failure_diagnostics(collector, account, result)
         fallback_out, api_err = _try_api_login_fallback(collector, account, db, proxy, fingerprint)
         if fallback_out is not None:
             return fallback_out

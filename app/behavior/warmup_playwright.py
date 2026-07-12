@@ -62,6 +62,7 @@ class FirstLoginResult:
     session_id: str | None = None
     cookie_names: tuple[str, ...] = ()
     login_debug_saved: bool = False
+    page_url: str | None = None
 
 
 def _storage_dir(username: str) -> Path:
@@ -440,6 +441,7 @@ async def _detect_login_error(page) -> str | None:
         "text=Sorry, your password was incorrect",
         "text=The password you entered is incorrect",
         "text=The username you entered doesn't belong to an account",
+        "text=We can't find an account",
         "text=There was a problem logging you into Instagram",
         "text=Please check your username and try again",
         "text=incorrect password",
@@ -690,7 +692,9 @@ async def _async_first_login(
     viewport: dict[str, int],
     headless: bool,
     totp_seed: Optional[str] = None,
+    login_identifier: Optional[str] = None,
 ) -> FirstLoginResult:
+    login_id = (login_identifier or username).strip()
     if not (proxy_url or "").strip():
         logger.error("playwright.proxy_required", username=username)
         return FirstLoginResult(ok=False, error="proxy required")
@@ -775,7 +779,7 @@ async def _async_first_login(
         if not already_logged_in:
             try:
                 await _ensure_login_page(page)
-                await _fill_login_field(page, password=False, text=username)
+                await _fill_login_field(page, password=False, text=login_id)
                 await _human_wait(0.7, 1.6)
                 await _fill_login_field(page, password=True, text=password)
                 await _human_wait(0.7, 1.6)
@@ -810,7 +814,10 @@ async def _async_first_login(
                 await context.close()
                 await browser.close()
                 return FirstLoginResult(
-                    ok=False, error=str(exc), login_debug_saved=login_debug_saved
+                    ok=False,
+                    error=str(exc),
+                    login_debug_saved=login_debug_saved,
+                    page_url=page.url,
                 )
 
             await _human_wait(3.0, 6.0)
@@ -834,7 +841,10 @@ async def _async_first_login(
                 await context.close()
                 await browser.close()
                 return FirstLoginResult(
-                    ok=False, error=login_error, login_debug_saved=login_debug_saved
+                    ok=False,
+                    error=login_error,
+                    login_debug_saved=login_debug_saved,
+                    page_url=page.url,
                 )
 
             if await _detect_2fa_required(page) and not (totp_seed or "").strip():
@@ -847,6 +857,7 @@ async def _async_first_login(
                     ok=False,
                     error="Требуется 2FA — укажите TOTP seed в настройках аккаунта",
                     login_debug_saved=login_debug_saved,
+                    page_url=page.url,
                 )
 
             if await _detect_challenge(page):
@@ -861,6 +872,7 @@ async def _async_first_login(
                     challenge=True,
                     error="challenge required",
                     login_debug_saved=login_debug_saved,
+                    page_url=page.url,
                 )
 
         await _human_wait(1.0, 2.0)
@@ -877,6 +889,7 @@ async def _async_first_login(
                 cookie_names=list(cookie_names),
                 page_url=page.url,
             )
+            failure_page_url = page.url
             await context.storage_state(path=str(state_file))
             await context.close()
             await browser.close()
@@ -887,6 +900,7 @@ async def _async_first_login(
                     error="challenge required",
                     cookie_names=cookie_names,
                     login_debug_saved=login_debug_saved,
+                    page_url=failure_page_url,
                 )
             login_error = await _detect_login_error(page)
             if login_error:
@@ -895,6 +909,7 @@ async def _async_first_login(
                     error=login_error,
                     cookie_names=cookie_names,
                     login_debug_saved=login_debug_saved,
+                    page_url=failure_page_url,
                 )
             if await _is_still_on_login_page(page):
                 err = (
@@ -915,6 +930,7 @@ async def _async_first_login(
                 error=err,
                 cookie_names=cookie_names,
                 login_debug_saved=login_debug_saved,
+                page_url=failure_page_url,
             )
 
         await context.storage_state(path=str(state_file))
@@ -936,6 +952,7 @@ def first_login(
     headless: Optional[bool] = None,
     fingerprint=None,
     totp_seed: Optional[str] = None,
+    login_identifier: Optional[str] = None,
 ) -> FirstLoginResult:
     """Synchronous wrapper around the async stealth login.
 
@@ -982,6 +999,7 @@ def first_login(
                 viewport=viewport,
                 headless=headless,
                 totp_seed=totp_seed,
+                login_identifier=login_identifier,
             )
         )
     except Exception as exc:  # noqa: BLE001 - surface Playwright failures to caller
