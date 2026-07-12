@@ -17,18 +17,12 @@ keep functioning. Install with ``pip install playwright && playwright
 install chromium``.
 
 Anti-detection notes:
-    * The browser ``user_agent`` and ``viewport`` are derived from the
-      account's persistent device fingerprint when available — the same
-      device that the API path advertises, just expressed as a mobile
-      Chrome UA. That keeps server-side device-graph correlation honest.
-    * ``page.fill`` is replaced with ``page.locator(...).type(text,
-      delay=…)`` so each character has a randomised inter-keystroke
-      delay (50–180 ms), and we click the input first so focus events
-      look organic.
-    * Cookie / "Allow all" banners are accepted in a best-effort try
-      block — IG and Meta family banners differ across locales.
-    * Headful mode is opt-in via ``PLAYWRIGHT_HEADLESS=false`` for
-      manual on-the-spot checkpoint resolution.
+    * Playwright's ``--enable-automation`` flag is stripped via
+      ``ignore_default_args``; ``navigator.webdriver`` is patched in a
+      context init script and via ``playwright-stealth``.
+    * Login goes directly to ``/accounts/login/`` with pre-login mouse
+      jitter, human keystroke delays, and a real mouse click on submit
+      (never Enter-only submit).
 """
 from __future__ import annotations
 
@@ -165,6 +159,119 @@ def _parse_proxy(proxy_url: str) -> Optional[dict[str, str]]:
 async def _human_wait(low: float, high: float) -> None:
     delay = random.uniform(low, high)
     await asyncio.sleep(delay)
+
+
+_STEALTH_INIT_SCRIPT = """
+() => {
+  Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+  Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0 });
+  window.chrome = window.chrome || { runtime: {} };
+  const originalQuery = window.navigator.permissions.query;
+  window.navigator.permissions.query = (parameters) => (
+    parameters.name === 'notifications'
+      ? Promise.resolve({ state: Notification.permission })
+      : originalQuery(parameters)
+  );
+}
+"""
+
+
+def _browser_launch_args() -> list[str]:
+    return [
+        "--disable-blink-features=AutomationControlled",
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-infobars",
+        "--window-size=1280,800",
+        "--disable-features=IsolateOrigins,site-per-process",
+    ]
+
+
+def _accept_language_for_locale(locale: str) -> str:
+    normalized = (locale or "en-US").replace("_", "-")
+    base = normalized.split("-", 1)[0]
+    return f"{normalized},{base};q=0.9"
+
+
+async def _apply_stealth_context(context) -> None:
+    try:
+        await context.add_init_script(_STEALTH_INIT_SCRIPT)
+    except Exception as exc:  # pragma: no cover
+        logger.warning("playwright.stealth_context_failed", error=str(exc))
+
+
+async def _human_mouse_jitter(page, *, moves: int | None = None) -> None:
+    count = moves if moves is not None else random.randint(2, 5)
+    for _ in range(count):
+        try:
+            await page.mouse.move(
+                random.randint(120, 1100),
+                random.randint(120, 680),
+                steps=random.randint(6, 18),
+            )
+            await asyncio.sleep(random.uniform(0.04, 0.14))
+        except Exception:
+            break
+
+
+async def _human_click_locator(page, loc) -> None:
+    box = await loc.bounding_box()
+    if box:
+        cx = box["x"] + box["width"] * random.uniform(0.25, 0.75)
+        cy = box["y"] + box["height"] * random.uniform(0.25, 0.75)
+        await page.mouse.move(cx, cy, steps=random.randint(10, 24))
+        await asyncio.sleep(random.uniform(0.08, 0.22))
+        await page.mouse.down()
+        await asyncio.sleep(random.uniform(0.04, 0.12))
+        await page.mouse.up()
+        return
+    await loc.click(timeout=5000, delay=random.randint(40, 120))
+
+
+async def _simulate_pre_login_behavior(page) -> None:
+    await _human_mouse_jitter(page)
+    if random.random() < 0.55:
+        try:
+            await page.mouse.wheel(0, random.randint(80, 260))
+            await _human_wait(0.4, 1.0)
+        except Exception:
+            pass
+    await _human_wait(0.6, 1.4)
+
+
+async def _human_type_locator(page, loc, text: str) -> None:
+    await _human_click_locator(page, loc)
+    await _human_wait(0.2, 0.55)
+    try:
+        await loc.press("Control+A")
+        await asyncio.sleep(random.uniform(0.05, 0.12))
+        await loc.press("Backspace")
+        await _human_wait(0.08, 0.22)
+    except Exception:
+        pass
+    delay = random.randint(70, 170)
+    await loc.press_sequentially(text, delay=delay)
+    if len(text) > 8 and random.random() < 0.35:
+        await _human_wait(0.15, 0.45)
+
+
+async def _submit_login_form(page) -> None:
+    await _human_wait(0.5, 1.2)
+    submit_sel = await _first_visible_selector(
+        page,
+        [
+            'button[type="submit"]',
+            'button:has-text("Log in")',
+            'button:has-text("Log In")',
+            'div[role="button"]:has-text("Log in")',
+            'div[role="button"]:has-text("Log In")',
+        ],
+    )
+    if submit_sel is None:
+        raise RuntimeError("login submit button not found")
+    submit = page.locator(submit_sel).first
+    await _human_click_locator(page, submit)
+    await _human_wait(0.3, 0.7)
 
 
 async def _human_type(page, selector: str, text: str, *, click_first: bool = True) -> None:
@@ -310,16 +417,13 @@ async def _ensure_login_page(page) -> None:
 
 
 async def _fill_login_field(page, *, password: bool, text: str) -> None:
-    """Fill a login field in a way that works with React-controlled inputs."""
+    """Fill a login field with mouse focus and human keystroke timing."""
     loc = await _login_field_locator(page, password=password)
     if loc is None:
         raise RuntimeError(
             f"login form fields not found (url={page.url!r}, title={await page.title()!r})"
         )
-    await loc.click(timeout=5000)
-    await _human_wait(0.15, 0.4)
-    await loc.fill("")
-    await loc.press_sequentially(text, delay=random.randint(40, 120))
+    await _human_type_locator(page, loc, text)
 
 
 async def _accept_cookie_banner(page) -> None:
@@ -705,22 +809,22 @@ async def _async_first_login(
         logger.error("playwright.not_installed", error=str(exc))
         return FirstLoginResult(ok=False, error="playwright not installed")
 
-    # `playwright-stealth` 2.x exposes a different API than 1.x. Try both.
+    # `playwright-stealth` 1.x exposes ``stealth_async``; 2.x uses ``Stealth``.
     stealth_apply = None
     try:
-        from playwright_stealth import Stealth  # type: ignore
+        from playwright_stealth import stealth_async  # type: ignore
 
-        stealth_instance = Stealth()
-
-        async def _apply(page):
-            await stealth_instance.apply_stealth_async(page)
-
-        stealth_apply = _apply
+        stealth_apply = stealth_async
     except ImportError:
         try:
-            from playwright_stealth import stealth_async  # type: ignore
+            from playwright_stealth import Stealth  # type: ignore
 
-            stealth_apply = stealth_async  # legacy 1.x path
+            stealth_instance = Stealth()
+
+            async def _apply(page):
+                await stealth_instance.apply_stealth_async(page)
+
+            stealth_apply = _apply
         except ImportError:  # pragma: no cover
             logger.warning("playwright_stealth.not_installed")
 
@@ -733,11 +837,8 @@ async def _async_first_login(
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
             headless=headless,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-            ],
+            ignore_default_args=["--enable-automation"],
+            args=_browser_launch_args(),
             proxy=proxy_arg,
         )
         context_kwargs = {
@@ -748,6 +849,10 @@ async def _async_first_login(
             "device_scale_factor": 1,
             "has_touch": False,
             "is_mobile": False,
+            "color_scheme": "light",
+            "extra_http_headers": {
+                "Accept-Language": _accept_language_for_locale(locale),
+            },
         }
         if state_file.exists() and storage_state_has_session(username):
             context_kwargs["storage_state"] = str(state_file)
@@ -755,6 +860,7 @@ async def _async_first_login(
             logger.info("playwright.skip_guest_storage_state", username=username)
 
         context = await browser.new_context(**context_kwargs)
+        await _apply_stealth_context(context)
 
         page = await context.new_page()
         if stealth_apply is not None:
@@ -764,7 +870,7 @@ async def _async_first_login(
                 logger.warning("playwright.stealth_failed", error=str(exc))
 
         try:
-            await page.goto("https://www.instagram.com/", wait_until="domcontentloaded", timeout=45000)
+            await page.goto(_INSTAGRAM_LOGIN_URL, wait_until="domcontentloaded", timeout=45000)
         except Exception as exc:
             logger.error("playwright.goto_failed", error=str(exc))
             await context.close()
@@ -779,34 +885,11 @@ async def _async_first_login(
         if not already_logged_in:
             try:
                 await _ensure_login_page(page)
+                await _simulate_pre_login_behavior(page)
                 await _fill_login_field(page, password=False, text=login_id)
-                await _human_wait(0.7, 1.6)
+                await _human_wait(0.9, 2.0)
                 await _fill_login_field(page, password=True, text=password)
-                await _human_wait(0.7, 1.6)
-                password_loc = await _login_field_locator(page, password=True)
-                if password_loc is None:
-                    raise RuntimeError("password field not found after fill")
-                try:
-                    await password_loc.press("Enter")
-                except Exception:
-                    submit_sel = await _first_visible_selector(
-                        page,
-                        [
-                            'button[type="submit"]',
-                            'button:has-text("Log in")',
-                            'button:has-text("Log In")',
-                        ],
-                    )
-                    if submit_sel is None:
-                        raise RuntimeError("login submit button not found")
-                    submit = page.locator(submit_sel).first
-                    box = await submit.bounding_box()
-                    if box:
-                        cx = box["x"] + box["width"] / 2
-                        cy = box["y"] + box["height"] / 2
-                        await page.mouse.move(cx, cy, steps=random.randint(8, 18))
-                        await asyncio.sleep(random.uniform(0.1, 0.3))
-                    await submit.click()
+                await _submit_login_form(page)
             except Exception as exc:
                 logger.error("playwright.login_form_failed", username=username, error=str(exc))
                 if await _save_login_debug(page, username):

@@ -61,6 +61,15 @@ def test_viewport_from_resolution_falls_back():
     assert wp._viewport_from_resolution("garbage") == {"width": 412, "height": 915}
 
 
+def test_accept_language_for_locale():
+    assert wp._accept_language_for_locale("en-US") == "en-US,en;q=0.9"
+
+
+def test_browser_launch_args_include_automation_evasion():
+    args = wp._browser_launch_args()
+    assert "--disable-blink-features=AutomationControlled" in args
+
+
 # --- Fake Playwright machinery ----------------------------------------------
 
 
@@ -188,6 +197,12 @@ class FakePage:
 
     async def up(self, *args, **kwargs):
         self.events.append(("mouse_up", args, kwargs))
+        if (
+            self._has_login_form
+            and not self._already_logged_in
+            and self._context is not None
+        ):
+            self._context.grant_session()
 
 
 class FakeContext:
@@ -236,6 +251,9 @@ class FakeContext:
 
     async def close(self):
         pass
+
+    async def add_init_script(self, *_a, **_kw):
+        return None
 
 
 class FakeBrowser:
@@ -299,7 +317,7 @@ def _patch_async_playwright(
 def test_first_login_happy_path(monkeypatch, app_env):
     sid = "a" * 40
     page = FakePage(has_login_form=True, already_logged_in=False)
-    _patch_async_playwright(
+    fake_pw = _patch_async_playwright(
         monkeypatch, page, session_id=sid, session_id_after_login=True
     )
 
@@ -323,6 +341,9 @@ def test_first_login_happy_path(monkeypatch, app_env):
     typed_text = [e[1][1] for e in type_calls]
     assert "alice" in typed_text
     assert "pwd" in typed_text
+    assert fake_pw.chromium._browser.launch_kwargs.get("ignore_default_args") == [
+        "--enable-automation"
+    ]
 
 
 def test_first_login_uses_login_identifier(monkeypatch, app_env):
