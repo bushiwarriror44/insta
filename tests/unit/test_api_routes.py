@@ -825,7 +825,7 @@ def test_browser_routes_start_status_code_save_stop(api_client, app_env, monkeyp
             status=BrowserSessionStatus.running,
             awaiting_code=False,
             ws_port=16080,
-            vnc_path=f"api/accounts/{account.username}/browser/vnc/ws",
+            vnc_path=f"/api/accounts/{account.username}/browser/vnc/ws",
             page_url="https://www.instagram.com/",
             error=None,
         )
@@ -839,7 +839,7 @@ def test_browser_routes_start_status_code_save_stop(api_client, app_env, monkeyp
             "username": username,
             "status": "running",
             "awaiting_code": False,
-            "vnc_path": f"api/accounts/{username}/browser/vnc/ws",
+            "vnc_path": f"/api/accounts/{username}/browser/vnc/ws",
             "page_url": "https://www.instagram.com/",
             "error": None,
             "login_surface": "mobile",

@@ -524,6 +524,69 @@ def cmd_preflight() -> None:
     console.print("[green]preflight ok[/green]")
 
 
+@app.command("browser-vnc-diag")
+def cmd_browser_vnc_diag(
+    username: Optional[str] = typer.Argument(
+        None,
+        help="Optional account username to print browser/status curl example",
+    ),
+) -> None:
+    """Run noVNC / WebSocket troubleshooting checks (execute on the VPS)."""
+    _bootstrap()
+    from app.browser.session_manager import browser_session_manager
+    from app.browser.vnc_stack import vnc_stack_available
+    from app.behavior.warmup_playwright import playwright_browsers_available
+
+    import os
+
+    console.print("[bold]noVNC / browser diagnostics[/bold]")
+    console.print(f"  BROWSER_VNC_ENABLED={settings.browser_vnc_enabled}")
+    console.print(f"  DISPLAY={os.environ.get('DISPLAY', ':99')}")
+
+    tools = {
+        "Xvfb": shutil_which("Xvfb"),
+        "x11vnc": shutil_which("x11vnc"),
+        "websockify": shutil_which("websockify"),
+    }
+    for name, path in tools.items():
+        status = f"[green]{path}[/green]" if path else "[red]missing[/red]"
+        console.print(f"  {name}: {status}")
+
+    console.print(f"  vnc_stack_available={vnc_stack_available()}")
+    console.print(f"  playwright_browsers_available={playwright_browsers_available()}")
+    console.print(f"  novnc_static={'yes' if Path('/usr/share/novnc').is_dir() else 'no'}")
+
+    if username:
+        data = browser_session_manager.status_dict(username)
+        console.print(f"\n[bold]Session @{username}[/bold]")
+        console.print_json(json.dumps(data))
+        token_hint = "YOUR_ADMIN_TOKEN" if settings.admin_token else "(auth disabled)"
+        console.print("\n[dim]HTTP status (from host):[/dim]")
+        console.print(
+            f'  curl -s -H "Authorization: Bearer {token_hint}" '
+            f"http://127.0.0.1:8000/api/accounts/{username}/browser/status"
+        )
+        console.print("\n[dim]WebSocket (query token, no Bearer header):[/dim]")
+        console.print(
+            f'  wscat -c "ws://127.0.0.1:8000/api/accounts/{username}/browser/vnc/ws?token={token_hint}"'
+        )
+        console.print("\n[dim]Through frontend nginx:[/dim]")
+        console.print(
+            f'  wscat -c "ws://127.0.0.1:3000/api/accounts/{username}/browser/vnc/ws?token={token_hint}"'
+        )
+
+    console.print("\n[dim]Host checks:[/dim]")
+    console.print("  docker compose ps")
+    console.print("  ss -tlnp | grep -E ':80|:3000|:8000'")
+    console.print("  docker compose logs -f reels-api --tail=50")
+
+
+def shutil_which(cmd: str) -> str | None:
+    import shutil
+
+    return shutil.which(cmd)
+
+
 @app.command("export-account")
 def cmd_export_account(username: str) -> None:
     """Dump the persisted device fingerprint for backup/migration."""

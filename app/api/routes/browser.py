@@ -14,7 +14,7 @@ from app.behavior.playwright_surface import resolve_playwright_surface
 from app.browser.session_manager import browser_session_manager
 from app.db import Account, Proxy
 
-router = APIRouter(prefix="/api/accounts", tags=["browser"], dependencies=[AuthDep])
+router = APIRouter(prefix="/api/accounts", tags=["browser"])
 
 
 def _get_account(username: str, db: Session) -> Account:
@@ -33,7 +33,7 @@ def _get_proxy(account: Account, db: Session) -> Proxy:
     return proxy
 
 
-@router.post("/{username}/browser/start", response_model=BrowserSessionOut)
+@router.post("/{username}/browser/start", response_model=BrowserSessionOut, dependencies=[AuthDep])
 async def start_browser_session(
     username: str,
     login_surface: str | None = Query(default=None),
@@ -51,12 +51,12 @@ async def start_browser_session(
     return BrowserSessionOut(**browser_session_manager.status_dict(username))
 
 
-@router.get("/{username}/browser/status", response_model=BrowserSessionOut)
+@router.get("/{username}/browser/status", response_model=BrowserSessionOut, dependencies=[AuthDep])
 def browser_session_status(username: str) -> BrowserSessionOut:
     return BrowserSessionOut(**browser_session_manager.status_dict(username))
 
 
-@router.post("/{username}/browser/code", response_model=BrowserSessionOut)
+@router.post("/{username}/browser/code", response_model=BrowserSessionOut, dependencies=[AuthDep])
 async def submit_browser_code(
     username: str,
     payload: BrowserCodeIn,
@@ -72,7 +72,7 @@ async def submit_browser_code(
     return BrowserSessionOut(**browser_session_manager.status_dict(username))
 
 
-@router.post("/{username}/browser/save", response_model=BrowserSaveOut)
+@router.post("/{username}/browser/save", response_model=BrowserSaveOut, dependencies=[AuthDep])
 async def save_browser_session(
     username: str,
     db: Session = Depends(get_db),
@@ -100,7 +100,7 @@ async def save_browser_session(
     )
 
 
-@router.delete("/{username}/browser/stop", response_model=BrowserSessionOut)
+@router.delete("/{username}/browser/stop", response_model=BrowserSessionOut, dependencies=[AuthDep])
 async def stop_browser_session(username: str) -> BrowserSessionOut:
     await browser_session_manager.stop_session(username)
     return BrowserSessionOut(**browser_session_manager.status_dict(username))

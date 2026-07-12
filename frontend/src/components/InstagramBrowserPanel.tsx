@@ -64,22 +64,24 @@ export function InstagramBrowserPanel({
     };
   }, [refreshStatus, username]);
 
+  const vncPath = session?.vnc_path?.replace(/^\//, "") ?? "";
+
   const vncUrl = useMemo(() => {
-    if (!session?.vnc_path || session.status === "stopped") return null;
+    if (!vncPath || session?.status === "stopped") return null;
     const params = new URLSearchParams({
       autoconnect: "true",
       resize: "scale",
-      path: session.vnc_path,
+      path: vncPath,
     });
     if (adminToken) {
       params.set("token", adminToken);
       params.set(
         "path",
-        `${session.vnc_path}${session.vnc_path.includes("?") ? "&" : "?"}token=${encodeURIComponent(adminToken)}`
+        `${vncPath}${vncPath.includes("?") ? "&" : "?"}token=${encodeURIComponent(adminToken)}`
       );
     }
     return `/novnc/vnc.html?${params.toString()}`;
-  }, [session?.vnc_path, session?.status, adminToken]);
+  }, [vncPath, session?.status, adminToken]);
 
   const active = session && !["stopped", "error"].includes(session.status);
   const isSetup = mode === "setup";
@@ -241,6 +243,12 @@ export function InstagramBrowserPanel({
         </div>
 
         <div className="rounded-lg border border-slate-700 bg-black/40 overflow-hidden min-h-[360px]">
+          {active && vncUrl ? (
+            <p className="px-3 py-2 text-xs text-slate-500 border-b border-slate-800">
+              Если noVNC показывает «Failed to connect» — обновите страницу после деплоя и
+              убедитесь, что reverse proxy пропускает WebSocket на <span className="font-mono">/api/</span>.
+            </p>
+          ) : null}
           {vncUrl ? (
             <iframe
               title={`Instagram browser ${username}`}

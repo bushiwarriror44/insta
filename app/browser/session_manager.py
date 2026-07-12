@@ -163,7 +163,7 @@ class BrowserSessionManager:
                 username=username,
                 display=display,
                 ws_port=ws_port,
-                vnc_path=f"api/accounts/{username}/browser/vnc/ws",
+                vnc_path=f"/api/accounts/{username}/browser/vnc/ws",
                 vnc_stack=vnc,
                 login_surface=resolved_surface,
             )
