@@ -2,13 +2,14 @@ import { Loader2, MonitorPlay, Save, Square, Send, CheckCircle2 } from "lucide-r
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, formatApiError } from "../api/client";
-import type { BrowserSaveOut, BrowserSessionOut } from "../api/types";
+import type { BrowserSaveOut, BrowserSessionOut, LoginSurface } from "../api/types";
 import { useToast } from "../context/ToastContext";
 
 interface Props {
   username: string;
   adminToken?: string | null;
   mode?: "standalone" | "setup";
+  loginSurface?: LoginSurface;
   onSessionSaved?: (result: BrowserSaveOut) => void;
 }
 
@@ -35,6 +36,7 @@ export function InstagramBrowserPanel({
   username,
   adminToken,
   mode = "standalone",
+  loginSurface = "mobile",
   onSessionSaved,
 }: Props) {
   const { push } = useToast();
@@ -85,7 +87,7 @@ export function InstagramBrowserPanel({
   async function startBrowser() {
     setBusy(true);
     try {
-      const data = await api.accounts.browserStart(username);
+      const data = await api.accounts.browserStart(username, { loginSurface });
       setSession(data);
       setSavedOk(false);
       push("Браузер запущен", "success");
@@ -150,6 +152,15 @@ export function InstagramBrowserPanel({
 
   return (
     <div className="space-y-4">
+      {isSetup ? (
+        <p className="text-xs text-slate-400">
+          Браузер открыт в режиме:{" "}
+          <span className="text-slate-200">
+            {loginSurface === "mobile" ? "Мобильный" : "Десктоп"}
+          </span>
+        </p>
+      ) : null}
+
       {isSetup ? (
         <ol className="list-decimal list-inside space-y-1 text-sm text-slate-300">
           <li className={setupStep >= 1 ? "text-slate-200" : ""}>

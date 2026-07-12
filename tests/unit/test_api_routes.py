@@ -842,6 +842,7 @@ def test_browser_routes_start_status_code_save_stop(api_client, app_env, monkeyp
             "vnc_path": f"api/accounts/{username}/browser/vnc/ws",
             "page_url": "https://www.instagram.com/",
             "error": None,
+            "login_surface": "mobile",
         },
     )
     monkeypatch.setattr(browser_session_manager, "submit_code", AsyncMock(return_value=True))
@@ -894,9 +895,10 @@ def test_browser_routes_start_status_code_save_stop(api_client, app_env, monkeyp
     db.add(account)
     db.commit()
 
-    start = api_client.post("/api/accounts/browser_user/browser/start")
+    start = api_client.post("/api/accounts/browser_user/browser/start?login_surface=mobile")
     assert start.status_code == 200
     assert start.json()["status"] == "running"
+    assert start.json()["login_surface"] == "mobile"
 
     code = api_client.post("/api/accounts/browser_user/browser/code", json={"code": "123456"})
     assert code.status_code == 200

@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timezone
 from typing import List
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -101,6 +101,7 @@ def _serialize(account: Account, *, db: Session, today: str) -> AccountOut:
         caption_profile=account.caption_profile,
         has_totp=bool(account.totp_seed),
         has_session_id=bool(account.session_id),
+        login_surface=account.login_surface if account.login_surface in ("mobile", "desktop") else None,
         session_file_exists=file_exists,
         session_file_updated_at=file_updated_at,
         session_source=session_source,
@@ -152,6 +153,10 @@ def create_account(payload: AccountIn, db: Session = Depends(get_db)) -> Account
         account.email_password = payload.email_password or None
     if payload.backup_codes is not None:
         account.backup_codes = payload.backup_codes.strip() or None
+    if payload.login_surface is not None:
+        from app.behavior.playwright_surface import resolve_playwright_surface
+
+        account.login_surface = resolve_playwright_surface(payload.login_surface)
     if payload.account_line:
         try:
             parsed = parse_account_line(payload.account_line)
@@ -374,7 +379,11 @@ def test_account_connection(username: str, db: Session = Depends(get_db)) -> Acc
 
 
 @router.post("/{username}/first-login", response_model=FirstLoginOut)
-def account_first_login(username: str, db: Session = Depends(get_db)) -> FirstLoginOut:
+def account_first_login(
+    username: str,
+    login_surface: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> FirstLoginOut:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
         raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
@@ -385,4 +394,4 @@ def account_first_login(username: str, db: Session = Depends(get_db)) -> FirstLo
             status_code=503,
             detail="Chromium не установлен — выполните install-playwright на сервере",
         )
-    return run_account_first_login(account, db)
+    return run_account_first_login(account, db, surface=login_surface)

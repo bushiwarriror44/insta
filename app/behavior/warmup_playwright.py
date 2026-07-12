@@ -35,6 +35,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from app.behavior.playwright_surface import (
+    LoginSurface,
+    browser_launch_args,
+    mouse_jitter_bounds,
+    playwright_context_kwargs,
+    stealth_init_script,
+)
+
 from app.accounts.playwright_session import (
     sessionid_from_playwright_state,
     sessionid_from_playwright_state_data,
@@ -161,52 +169,32 @@ async def _human_wait(low: float, high: float) -> None:
     await asyncio.sleep(delay)
 
 
-_STEALTH_INIT_SCRIPT = """
-() => {
-  Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-  Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0 });
-  window.chrome = window.chrome || { runtime: {} };
-  const originalQuery = window.navigator.permissions.query;
-  window.navigator.permissions.query = (parameters) => (
-    parameters.name === 'notifications'
-      ? Promise.resolve({ state: Notification.permission })
-      : originalQuery(parameters)
-  );
-}
-"""
-
-
-def _browser_launch_args() -> list[str]:
-    return [
-        "--disable-blink-features=AutomationControlled",
-        "--no-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-infobars",
-        "--window-size=1280,800",
-        "--disable-features=IsolateOrigins,site-per-process",
-    ]
-
-
 def _accept_language_for_locale(locale: str) -> str:
     normalized = (locale or "en-US").replace("_", "-")
     base = normalized.split("-", 1)[0]
     return f"{normalized},{base};q=0.9"
 
 
-async def _apply_stealth_context(context) -> None:
+async def _apply_stealth_context(context, surface: LoginSurface = "desktop") -> None:
     try:
-        await context.add_init_script(_STEALTH_INIT_SCRIPT)
+        await context.add_init_script(stealth_init_script(surface))
     except Exception as exc:  # pragma: no cover
         logger.warning("playwright.stealth_context_failed", error=str(exc))
 
 
-async def _human_mouse_jitter(page, *, moves: int | None = None) -> None:
+async def _human_mouse_jitter(
+    page,
+    *,
+    moves: int | None = None,
+    surface: LoginSurface = "desktop",
+) -> None:
+    max_x, max_y, min_x, min_y = mouse_jitter_bounds(surface)
     count = moves if moves is not None else random.randint(2, 5)
     for _ in range(count):
         try:
             await page.mouse.move(
-                random.randint(120, 1100),
-                random.randint(120, 680),
+                random.randint(min_x, max_x),
+                random.randint(min_y, max_y),
                 steps=random.randint(6, 18),
             )
             await asyncio.sleep(random.uniform(0.04, 0.14))
@@ -228,8 +216,8 @@ async def _human_click_locator(page, loc) -> None:
     await loc.click(timeout=5000, delay=random.randint(40, 120))
 
 
-async def _simulate_pre_login_behavior(page) -> None:
-    await _human_mouse_jitter(page)
+async def _simulate_pre_login_behavior(page, surface: LoginSurface = "desktop") -> None:
+    await _human_mouse_jitter(page, surface=surface)
     if random.random() < 0.55:
         try:
             await page.mouse.wheel(0, random.randint(80, 260))
@@ -844,11 +832,11 @@ async def _async_first_login(
     proxy_url: Optional[str],
     locale: str,
     timezone_id: str,
-    user_agent: str,
-    viewport: dict[str, int],
     headless: bool,
     totp_seed: Optional[str] = None,
     login_identifier: Optional[str] = None,
+    surface: LoginSurface = "mobile",
+    fingerprint=None,
 ) -> FirstLoginResult:
     login_id = (login_identifier or username).strip()
     if not (proxy_url or "").strip():
@@ -890,29 +878,23 @@ async def _async_first_login(
         browser = await pw.chromium.launch(
             headless=headless,
             ignore_default_args=["--enable-automation"],
-            args=_browser_launch_args(),
+            args=browser_launch_args(surface),
             proxy=proxy_arg,
         )
-        context_kwargs = {
-            "locale": locale,
-            "timezone_id": timezone_id,
-            "user_agent": user_agent,
-            "viewport": viewport,
-            "device_scale_factor": 1,
-            "has_touch": False,
-            "is_mobile": False,
-            "color_scheme": "light",
-            "extra_http_headers": {
-                "Accept-Language": _accept_language_for_locale(locale),
-            },
-        }
-        if state_file.exists() and storage_state_has_session(username):
-            context_kwargs["storage_state"] = str(state_file)
-        elif state_file.exists():
+        context_kwargs = playwright_context_kwargs(
+            surface,
+            fingerprint=fingerprint,
+            locale=locale,
+            timezone_id=timezone_id,
+            storage_state_path=str(state_file)
+            if state_file.exists() and storage_state_has_session(username)
+            else None,
+        )
+        if state_file.exists() and not storage_state_has_session(username):
             logger.info("playwright.skip_guest_storage_state", username=username)
 
         context = await browser.new_context(**context_kwargs)
-        await _apply_stealth_context(context)
+        await _apply_stealth_context(context, surface)
 
         page = await context.new_page()
         if stealth_apply is not None:
@@ -937,7 +919,7 @@ async def _async_first_login(
         if not already_logged_in:
             try:
                 await _ensure_login_page(page)
-                await _simulate_pre_login_behavior(page)
+                await _simulate_pre_login_behavior(page, surface=surface)
                 await _fill_login_field(page, password=False, text=login_id)
                 await _human_wait(0.9, 2.0)
                 await _fill_login_field(page, password=True, text=password)
@@ -1103,13 +1085,13 @@ def first_login(
     fingerprint=None,
     totp_seed: Optional[str] = None,
     login_identifier: Optional[str] = None,
+    surface: LoginSurface = "mobile",
 ) -> FirstLoginResult:
     """Synchronous wrapper around the async stealth login.
 
     If ``fingerprint`` (a :class:`~app.accounts.device_factory.DeviceFingerprint`)
-    is supplied, ``user_agent`` and ``viewport`` are derived from it for
-    consistency with the API path. Explicit kwargs win over fingerprint
-    derivation.
+    is supplied, browser context parameters are derived from it for
+    consistency with the API path when ``surface`` is ``mobile``.
     """
     proxy_url = (proxy_url or "").strip()
     if not proxy_url:
@@ -1120,15 +1102,9 @@ def first_login(
     fp_locale = None
     if fingerprint is not None:
         try:
-            device_settings = fingerprint.settings.get("device_settings")
             fp_locale = fingerprint.locale
         except AttributeError:
-            device_settings = None
-
-    if user_agent is None:
-        user_agent = _desktop_ua()
-    if viewport is None:
-        viewport = _desktop_viewport()
+            fp_locale = None
 
     if locale == "en_US" and fp_locale:
         locale = fp_locale
@@ -1145,11 +1121,11 @@ def first_login(
                 proxy_url=proxy_url,
                 locale=locale.replace("_", "-"),
                 timezone_id=timezone_id,
-                user_agent=user_agent,
-                viewport=viewport,
                 headless=headless,
                 totp_seed=totp_seed,
                 login_identifier=login_identifier,
+                surface=surface,
+                fingerprint=fingerprint,
             )
         )
     except Exception as exc:  # noqa: BLE001 - surface Playwright failures to caller

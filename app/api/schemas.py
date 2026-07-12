@@ -89,6 +89,7 @@ class AccountOut(BaseModel):
     caption_profile: Optional[str] = None
     has_totp: bool = False
     has_session_id: bool = False
+    login_surface: Optional[Literal["mobile", "desktop"]] = None
     session_file_exists: bool = False
     session_file_updated_at: Optional[datetime] = None
     session_source: Literal["database", "session_file", "none"] = "none"
@@ -112,6 +113,7 @@ class AccountIn(BaseModel):
     email: Optional[str] = Field(default=None, max_length=200)
     email_password: Optional[str] = Field(default=None, max_length=500)
     backup_codes: Optional[str] = Field(default=None, max_length=4000)
+    login_surface: Optional[Literal["mobile", "desktop"]] = None
     account_line: Optional[str] = Field(default=None, max_length=8000)
 
     @model_validator(mode="after")
@@ -231,6 +233,7 @@ class BrowserSessionOut(BaseModel):
     vnc_path: Optional[str] = None
     page_url: Optional[str] = None
     error: Optional[str] = None
+    login_surface: Optional[Literal["mobile", "desktop"]] = None
 
 
 class BrowserCodeIn(BaseModel):

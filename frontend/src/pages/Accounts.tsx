@@ -707,7 +707,11 @@ export function Accounts() {
         widthClass="max-w-5xl"
       >
         {browserAccount ? (
-          <InstagramBrowserPanel username={browserAccount.username} adminToken={adminToken} />
+          <InstagramBrowserPanel
+            username={browserAccount.username}
+            adminToken={adminToken}
+            loginSurface={browserAccount.login_surface === "desktop" ? "desktop" : "mobile"}
+          />
         ) : null}
       </Modal>
       <SessionModal

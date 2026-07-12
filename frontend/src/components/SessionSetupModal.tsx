@@ -2,8 +2,10 @@ import {
   ArrowLeft,
   CheckCircle2,
   KeyRound,
+  Monitor,
   MonitorPlay,
   RefreshCw,
+  Smartphone,
   Sparkles,
   XCircle,
 } from "lucide-react";
@@ -17,6 +19,7 @@ import type {
   BrowserSaveOut,
   FirstLoginOut,
   InstagramAuthStepOut,
+  LoginSurface,
 } from "../api/types";
 import { DiagnosticLogPanel } from "./DiagnosticLogPanel";
 import { InstagramBrowserPanel } from "./InstagramBrowserPanel";
@@ -49,6 +52,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
   const { state: authState } = useAuth();
   const adminToken = authState.state === "authed" ? authState.token : null;
   const [connectionMode, setConnectionMode] = useState<ConnectionMode>("choose");
+  const [loginSurface, setLoginSurface] = useState<LoginSurface>("mobile");
   const [autoBusy, setAutoBusy] = useState(false);
   const [manualBusy, setManualBusy] = useState(false);
   const [sessionId, setSessionId] = useState("");
@@ -67,6 +71,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
   useEffect(() => {
     if (!open) return;
     setConnectionMode("choose");
+    setLoginSurface(account?.login_surface === "desktop" ? "desktop" : "mobile");
     setSessionId("");
     setFirstLoginResult(null);
     setConnectionResult(null);
@@ -144,7 +149,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
     setConnectionResult(null);
     setBrowserSuccess(false);
     try {
-      const data = await api.accounts.firstLogin(account.username);
+      const data = await api.accounts.firstLogin(account.username, { loginSurface });
       setFirstLoginResult(data);
       if (data.connection_test) {
         setConnectionResult(data.connection_test);
@@ -273,6 +278,52 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
 
         {connectionMode === "choose" ? (
           <div className="space-y-4">
+            <div className="space-y-2">
+              <p className="text-sm text-slate-300">Режим браузера:</p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  className={`rounded-xl border p-4 text-left transition-colors ${
+                    loginSurface === "mobile"
+                      ? "border-brand-500/60 bg-brand-950/30"
+                      : "border-slate-700 bg-slate-900/50 hover:border-brand-500/50"
+                  }`}
+                  onClick={() => setLoginSurface("mobile")}
+                >
+                  <div className="flex items-center gap-2 text-white font-medium mb-2">
+                    <Smartphone size={18} className="text-brand-400" />
+                    Мобильный
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    Instagram как с телефона, совпадает с fingerprint аккаунта (рекомендуется).
+                  </p>
+                </button>
+                <button
+                  type="button"
+                  className={`rounded-xl border p-4 text-left transition-colors ${
+                    loginSurface === "desktop"
+                      ? "border-sky-500/60 bg-sky-950/30"
+                      : "border-slate-700 bg-slate-900/50 hover:border-sky-500/50"
+                  }`}
+                  onClick={() => setLoginSurface("desktop")}
+                >
+                  <div className="flex items-center gap-2 text-white font-medium mb-2">
+                    <Monitor size={18} className="text-sky-400" />
+                    Десктоп
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    Классический веб-логин, проще при проблемах с формой входа.
+                  </p>
+                </button>
+              </div>
+              {account?.has_session_id &&
+              account.login_surface &&
+              account.login_surface !== loginSurface ? (
+                <div className="rounded-lg border border-amber-500/40 bg-amber-950/30 p-3 text-xs text-amber-100">
+                  Смена режима после сохранения сессии может потребовать повторного входа.
+                </div>
+              ) : null}
+            </div>
             <p className="text-sm text-slate-300">Выберите способ подключения:</p>
             <div className="grid gap-3 sm:grid-cols-2">
               <button
@@ -342,6 +393,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
               username={account.username}
               adminToken={adminToken}
               mode="setup"
+              loginSurface={loginSurface}
               onSessionSaved={handleBrowserSessionSaved}
             />
           ) : null

@@ -24,11 +24,7 @@ from app.behavior.warmup_playwright import (
     _INSTAGRAM_LOGIN_URL,
     _INSTAGRAM_URL,
     _accept_cookie_banner,
-    _accept_language_for_locale,
     _apply_stealth_context,
-    _browser_launch_args,
-    _desktop_ua,
-    _desktop_viewport,
     _detect_2fa_required,
     _detect_challenge,
     _dismiss_post_login_modals,
@@ -43,6 +39,13 @@ from app.behavior.warmup_playwright import (
     _try_submit_totp,
     playwright_browsers_available,
     submit_verification_code,
+)
+from app.behavior.playwright_surface import (
+    LoginSurface,
+    browser_launch_args,
+    playwright_context_kwargs,
+    resolve_playwright_surface,
+    vnc_screen_size,
 )
 from app.browser.vnc_stack import VncStack, allocate_ports, vnc_stack_available
 from app.config import settings
@@ -71,6 +74,7 @@ class BrowserSessionState:
     ws_port: int = 0
     vnc_path: str = ""
     page_url: str | None = None
+    login_surface: LoginSurface = "mobile"
     started_at: float = field(default_factory=time.monotonic)
     vnc_stack: VncStack | None = None
     pw: Any = None
@@ -106,6 +110,7 @@ class BrowserSessionManager:
                 "vnc_path": None,
                 "page_url": None,
                 "error": None,
+                "login_surface": None,
             }
         return {
             "username": username,
@@ -114,6 +119,7 @@ class BrowserSessionManager:
             "vnc_path": session.vnc_path or None,
             "page_url": session.page_url,
             "error": session.error,
+            "login_surface": session.login_surface,
         }
 
     async def start_session(
@@ -122,8 +128,10 @@ class BrowserSessionManager:
         proxy,
         *,
         autofill_login: bool = True,
+        surface: LoginSurface | str | None = None,
     ) -> BrowserSessionState:
         username = account.username
+        resolved_surface = resolve_playwright_surface(surface or getattr(account, "login_surface", None))
         async with self._lock:
             existing = self._sessions.get(username)
             if existing and existing.status not in (
@@ -145,19 +153,31 @@ class BrowserSessionManager:
 
             display = self._next_display()
             rfb_port, ws_port = allocate_ports(display)
-            vnc = VncStack(display=display, rfb_port=rfb_port, ws_port=ws_port)
+            vnc = VncStack(
+                display=display,
+                rfb_port=rfb_port,
+                ws_port=ws_port,
+                screen=vnc_screen_size(resolved_surface),
+            )
             session = BrowserSessionState(
                 username=username,
                 display=display,
                 ws_port=ws_port,
                 vnc_path=f"api/accounts/{username}/browser/vnc/ws",
                 vnc_stack=vnc,
+                login_surface=resolved_surface,
             )
             self._sessions[username] = session
 
         try:
             await vnc.start()
-            await self._launch_browser(session, account, proxy, autofill_login=autofill_login)
+            await self._launch_browser(
+                session,
+                account,
+                proxy,
+                autofill_login=autofill_login,
+                surface=resolved_surface,
+            )
             session.status = BrowserSessionStatus.running
             session.poll_task = asyncio.create_task(self._poll_session(session, account))
             timeout_sec = settings.browser_session_timeout_min * 60
@@ -170,7 +190,15 @@ class BrowserSessionManager:
             await self._cleanup_session(session)
             raise
 
-    async def _launch_browser(self, session: BrowserSessionState, account, proxy, *, autofill_login: bool) -> None:
+    async def _launch_browser(
+        self,
+        session: BrowserSessionState,
+        account,
+        proxy,
+        *,
+        autofill_login: bool,
+        surface: LoginSurface,
+    ) -> None:
         try:
             from playwright.async_api import async_playwright
         except ImportError as exc:
@@ -195,7 +223,6 @@ class BrowserSessionManager:
                 pass
 
         fingerprint = load_fingerprint(account.username)
-        device_settings = fingerprint.settings if fingerprint else None
         locale = getattr(fingerprint, "locale", None) or "en-US"
         tz_id = normalize_playwright_timezone(proxy.timezone, country=proxy.country)
 
@@ -211,29 +238,23 @@ class BrowserSessionManager:
         session.browser = await session.pw.chromium.launch(
             headless=False,
             ignore_default_args=["--enable-automation"],
-            args=_browser_launch_args(),
+            args=browser_launch_args(surface),
             proxy=proxy_arg,
             env=display_env,
         )
 
-        context_kwargs: dict[str, Any] = {
-            "locale": locale.replace("_", "-"),
-            "timezone_id": tz_id,
-            "user_agent": _desktop_ua(),
-            "viewport": _desktop_viewport(),
-            "device_scale_factor": 1,
-            "has_touch": False,
-            "is_mobile": False,
-            "color_scheme": "light",
-            "extra_http_headers": {
-                "Accept-Language": _accept_language_for_locale(locale),
-            },
-        }
-        if state_file.exists() and storage_state_has_session(account.username):
-            context_kwargs["storage_state"] = str(state_file)
+        context_kwargs = playwright_context_kwargs(
+            surface,
+            fingerprint=fingerprint,
+            locale=locale,
+            timezone_id=tz_id,
+            storage_state_path=str(state_file)
+            if state_file.exists() and storage_state_has_session(account.username)
+            else None,
+        )
 
         session.context = await session.browser.new_context(**context_kwargs)
-        await _apply_stealth_context(session.context)
+        await _apply_stealth_context(session.context, surface)
         session.page = await session.context.new_page()
         if stealth_apply is not None:
             try:
@@ -255,7 +276,7 @@ class BrowserSessionManager:
             login_id = resolve_login_identifier(account)
             try:
                 await _ensure_login_page(page)
-                await _simulate_pre_login_behavior(page)
+                await _simulate_pre_login_behavior(page, surface=surface)
                 await _fill_login_field(page, password=False, text=login_id)
                 await _human_wait(0.8, 1.6)
                 await _fill_login_field(page, password=True, text=account.password)

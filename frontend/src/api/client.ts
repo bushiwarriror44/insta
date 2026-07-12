@@ -246,10 +246,13 @@ export const api = {
         `/api/accounts/${encodeURIComponent(username)}/test-connection`,
         { method: "POST" }
       ),
-    firstLogin: (username: string) =>
+    firstLogin: (username: string, opts?: { loginSurface?: import("./types").LoginSurface }) =>
       request<FirstLoginOut>(
         `/api/accounts/${encodeURIComponent(username)}/first-login`,
-        { method: "POST" }
+        {
+          method: "POST",
+          query: opts?.loginSurface ? { login_surface: opts.loginSurface } : undefined,
+        }
       ),
     exportCookies: (username: string) =>
       downloadFile(
@@ -265,10 +268,13 @@ export const api = {
       fetchObjectUrl(
         `/api/accounts/${encodeURIComponent(username)}/login-debug-screenshot`
       ),
-    browserStart: (username: string) =>
+    browserStart: (username: string, opts?: { loginSurface?: import("./types").LoginSurface }) =>
       request<BrowserSessionOut>(
         `/api/accounts/${encodeURIComponent(username)}/browser/start`,
-        { method: "POST" }
+        {
+          method: "POST",
+          query: opts?.loginSurface ? { login_surface: opts.loginSurface } : undefined,
+        }
       ),
     browserStatus: (username: string) =>
       request<BrowserSessionOut>(

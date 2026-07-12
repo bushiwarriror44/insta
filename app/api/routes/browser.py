@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.accounts.connection_test import run_account_connection_test
 from app.api.deps import AuthDep, get_db, verify_ws_token
 from app.api.schemas import BrowserCodeIn, BrowserSaveOut, BrowserSessionOut, DiagnosticLogLineOut
+from app.behavior.playwright_surface import resolve_playwright_surface
 from app.browser.session_manager import browser_session_manager
 from app.db import Account, Proxy
 
@@ -33,11 +34,18 @@ def _get_proxy(account: Account, db: Session) -> Proxy:
 
 
 @router.post("/{username}/browser/start", response_model=BrowserSessionOut)
-async def start_browser_session(username: str, db: Session = Depends(get_db)) -> BrowserSessionOut:
+async def start_browser_session(
+    username: str,
+    login_surface: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> BrowserSessionOut:
     account = _get_account(username, db)
     proxy = _get_proxy(account, db)
+    resolved_surface = resolve_playwright_surface(login_surface or account.login_surface)
+    account.login_surface = resolved_surface
+    db.commit()
     try:
-        await browser_session_manager.start_session(account, proxy)
+        await browser_session_manager.start_session(account, proxy, surface=resolved_surface)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return BrowserSessionOut(**browser_session_manager.status_dict(username))

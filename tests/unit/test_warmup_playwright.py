@@ -96,7 +96,9 @@ def test_accept_language_for_locale():
 
 
 def test_browser_launch_args_include_automation_evasion():
-    args = wp._browser_launch_args()
+    from app.behavior.playwright_surface import browser_launch_args
+
+    args = browser_launch_args("desktop")
     assert "--disable-blink-features=AutomationControlled" in args
 
 
@@ -500,3 +502,29 @@ class _SyncAsyncio:
             return None
 
         return _noop()
+
+
+def test_first_login_mobile_surface_uses_mobile_context(monkeypatch, app_env):
+    sid = "d" * 40
+    page = FakePage(has_login_form=True, already_logged_in=False)
+    fake_pw = _patch_async_playwright(
+        monkeypatch, page, session_id=sid, session_id_after_login=True
+    )
+
+    monkeypatch.setattr(wp, "asyncio", _SyncAsyncio())
+    monkeypatch.setattr(wp, "_SESSIONID_POLL_TIMEOUT_SEC", 0.5)
+
+    ok = wp.first_login(
+        username="mobileuser",
+        password="pwd",
+        proxy_url="http://u:p@host:1",
+        locale="en_US",
+        timezone_id="UTC",
+        headless=True,
+        surface="mobile",
+    )
+    assert ok.ok is True
+    ctx_kwargs = fake_pw.context.last_kwargs
+    assert ctx_kwargs["is_mobile"] is True
+    assert ctx_kwargs["has_touch"] is True
+    assert "Mobile Safari" in ctx_kwargs["user_agent"]

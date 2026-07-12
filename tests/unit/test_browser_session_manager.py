@@ -90,3 +90,39 @@ async def test_save_session_rejects_when_not_logged_in(monkeypatch):
 
     with pytest.raises(RuntimeError, match="войдите"):
         await mgr.save_session(MagicMock(), MagicMock(username="alice"))
+
+
+@pytest.mark.asyncio
+async def test_start_session_uses_mobile_surface(monkeypatch):
+    from app.config import settings
+    import app.browser.session_manager as sm
+
+    monkeypatch.setattr(settings, "browser_vnc_enabled", True)
+    monkeypatch.setattr(sm, "vnc_stack_available", lambda: True)
+    monkeypatch.setattr(sm, "playwright_browsers_available", lambda: True)
+
+    captured: dict = {}
+
+    class FakeVnc:
+        def __init__(self, **kwargs):
+            captured["vnc_screen"] = kwargs.get("screen")
+
+        async def start(self):
+            return None
+
+    monkeypatch.setattr(sm, "VncStack", FakeVnc)
+
+    async def fake_launch(session, account, proxy, *, autofill_login, surface):
+        captured["surface"] = surface
+
+    mgr = BrowserSessionManager()
+    account = MagicMock(username="alice")
+    proxy = MagicMock(url="http://u:p@1.2.3.4:8080", timezone="UTC", country="US")
+
+    monkeypatch.setattr(mgr, "_launch_browser", fake_launch)
+    monkeypatch.setattr(mgr, "_poll_session", AsyncMock())
+    monkeypatch.setattr(mgr, "_auto_stop", AsyncMock())
+
+    await mgr.start_session(account, proxy, surface="mobile")
+    assert captured["surface"] == "mobile"
+    assert captured["vnc_screen"] == "430x932x24"

@@ -113,6 +113,7 @@ class Account(Base):
     totp_seed: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     backup_codes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     session_id: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    login_surface: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
 
     status: Mapped[AccountStatus] = mapped_column(
         Enum(AccountStatus, native_enum=False), default=AccountStatus.active, index=True

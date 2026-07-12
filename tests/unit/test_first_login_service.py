@@ -339,6 +339,40 @@ def test_first_login_service_passes_login_identifier_to_playwright(
     assert captured.get("login_identifier") == "login@example.com"
 
 
+def test_first_login_service_passes_surface_to_playwright(
+    db_session, make_account, make_proxy, monkeypatch
+):
+    proxy = make_proxy(label="px-surface")
+    account = make_account(username="surfaceuser", proxy=proxy)
+    db_session.commit()
+    captured: dict = {}
+
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.playwright_browsers_available",
+        lambda: True,
+    )
+
+    def _fake_first_login(**kwargs):
+        captured.update(kwargs)
+        return FirstLoginResult(ok=True, session_id="b" * 40)
+
+    monkeypatch.setattr("app.accounts.first_login_service.first_login", _fake_first_login)
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.import_playwright_session_to_account",
+        lambda db, acc, **kwargs: True,
+    )
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.run_account_connection_test",
+        lambda acc, db: _connection_ok(acc.username),
+    )
+
+    out = run_account_first_login(account, db_session, surface="desktop")
+    assert out.ok is True
+    assert captured.get("surface") == "desktop"
+    db_session.refresh(account)
+    assert account.login_surface == "desktop"
+
+
 def test_first_login_service_no_playwright(db_session, make_account, monkeypatch):
     account = make_account(username="nopw")
 

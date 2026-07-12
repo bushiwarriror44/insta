@@ -59,6 +59,8 @@ export const CAPTION_PROFILE_OPTIONS: CaptionProfile[] = [
   "travel",
 ];
 
+export type LoginSurface = "mobile" | "desktop";
+
 export interface AccountOut {
   id: number;
   username: string;
@@ -82,6 +84,7 @@ export interface AccountOut {
   caption_profile: string | null;
   has_totp: boolean;
   has_session_id: boolean;
+  login_surface?: LoginSurface | null;
   session_file_exists: boolean;
   session_file_updated_at: string | null;
   session_source: "database" | "session_file" | "none";
@@ -105,6 +108,7 @@ export interface AccountIn {
   email?: string | null;
   email_password?: string | null;
   backup_codes?: string | null;
+  login_surface?: LoginSurface | null;
   account_line?: string | null;
 }
 
@@ -214,6 +218,7 @@ export interface BrowserSessionOut {
   vnc_path?: string | null;
   page_url?: string | null;
   error?: string | null;
+  login_surface?: LoginSurface | null;
 }
 
 export interface BrowserSaveOut extends BrowserSessionOut {

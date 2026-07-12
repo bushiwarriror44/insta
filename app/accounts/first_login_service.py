@@ -23,6 +23,7 @@ from app.accounts.session_manager import (
 )
 from app.api.schemas import AccountConnectionTestOut, DiagnosticLogLineOut, FirstLoginOut
 from app.behavior.warmup_playwright import FirstLoginResult, first_login, playwright_browsers_available
+from app.behavior.playwright_surface import resolve_playwright_surface, surface_label
 from app.db import Account, DiagnosticRunKind, Proxy
 from app.diagnostics.collector import DiagnosticCollector
 from app.geo.country_codes import normalize_country_code
@@ -195,7 +196,12 @@ def _log_playwright_failure_diagnostics(
         collector.info("browser", "Скриншот ошибки сохранён — см. ниже в модале")
 
 
-def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
+def run_account_first_login(
+    account: Account,
+    db: Session,
+    *,
+    surface: str | None = None,
+) -> FirstLoginOut:
     collector = DiagnosticCollector(
         db,
         kind=DiagnosticRunKind.first_login,
@@ -252,6 +258,10 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
             login_message="Используется сохранённая сессия из браузера",
         )
 
+    resolved_surface = resolve_playwright_surface(surface or account.login_surface)
+    account.login_surface = resolved_surface
+    db.commit()
+
     login_id = resolve_login_identifier(account)
     log_account_credentials(collector, account, proxy)
     collector.info("start", f"Автовход через браузер для @{account.username}")
@@ -261,7 +271,7 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
         account.username,
         country=normalize_country_code(proxy.country) or proxy.country or "US",
     )
-    collector.info("browser", "Запуск Playwright Chromium (desktop)")
+    collector.info("browser", f"Запуск Playwright Chromium ({surface_label(resolved_surface)})")
 
     tz_id = normalize_playwright_timezone(proxy.timezone, country=proxy.country)
     if tz_id != (proxy.timezone or "").strip():
@@ -278,6 +288,7 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
         fingerprint=fingerprint,
         totp_seed=account.totp_seed,
         login_identifier=login_id,
+        surface=resolved_surface,
     )
 
     if result.challenge:

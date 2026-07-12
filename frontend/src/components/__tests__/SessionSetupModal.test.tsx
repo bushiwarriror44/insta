@@ -70,10 +70,40 @@ beforeEach(() => {
 describe("SessionSetupModal", () => {
   it("renders connection method choice screen first", () => {
     renderModal();
+    expect(screen.getByText(/Режим браузера/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Мобильный/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Десктоп/i })).toBeInTheDocument();
     expect(screen.getByText(/Выберите способ подключения/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Автоматически/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Через браузер/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Создать сессию/i })).not.toBeInTheDocument();
+  });
+
+  it("passes desktop surface to firstLogin when selected", async () => {
+    apiMock.accounts.firstLogin.mockResolvedValue({
+      run_id: 1,
+      ok: true,
+      challenge: false,
+      session_imported: true,
+      logs: [],
+      connection_test: {
+        overall_ok: true,
+        instagram_auth: {
+          ok: true,
+          method: "sessionid",
+          challenge: false,
+          ig_username: "alice",
+        },
+        logs: [],
+      },
+    });
+    renderModal();
+    fireEvent.click(screen.getByRole("button", { name: /Десктоп/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Автоматически/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Создать сессию/i }));
+    await waitFor(() =>
+      expect(apiMock.accounts.firstLogin).toHaveBeenCalledWith("alice", { loginSurface: "desktop" })
+    );
   });
 
   it("calls firstLogin after choosing auto mode", async () => {
@@ -98,7 +128,7 @@ describe("SessionSetupModal", () => {
     fireEvent.click(screen.getByRole("button", { name: /Автоматически/i }));
     fireEvent.click(screen.getByRole("button", { name: /Создать сессию/i }));
     await waitFor(() =>
-      expect(apiMock.accounts.firstLogin).toHaveBeenCalledWith("alice")
+      expect(apiMock.accounts.firstLogin).toHaveBeenCalledWith("alice", { loginSurface: "mobile" })
     );
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /Готово/i })).toBeInTheDocument()

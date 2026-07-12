@@ -69,13 +69,13 @@ def test_first_login_endpoint_ok(api_client, monkeypatch):
     )
     monkeypatch.setattr(
         "app.api.routes.accounts.run_account_first_login",
-        lambda account, db: FirstLoginOut(
+        lambda account, db, surface=None: FirstLoginOut(
             run_id=1,
             ok=True,
             session_imported=True,
             logs=[],
         ),
     )
-    res = api_client.post("/api/accounts/flapi2/first-login")
+    res = api_client.post("/api/accounts/flapi2/first-login?login_surface=desktop")
     assert res.status_code == 200
     assert res.json()["ok"] is True
