@@ -35,10 +35,12 @@ from __future__ import annotations
 import asyncio
 import random
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from app.accounts.session_cookie import sessionid_from_cookies_array
 from app.config import settings
 from app.geo.timezone_normalize import normalize_playwright_timezone
 from app.logging_setup import get_logger
@@ -51,6 +53,7 @@ class FirstLoginResult:
     ok: bool
     challenge: bool = False
     error: str | None = None
+    session_id: str | None = None
 
 
 def _storage_dir(username: str) -> Path:
@@ -252,6 +255,74 @@ async def _detect_challenge(page) -> bool:
     return False
 
 
+_INSTAGRAM_URL = "https://www.instagram.com"
+_SESSIONID_POLL_TIMEOUT_SEC = 30.0
+
+
+def _instagram_sessionid_from_cookies(cookies: list) -> str | None:
+    """Return validated Instagram sessionid from Playwright cookie dicts."""
+    return sessionid_from_cookies_array(cookies)
+
+
+async def _wait_for_instagram_sessionid(context, timeout_sec: float = _SESSIONID_POLL_TIMEOUT_SEC) -> str | None:
+    """Poll browser cookies until Instagram sessionid appears or timeout."""
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        try:
+            cookies = await context.cookies(_INSTAGRAM_URL)
+            session_id = _instagram_sessionid_from_cookies(cookies)
+            if session_id:
+                return session_id
+        except Exception:
+            pass
+        await asyncio.sleep(random.uniform(0.5, 1.0))
+    return None
+
+
+async def _dismiss_post_login_modals(page) -> None:
+    """Best-effort dismiss of post-login prompts (save login, notifications, etc.)."""
+    selectors = [
+        'button:has-text("Not Now")',
+        'button:has-text("Not now")',
+        'button:has-text("Не сейчас")',
+        'button:has-text("Nicht jetzt")',
+        'button:has-text("Ahora no")',
+        'button:has-text("Save info")',
+        'button:has-text("Save Information")',
+        'button:has-text("Сохранить данные")',
+        'button:has-text("Turn on Notifications")',
+        'div[role="button"]:has-text("Not Now")',
+        'div[role="button"]:has-text("Not now")',
+    ]
+    for sel in selectors:
+        try:
+            loc = page.locator(sel).first
+            if await loc.count() > 0:
+                await loc.click(timeout=3000)
+                await _human_wait(0.5, 1.2)
+        except Exception:
+            continue
+
+
+async def _is_logged_in(context, page) -> bool:
+    """True when sessionid cookie exists or login form is gone with nav visible."""
+    try:
+        cookies = await context.cookies(_INSTAGRAM_URL)
+        if _instagram_sessionid_from_cookies(cookies):
+            return True
+    except Exception:
+        pass
+    try:
+        login_visible = await page.locator('input[name="username"]').count() > 0
+        if login_visible:
+            return False
+        nav_visible = await page.locator('a[href="/explore/"]').count() > 0
+        home_visible = await page.locator('a[href="/"]').count() > 0
+        return nav_visible or home_visible
+    except Exception:
+        return False
+
+
 def playwright_browsers_available() -> bool:
     root = Path(settings.playwright_browsers_path if hasattr(settings, "playwright_browsers_path") else "/ms-playwright")
     import os
@@ -350,7 +421,7 @@ async def _async_first_login(
         await _accept_cookie_banner(page)
         await _human_wait(0.6, 1.4)
 
-        already_logged_in = await page.locator('a[href="/explore/"]').count() > 0
+        already_logged_in = await _is_logged_in(context, page)
         if not already_logged_in:
             try:
                 await _human_type(page, 'input[name="username"]', username)
@@ -375,6 +446,7 @@ async def _async_first_login(
             await _human_wait(3.0, 6.0)
             await _try_submit_totp(page, totp_seed)
             await _human_wait(3.0, 6.0)
+            await _dismiss_post_login_modals(page)
 
             if await _detect_challenge(page):
                 logger.warning("playwright.challenge_detected", username=username)
@@ -388,14 +460,26 @@ async def _async_first_login(
         except Exception:
             pass
         await _human_wait(2.0, 4.0)
+        await _dismiss_post_login_modals(page)
         await _human_scroll(page, total_scrolls=random.randint(3, 6))
+
+        session_id = await _wait_for_instagram_sessionid(context)
+        if not session_id:
+            logger.error("playwright.sessionid_missing", username=username)
+            await context.storage_state(path=str(state_file))
+            await context.close()
+            await browser.close()
+            return FirstLoginResult(
+                ok=False,
+                error="Instagram не выдал sessionid — проверьте пароль, 2FA или challenge",
+            )
 
         await context.storage_state(path=str(state_file))
         await context.close()
         await browser.close()
 
     logger.info("playwright.first_login_done", username=username, storage=str(state_file))
-    return FirstLoginResult(ok=True)
+    return FirstLoginResult(ok=True, session_id=session_id)
 
 
 def first_login(

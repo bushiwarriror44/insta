@@ -42,11 +42,17 @@ def test_first_login_service_success(db_session, make_account, make_proxy, monke
     )
     monkeypatch.setattr(
         "app.accounts.first_login_service.first_login",
-        lambda **kwargs: FirstLoginResult(ok=True),
+        lambda **kwargs: FirstLoginResult(ok=True, session_id="d" * 40),
     )
+    captured: dict = {}
+
+    def _import(db, acc, **kwargs):
+        captured.update(kwargs)
+        return True
+
     monkeypatch.setattr(
         "app.accounts.first_login_service.import_playwright_session_to_account",
-        lambda db, acc: True,
+        _import,
     )
     monkeypatch.setattr(
         "app.accounts.first_login_service.run_account_connection_test",
@@ -57,6 +63,7 @@ def test_first_login_service_success(db_session, make_account, make_proxy, monke
     assert out.ok is True
     assert out.session_imported is True
     assert out.run_id > 0
+    assert captured.get("session_id") == "d" * 40
 
 
 def test_first_login_service_challenge(db_session, make_account, make_proxy, monkeypatch):
@@ -91,12 +98,12 @@ def test_first_login_service_normalizes_invalid_proxy_timezone(
 
     def _fake_first_login(**kwargs):
         captured.update(kwargs)
-        return FirstLoginResult(ok=True)
+        return FirstLoginResult(ok=True, session_id="e" * 40)
 
     monkeypatch.setattr("app.accounts.first_login_service.first_login", _fake_first_login)
     monkeypatch.setattr(
         "app.accounts.first_login_service.import_playwright_session_to_account",
-        lambda db, acc: True,
+        lambda db, acc, **kwargs: True,
     )
     monkeypatch.setattr(
         "app.accounts.first_login_service.run_account_connection_test",

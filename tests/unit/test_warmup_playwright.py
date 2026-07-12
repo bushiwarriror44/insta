@@ -83,6 +83,7 @@ class FakePage:
         self.events: list[tuple[str, tuple, dict]] = []
         self.mouse = self
         self.locator_calls: list[str] = []
+        self._context: FakeContext | None = None
 
     async def goto(self, *args, **kwargs):
         self.events.append(("goto", args, kwargs))
@@ -97,7 +98,11 @@ class FakePage:
                 return self_inner
 
             async def count(self_inner):
+                if selector == 'input[name="username"]':
+                    return 1 if page._has_login_form and not page._already_logged_in else 0
                 if selector == 'a[href="/explore/"]':
+                    return 1 if page._already_logged_in else 0
+                if selector == 'a[href="/"]':
                     return 1 if page._already_logged_in else 0
                 if page._has_challenge and "Suspicious" in selector:
                     return 1
@@ -113,6 +118,8 @@ class FakePage:
 
             async def click(self_inner, *args, **kwargs):
                 page.events.append(("locator_click", (selector,), kwargs))
+                if page._context is not None and 'button[type="submit"]' in selector:
+                    page._context.grant_session()
 
             async def type(self_inner, text, *, delay=0):
                 page.events.append(("type", (selector, text), {"delay": delay}))
@@ -139,16 +146,46 @@ class FakePage:
 
 
 class FakeContext:
-    def __init__(self, page: FakePage):
+    def __init__(
+        self,
+        page: FakePage,
+        *,
+        session_id: str | None = None,
+        session_id_after_login: bool = False,
+    ):
         self.page = page
+        self.page._context = self
         self.storage_state_path: str | None = None
+        self._pending_session_id = session_id
+        self.session_id_after_login = session_id_after_login
+        self.session_id = None if session_id_after_login else session_id
+
+    def grant_session(self) -> None:
+        if self._pending_session_id:
+            self.session_id = self._pending_session_id
 
     async def new_page(self):
         return self.page
 
+    async def cookies(self, _url: str):
+        if self.session_id:
+            return [
+                {
+                    "name": "sessionid",
+                    "value": self.session_id,
+                    "domain": ".instagram.com",
+                }
+            ]
+        return [{"name": "csrftoken", "value": "token", "domain": ".instagram.com"}]
+
     async def storage_state(self, path: str):
         self.storage_state_path = path
-        Path(path).write_text(json.dumps({"saved": True}), encoding="utf-8")
+        cookies = []
+        if self.session_id:
+            cookies.append(
+                {"name": "sessionid", "value": self.session_id, "domain": ".instagram.com"}
+            )
+        Path(path).write_text(json.dumps({"cookies": cookies, "origins": []}), encoding="utf-8")
 
     async def close(self):
         pass
@@ -179,14 +216,24 @@ class FakeChromium:
 
 
 class FakePW:
-    def __init__(self, page: FakePage):
-        self.context = FakeContext(page)
+    def __init__(self, page: FakePage, *, session_id: str | None = None, session_id_after_login: bool = False):
+        self.context = FakeContext(
+            page,
+            session_id=session_id,
+            session_id_after_login=session_id_after_login,
+        )
         self.browser = FakeBrowser(self.context)
         self.chromium = FakeChromium(self.browser)
 
 
-def _patch_async_playwright(monkeypatch, page: FakePage) -> FakePW:
-    pw = FakePW(page)
+def _patch_async_playwright(
+    monkeypatch,
+    page: FakePage,
+    *,
+    session_id: str | None = None,
+    session_id_after_login: bool = False,
+) -> FakePW:
+    pw = FakePW(page, session_id=session_id, session_id_after_login=session_id_after_login)
 
     fake_module = types.ModuleType("playwright.async_api")
 
@@ -203,10 +250,14 @@ def _patch_async_playwright(monkeypatch, page: FakePage) -> FakePW:
 
 
 def test_first_login_happy_path(monkeypatch, app_env):
+    sid = "a" * 40
     page = FakePage(has_login_form=True, already_logged_in=False)
-    _patch_async_playwright(monkeypatch, page)
+    _patch_async_playwright(
+        monkeypatch, page, session_id=sid, session_id_after_login=True
+    )
 
     monkeypatch.setattr(wp, "asyncio", _SyncAsyncio())
+    monkeypatch.setattr(wp, "_SESSIONID_POLL_TIMEOUT_SEC", 0.5)
 
     ok = wp.first_login(
         username="alice",
@@ -217,6 +268,7 @@ def test_first_login_happy_path(monkeypatch, app_env):
         headless=True,
     )
     assert ok.ok is True
+    assert ok.session_id == sid
     storage = app_env.tmp_path / "playwright" / "alice" / "state.json"
     assert storage.exists()
     type_calls = [e for e in page.events if e[0] == "type"]
@@ -227,9 +279,11 @@ def test_first_login_happy_path(monkeypatch, app_env):
 
 
 def test_first_login_skips_form_when_already_logged_in(monkeypatch, app_env):
+    sid = "b" * 40
     page = FakePage(has_login_form=False, already_logged_in=True)
-    _patch_async_playwright(monkeypatch, page)
+    _patch_async_playwright(monkeypatch, page, session_id=sid)
     monkeypatch.setattr(wp, "asyncio", _SyncAsyncio())
+    monkeypatch.setattr(wp, "_SESSIONID_POLL_TIMEOUT_SEC", 0.5)
 
     ok = wp.first_login(
         username="bob",
@@ -240,8 +294,28 @@ def test_first_login_skips_form_when_already_logged_in(monkeypatch, app_env):
         headless=True,
     )
     assert ok.ok is True
+    assert ok.session_id == sid
     type_calls = [e for e in page.events if e[0] == "type"]
     assert type_calls == []
+
+
+def test_first_login_fails_without_sessionid(monkeypatch, app_env):
+    page = FakePage(has_login_form=True, already_logged_in=False)
+    _patch_async_playwright(monkeypatch, page, session_id=None)
+    monkeypatch.setattr(wp, "asyncio", _SyncAsyncio())
+    monkeypatch.setattr(wp, "_SESSIONID_POLL_TIMEOUT_SEC", 0.2)
+
+    ok = wp.first_login(
+        username="noid",
+        password="pwd",
+        proxy_url="http://u:p@host:1",
+        locale="en_US",
+        timezone_id="UTC",
+        headless=True,
+    )
+    assert ok.ok is False
+    assert ok.session_id is None
+    assert "sessionid" in (ok.error or "").lower()
 
 
 def test_first_login_detects_challenge(monkeypatch, app_env):

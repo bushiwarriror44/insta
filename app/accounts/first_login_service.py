@@ -4,7 +4,10 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from app.accounts.connection_test import run_account_connection_test
-from app.accounts.playwright_session import import_playwright_session_to_account
+from app.accounts.playwright_session import (
+    cookie_names_from_playwright_state,
+    import_playwright_session_to_account,
+)
 from app.accounts.session_manager import ensure_fingerprint_and_proxy
 from app.api.schemas import AccountConnectionTestOut, DiagnosticLogLineOut, FirstLoginOut
 from app.behavior.warmup_playwright import FirstLoginResult, first_login, playwright_browsers_available
@@ -108,11 +111,24 @@ def run_account_first_login(account: Account, db: Session) -> FirstLoginOut:
             logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
         )
 
-    collector.info("login", "Браузерный вход выполнен")
+    collector.info("login", "Браузерный вход выполнен, sessionid получен")
 
-    session_imported = import_playwright_session_to_account(db, account)
+    session_imported = import_playwright_session_to_account(
+        db,
+        account,
+        session_id=result.session_id,
+    )
     if not session_imported:
-        collector.error("import", "Не удалось извлечь sessionid из Playwright state")
+        names = cookie_names_from_playwright_state(account.username)
+        if names:
+            preview = ", ".join(names[:12])
+            suffix = f" ({len(names)} шт.)" if len(names) > 12 else ""
+            collector.error(
+                "import",
+                f"Не удалось извлечь sessionid из Playwright state; cookies: {preview}{suffix}",
+            )
+        else:
+            collector.error("import", "Не удалось извлечь sessionid из Playwright state (файл пуст или отсутствует)")
         collector.finish("fail", "session import failed")
         return FirstLoginOut(
             run_id=collector.run_id,

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from app.accounts.playwright_session import playwright_state_path, save_playwright_state
+from app.accounts.session_cookie import MIN_SESSIONID_LEN, sessionid_from_cookies_array
 from app.accounts.session_export import export_sessionid
 from app.accounts.session_manager import clear_session_file, session_path
 
@@ -15,7 +16,6 @@ CookieImportFormat = Literal["dolphin", "playwright_state"]
 ImportFormatDetect = Literal["dolphin", "playwright_state", "unknown"]
 
 INSTAGRAM_DOMAIN = ".instagram.com"
-MIN_SESSIONID_LEN = 31
 
 
 class CookieFormatError(ValueError):
@@ -43,17 +43,6 @@ def detect_import_format(data: object) -> ImportFormatDetect:
         if isinstance(cookies, list):
             return "playwright_state"
     return "unknown"
-
-
-def sessionid_from_cookies_array(cookies: list) -> str | None:
-    for item in cookies:
-        if not isinstance(item, dict):
-            continue
-        if item.get("name") == "sessionid":
-            value = item.get("value")
-            if isinstance(value, str) and len(value.strip()) >= MIN_SESSIONID_LEN:
-                return value.strip()
-    return None
 
 
 def normalize_dolphin_cookie(item: dict) -> dict:
