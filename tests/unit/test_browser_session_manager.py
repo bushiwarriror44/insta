@@ -127,7 +127,7 @@ async def test_start_session_uses_mobile_surface(monkeypatch):
 
     await mgr.start_session(account, proxy, surface="mobile")
     assert captured["surface"] == "mobile"
-    assert captured["vnc_screen"] == "430x932x16"
+    assert captured["vnc_screen"] == "430x932x24"
     assert captured["lightweight"] is True
 
 

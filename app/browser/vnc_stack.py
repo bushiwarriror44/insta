@@ -35,10 +35,8 @@ def _screen_with_depth(screen: str, depth: str) -> str:
 
 
 def _lightweight_x11vnc_args() -> list[str]:
-    """x11vnc flags that work on Debian/Ubuntu packages (no invalid -framerate)."""
+    """x11vnc tuning for small VPS without -ncache (breaks proxied noVNC)."""
     return [
-        "-ncache",
-        "10",
         "-wait",
         "20",
         "-defer",
@@ -84,19 +82,6 @@ class VncStack:
         )
         self._procs.append(xvfb)
         await asyncio.sleep(0.35)
-        if xvfb.poll() is not None and self.lightweight and screen.endswith("x16"):
-            logger.warning("vnc.xvfb_16bit_failed", screen=screen, code=xvfb.returncode)
-            self._procs.clear()
-            screen = _screen_with_depth(screen, "24")
-            xvfb_cmd = self._xvfb_command(screen)
-            xvfb = subprocess.Popen(
-                xvfb_cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env=env,
-            )
-            self._procs.append(xvfb)
-            await asyncio.sleep(0.35)
         _require_running(xvfb, "Xvfb", cmd=xvfb_cmd)
         await self._wait_display_ready(env, timeout_sec=8.0)
 

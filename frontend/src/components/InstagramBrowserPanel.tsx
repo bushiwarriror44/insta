@@ -71,10 +71,10 @@ export function InstagramBrowserPanel({
     if (!vncPath || session?.status === "stopped") return null;
     const params = new URLSearchParams({
       autoconnect: "true",
-      resize: "scale",
+      resize: "remote",
       path: vncPath,
-      quality: "5",
-      compression: "6",
+      quality: "6",
+      compression: "2",
     });
     if (adminToken) {
       params.set("token", adminToken);

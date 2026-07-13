@@ -8,7 +8,7 @@ def test_lightweight_x11vnc_args_avoids_invalid_framerate():
     args = vs._lightweight_x11vnc_args()
     assert "-framerate" not in args
     assert "-quality" not in args
-    assert "-ncache" in args
+    assert "-ncache" not in args
     assert "-wait" in args
 
 

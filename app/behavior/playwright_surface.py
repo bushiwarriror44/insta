@@ -54,6 +54,7 @@ def browser_launch_args(surface: LoginSurface, *, lightweight: bool = False) -> 
         "--disable-dev-shm-usage",
         "--disable-infobars",
         f"--window-size={window_size}",
+        "--window-position=0,0",
         "--disable-features=IsolateOrigins,site-per-process",
     ]
     if lightweight:
@@ -62,11 +63,19 @@ def browser_launch_args(surface: LoginSurface, *, lightweight: bool = False) -> 
 
 
 def vnc_screen_size(surface: LoginSurface, *, lightweight: bool = False) -> str:
-    """Xvfb screen geometry for headed sessions."""
-    depth = "16" if lightweight else "24"
+    """Xvfb screen geometry for headed sessions.
+
+    Keep 24-bit color: 16-bit often breaks Chromium rendering on minimal Xvfb.
+    """
+    _ = lightweight
     if surface == "mobile":
-        return f"430x932x{depth}"
-    return f"1280x800x{depth}"
+        return "430x932x24"
+    return "1280x800x24"
+
+
+def vnc_mobile_viewport() -> dict[str, int]:
+    """CSS viewport sized to match the mobile VNC window (1:1 pixels)."""
+    return {"width": 430, "height": 900}
 
 
 def mouse_jitter_bounds(surface: LoginSurface) -> tuple[int, int, int, int]:
@@ -123,8 +132,12 @@ def playwright_context_kwargs(
         if device_settings:
             resolution = device_settings.get("resolution")
         user_agent = _ua_for_device(device_settings, None)
-        viewport = _viewport_from_resolution(resolution)
-        mobile_scale = 2 if lightweight else 3
+        if lightweight:
+            viewport = vnc_mobile_viewport()
+            mobile_scale = 1
+        else:
+            viewport = _viewport_from_resolution(resolution)
+            mobile_scale = 3
         context: dict[str, Any] = {
             "locale": resolved_locale,
             "timezone_id": timezone_id,
