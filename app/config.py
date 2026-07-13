@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     browser_vnc_enabled: bool = Field(default=False)
     browser_session_timeout_min: int = Field(default=30, ge=5, le=180)
     browser_display_base: int = Field(default=100, ge=10, le=200)
+    browser_lightweight: bool = Field(default=True)
+    browser_goto_timeout_sec: int = Field(default=25, ge=10, le=90)
 
     scheduler_tz: str = Field(default="UTC")
     worker_poll_interval_sec: int = Field(default=20, ge=5)

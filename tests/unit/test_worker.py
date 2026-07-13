@@ -33,6 +33,7 @@ def _ok_snapshot():
         ip="1.1.1.1",
         country="US",
         instagram_reachable=True,
+        instagram_login_reachable=True,
         checked_at=datetime.now(timezone.utc),
     )
 
@@ -519,6 +520,7 @@ def test_proxy_unstable_event_created_on_geo_mismatch(
             ip="2.2.2.2",
             country="NL",
             instagram_reachable=True,
+            instagram_login_reachable=True,
             checked_at=datetime.now(timezone.utc),
         )
 

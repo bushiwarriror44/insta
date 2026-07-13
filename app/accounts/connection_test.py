@@ -191,12 +191,14 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
         ip=snapshot.ip,
         geo_country=snapshot.country,
         instagram_reachable=snapshot.instagram_reachable,
+        instagram_login_reachable=snapshot.instagram_login_reachable,
         geo_mismatch=geo_mismatch,
     )
     collector.info(
         "proxy_health",
         f"IP={snapshot.ip or 'неизвестен'}, страна={snapshot.country or 'неизвестна'}, "
-        f"instagram_доступен={snapshot.instagram_reachable}",
+        f"instagram_доступен={snapshot.instagram_reachable}, "
+        f"login_страница={snapshot.instagram_login_reachable}",
     )
     if geo_mismatch:
         adv = normalize_country_code(proxy.country) or proxy.country

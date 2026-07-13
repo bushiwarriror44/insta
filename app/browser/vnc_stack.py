@@ -34,6 +34,7 @@ class VncStack:
     rfb_port: int
     ws_port: int
     screen: str = "1280x800x24"
+    lightweight: bool = False
     _procs: list[subprocess.Popen] = field(default_factory=list, repr=False)
 
     @property
@@ -47,19 +48,21 @@ class VncStack:
         env = os.environ.copy()
         env["DISPLAY"] = self.display_name
 
+        xvfb_cmd = [
+            "Xvfb",
+            self.display_name,
+            "-screen",
+            "0",
+            self.screen,
+            "-ac",
+        ]
+        if self.lightweight:
+            xvfb_cmd.append("-noreset")
+        else:
+            xvfb_cmd.extend(["+extension", "GLX", "+render", "-noreset"])
+
         xvfb = subprocess.Popen(
-            [
-                "Xvfb",
-                self.display_name,
-                "-screen",
-                "0",
-                self.screen,
-                "-ac",
-                "+extension",
-                "GLX",
-                "+render",
-                "-noreset",
-            ],
+            xvfb_cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             env=env,
@@ -67,19 +70,34 @@ class VncStack:
         self._procs.append(xvfb)
         await self._wait_display_ready(env, timeout_sec=8.0)
 
+        x11vnc_cmd = [
+            "x11vnc",
+            "-display",
+            self.display_name,
+            "-rfbport",
+            str(self.rfb_port),
+            "-localhost",
+            "-nopw",
+            "-forever",
+            "-shared",
+            "-noxdamage",
+        ]
+        if self.lightweight:
+            x11vnc_cmd.extend(
+                [
+                    "-ncache",
+                    "10",
+                    "-framerate",
+                    "15",
+                    "-quality",
+                    "5",
+                    "-threads",
+                    "2",
+                ]
+            )
+
         x11vnc = subprocess.Popen(
-            [
-                "x11vnc",
-                "-display",
-                self.display_name,
-                "-rfbport",
-                str(self.rfb_port),
-                "-localhost",
-                "-nopw",
-                "-forever",
-                "-shared",
-                "-noxdamage",
-            ],
+            x11vnc_cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             env=env,
@@ -105,6 +123,7 @@ class VncStack:
             display=self.display,
             rfb_port=self.rfb_port,
             ws_port=self.ws_port,
+            lightweight=self.lightweight,
         )
 
     async def _wait_display_ready(self, env: dict[str, str], *, timeout_sec: float) -> None:

@@ -371,14 +371,21 @@ async def _login_form_visible(page) -> bool:
     return (await _login_field_locator(page, password=False)) is not None
 
 
-async def _ensure_login_page(page) -> None:
+async def _ensure_login_page(page, *, fast: bool = False) -> None:
     """Navigate to Instagram login and wait until the form is interactable."""
+    goto_timeout = 25_000 if fast else 45_000
+    wait_until = "commit" if fast else "domcontentloaded"
+    post_nav_wait = (0.2, 0.5) if fast else (1.0, 2.0)
+    link_wait = (0.2, 0.5) if fast else (1.0, 2.0)
+    poll_sleep = 0.4 if fast else 0.8
+    deadline_sec = 12.0 if fast else 25.0
+
     if "accounts/login" not in (page.url or ""):
-        await page.goto(_INSTAGRAM_LOGIN_URL, wait_until="domcontentloaded", timeout=45000)
-    await _human_wait(1.0, 2.0)
+        await page.goto(_INSTAGRAM_LOGIN_URL, wait_until=wait_until, timeout=goto_timeout)
+    await _human_wait(*post_nav_wait)
     await _accept_cookie_banner(page)
 
-    deadline = time.monotonic() + 25.0
+    deadline = time.monotonic() + deadline_sec
     while time.monotonic() < deadline:
         if await _login_form_visible(page):
             return
@@ -387,17 +394,21 @@ async def _ensure_login_page(page) -> None:
                 loc = page.locator(sel).first
                 if await loc.count() > 0:
                     await loc.click(timeout=3000)
-                    await _human_wait(1.0, 2.0)
+                    await _human_wait(*link_wait)
                     await _accept_cookie_banner(page)
                     break
             except Exception:
                 continue
         if "accounts/login" not in (page.url or ""):
             try:
-                await page.goto(_INSTAGRAM_LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
+                await page.goto(
+                    _INSTAGRAM_LOGIN_URL,
+                    wait_until=wait_until,
+                    timeout=goto_timeout if fast else 30_000,
+                )
             except Exception:
                 pass
-        await asyncio.sleep(0.8)
+        await asyncio.sleep(poll_sleep)
 
     raise RuntimeError(
         f"login form fields not found (url={page.url!r}, title={await page.title()!r})"

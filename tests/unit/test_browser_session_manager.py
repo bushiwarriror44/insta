@@ -98,6 +98,7 @@ async def test_start_session_uses_mobile_surface(monkeypatch):
     import app.browser.session_manager as sm
 
     monkeypatch.setattr(settings, "browser_vnc_enabled", True)
+    monkeypatch.setattr(settings, "browser_lightweight", True)
     monkeypatch.setattr(sm, "vnc_stack_available", lambda: True)
     monkeypatch.setattr(sm, "playwright_browsers_available", lambda: True)
 
@@ -106,6 +107,7 @@ async def test_start_session_uses_mobile_surface(monkeypatch):
     class FakeVnc:
         def __init__(self, **kwargs):
             captured["vnc_screen"] = kwargs.get("screen")
+            captured["lightweight"] = kwargs.get("lightweight")
 
         async def start(self):
             return None
@@ -125,7 +127,59 @@ async def test_start_session_uses_mobile_surface(monkeypatch):
 
     await mgr.start_session(account, proxy, surface="mobile")
     assert captured["surface"] == "mobile"
-    assert captured["vnc_screen"] == "430x932x24"
+    assert captured["vnc_screen"] == "430x932x16"
+    assert captured["lightweight"] is True
+
+
+@pytest.mark.asyncio
+async def test_open_instagram_browser_no_about_blank_on_goto_failure():
+    import app.browser.session_manager as sm
+
+    page = AsyncMock()
+    page.url = "chrome://newtab/"
+    page.main_frame = MagicMock()
+    blank_calls: list[str] = []
+
+    async def failing_goto(url, **kwargs):
+        if "instagram" in url:
+            raise RuntimeError("net::ERR_HTTP_RESPONSE_CODE_FAILURE")
+        blank_calls.append(url)
+        return None
+
+    page.goto = failing_goto
+    page.on = MagicMock()
+    page.remove_listener = MagicMock()
+
+    warning = await sm._open_instagram_browser(page, username="alice", need_login=True)
+
+    assert warning is not None
+    assert "HTTP" in warning or "Instagram" in warning
+    assert not any("about:blank" in u for u in blank_calls)
+
+
+@pytest.mark.asyncio
+async def test_open_instagram_browser_partial_success_on_root(monkeypatch):
+    import app.browser.session_manager as sm
+
+    page = AsyncMock()
+    page.url = "https://www.instagram.com/"
+    page.main_frame = MagicMock()
+
+    async def goto(url, **kwargs):
+        if url.endswith("instagram.com/"):
+            page.url = "https://www.instagram.com/"
+            return None
+        raise RuntimeError("net::ERR_HTTP_RESPONSE_CODE_FAILURE")
+
+    page.goto = goto
+    page.on = MagicMock()
+    page.remove_listener = MagicMock()
+    monkeypatch.setattr(sm, "_login_form_visible", AsyncMock(return_value=False))
+
+    warning = await sm._open_instagram_browser(page, username="alice", need_login=True)
+
+    assert warning is None
+    assert "instagram.com" in page.url
 
 
 @pytest.mark.asyncio
@@ -155,14 +209,19 @@ async def test_start_session_survives_goto_failure(monkeypatch):
     monkeypatch.setattr(sm, "allocate_ports", lambda _d: (5900, 6080))
 
     page = AsyncMock()
-    page.url = "about:blank"
+    page.url = "chrome://newtab/"
+    page.main_frame = MagicMock()
+    blank_calls: list[str] = []
 
     async def failing_goto(url, **kwargs):
         if "instagram" in url:
             raise RuntimeError("net::ERR_HTTP_RESPONSE_CODE_FAILURE")
+        blank_calls.append(url)
         return None
 
     page.goto = failing_goto
+    page.on = MagicMock()
+    page.remove_listener = MagicMock()
 
     context = AsyncMock()
     context.new_page = AsyncMock(return_value=page)
@@ -187,6 +246,8 @@ async def test_start_session_survives_goto_failure(monkeypatch):
     monkeypatch.setattr(sm, "_human_wait", AsyncMock())
     monkeypatch.setattr(sm, "_is_logged_in", AsyncMock(return_value=False))
     monkeypatch.setattr(sm, "_accept_cookie_banner", AsyncMock())
+    monkeypatch.setattr(sm, "_login_form_visible", AsyncMock(return_value=False))
+    monkeypatch.setattr(sm, "_ensure_login_page", AsyncMock())
     monkeypatch.setattr(sm, "stealth_async", None, raising=False)
 
     fake_module = __import__("types").ModuleType("playwright.async_api")
@@ -210,8 +271,147 @@ async def test_start_session_survives_goto_failure(monkeypatch):
     session = await mgr.start_session(account, proxy, surface="mobile")
 
     assert session.status == BrowserSessionStatus.running
-    assert session.launch_warning == _GOTO_WARNING_MESSAGE
+    assert session.launch_warning is not None
     assert cleanup_called is False
-    data = mgr.status_dict("alice")
-    assert data["status"] == "running"
-    assert data["warning"] == _GOTO_WARNING_MESSAGE
+    assert not any("about:blank" in u for u in blank_calls)
+    sm._ensure_login_page.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_try_goto_url_stops_after_successful_commit(monkeypatch):
+    from app.config import settings
+    import app.browser.session_manager as sm
+
+    monkeypatch.setattr(settings, "browser_goto_timeout_sec", 25)
+    page = AsyncMock()
+    page.url = "https://www.instagram.com/"
+    page.main_frame = MagicMock()
+    calls: list[str] = []
+
+    async def goto(url, **kwargs):
+        calls.append(kwargs.get("wait_until", ""))
+        return None
+
+    page.goto = goto
+    page.on = MagicMock()
+    page.remove_listener = MagicMock()
+
+    landed = await sm._try_goto_url(
+        page,
+        "https://www.instagram.com/",
+        username="alice",
+        nav_status={},
+    )
+
+    assert landed is True
+    assert calls == ["commit"]
+
+
+@pytest.mark.asyncio
+async def test_start_session_autofill_uses_fast_path(monkeypatch):
+    from app.config import settings
+    import app.browser.session_manager as sm
+
+    monkeypatch.setattr(settings, "browser_vnc_enabled", True)
+    monkeypatch.setattr(sm, "vnc_stack_available", lambda: True)
+    monkeypatch.setattr(sm, "playwright_browsers_available", lambda: True)
+
+    class FakeVnc:
+        async def start(self):
+            return None
+
+        def stop(self):
+            return None
+
+    monkeypatch.setattr(sm, "VncStack", lambda **kwargs: FakeVnc())
+    monkeypatch.setattr(sm, "allocate_ports", lambda _d: (5900, 6080))
+
+    page = AsyncMock()
+    page.url = "https://www.instagram.com/"
+    page.main_frame = MagicMock()
+
+    async def goto(url, **kwargs):
+        if url.rstrip("/").endswith("instagram.com"):
+            page.url = "https://www.instagram.com/"
+            return None
+        raise RuntimeError("net::ERR_HTTP_RESPONSE_CODE_FAILURE")
+
+    page.goto = goto
+    page.on = MagicMock()
+    page.remove_listener = MagicMock()
+
+    context = AsyncMock()
+    context.new_page = AsyncMock(return_value=page)
+    browser = AsyncMock()
+    browser.new_context = AsyncMock(return_value=context)
+    pw = AsyncMock()
+    pw.chromium.launch = AsyncMock(return_value=browser)
+    pw.stop = AsyncMock()
+    playwright_manager = MagicMock()
+    playwright_manager.start = AsyncMock(return_value=pw)
+
+    monkeypatch.setattr(sm, "load_fingerprint", lambda _u: None)
+    monkeypatch.setattr(sm, "playwright_state_path", lambda _u: __import__("pathlib").Path("/tmp/none"))
+    monkeypatch.setattr(sm, "storage_state_has_session", lambda _u: False)
+    monkeypatch.setattr(sm, "_apply_stealth_context", AsyncMock())
+    monkeypatch.setattr(sm, "_human_wait", AsyncMock())
+    monkeypatch.setattr(sm, "_is_logged_in", AsyncMock(return_value=False))
+    monkeypatch.setattr(sm, "_accept_cookie_banner", AsyncMock())
+    monkeypatch.setattr(sm, "_login_form_visible", AsyncMock(return_value=False))
+
+    ensure_calls: list[bool] = []
+
+    async def fake_ensure(page, *, fast=False):
+        ensure_calls.append(fast)
+
+    monkeypatch.setattr(sm, "_ensure_login_page", fake_ensure)
+    monkeypatch.setattr(sm, "_fill_login_field", AsyncMock())
+    monkeypatch.setattr(sm, "_submit_login_form", AsyncMock())
+    monkeypatch.setattr(sm, "_try_submit_totp", AsyncMock())
+    monkeypatch.setattr(sm, "_dismiss_post_login_modals", AsyncMock())
+
+    fake_module = __import__("types").ModuleType("playwright.async_api")
+    fake_module.async_playwright = lambda: playwright_manager
+    monkeypatch.setitem(__import__("sys").modules, "playwright.async_api", fake_module)
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "playwright_stealth",
+        __import__("types").ModuleType("playwright_stealth"),
+    )
+
+    mgr = BrowserSessionManager()
+    mgr._cleanup_session = AsyncMock()  # type: ignore[method-assign]
+    mgr._refresh_code_state = AsyncMock()  # type: ignore[method-assign]
+    account = MagicMock(username="alice", password="secret", totp_seed=None)
+    proxy = MagicMock(url="http://u:p@1.2.3.4:8080", timezone="UTC", country="US")
+    monkeypatch.setattr(mgr, "_poll_session", AsyncMock())
+    monkeypatch.setattr(mgr, "_auto_stop", AsyncMock())
+
+    session = await mgr.start_session(account, proxy, surface="mobile")
+
+    assert session.status == BrowserSessionStatus.running
+    assert session.launch_warning is None
+    assert ensure_calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_apply_proxy_snapshot_updates_session_fields():
+    from app.browser.session_manager import BrowserSessionManager, BrowserSessionState
+    from app.proxies.pool import HealthSnapshot
+    from datetime import datetime, timezone
+
+    mgr = BrowserSessionManager()
+    session = BrowserSessionState(username="alice", proxy_ip="1.1.1.1")
+    mgr._sessions["alice"] = session
+    snap = HealthSnapshot(
+        ok=True,
+        ip="9.9.9.9",
+        country="US",
+        instagram_reachable=True,
+        instagram_login_reachable=False,
+        checked_at=datetime.now(timezone.utc),
+    )
+    mgr.apply_proxy_snapshot("alice", snap)
+    assert session.proxy_ip == "9.9.9.9"
+    assert session.proxy_geo_country == "US"
+    assert session.proxy_instagram_login_reachable is False

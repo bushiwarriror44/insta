@@ -33,8 +33,8 @@ from app.behavior.warmup_playwright import (
     _has_auth_cookies,
     _human_wait,
     _is_logged_in,
+    _login_form_visible,
     _parse_proxy,
-    _simulate_pre_login_behavior,
     _submit_login_form,
     _try_submit_totp,
     playwright_browsers_available,
@@ -59,28 +59,124 @@ _GOTO_WARNING_MESSAGE = (
     "Введите instagram.com вручную в браузере или смените прокси/режим на Десктоп."
 )
 
+def _is_on_instagram(url: str | None) -> bool:
+    return bool(url and "instagram.com" in url)
 
-async def _navigate_browser_page(page, *, url: str, username: str) -> str | None:
-    """Navigate to ``url``; on failure keep the page on about:blank and return a warning."""
-    try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-        return None
-    except Exception as exc:
-        logger.warning(
-            "browser_session.goto_failed",
-            username=username,
-            url=url,
-            error=str(exc),
+
+def _goto_warning_message(http_status: int | None) -> str:
+    if http_status is not None:
+        return (
+            f"Страница логина вернула HTTP {http_status} через прокси. {_GOTO_WARNING_MESSAGE}"
         )
+    return _GOTO_WARNING_MESSAGE
+
+
+async def _try_goto_url(
+    page,
+    url: str,
+    *,
+    username: str,
+    nav_status: dict[str, Any],
+) -> bool:
+    """Navigate to ``url``; return True when the page landed on Instagram."""
+    last_exc: Exception | None = None
+    goto_timeout = settings.browser_goto_timeout_sec * 1000
+
+    def on_response(response) -> None:
         try:
-            await page.goto("about:blank", wait_until="domcontentloaded", timeout=15000)
-        except Exception as blank_exc:
-            logger.warning(
-                "browser_session.blank_fallback_failed",
+            request = response.request
+            if request.is_navigation_request() and request.frame == page.main_frame:
+                nav_status["http_status"] = response.status
+                nav_status["url"] = response.url
+        except Exception:
+            pass
+
+    page.on("response", on_response)
+    try:
+        try:
+            await page.goto(url, wait_until="commit", timeout=goto_timeout)
+            logger.info(
+                "browser_session.goto_ok",
                 username=username,
-                error=str(blank_exc),
+                url=url,
+                wait_until="commit",
+                http_status=nav_status.get("http_status"),
             )
-        return _GOTO_WARNING_MESSAGE
+            return True
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(
+                "browser_session.goto_attempt_failed",
+                username=username,
+                url=url,
+                wait_until="commit",
+                http_status=nav_status.get("http_status"),
+                error=str(exc),
+            )
+            if _is_on_instagram(page.url):
+                return True
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=goto_timeout)
+            logger.info(
+                "browser_session.goto_ok",
+                username=username,
+                url=url,
+                wait_until="domcontentloaded",
+                http_status=nav_status.get("http_status"),
+            )
+            return True
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(
+                "browser_session.goto_attempt_failed",
+                username=username,
+                url=url,
+                wait_until="domcontentloaded",
+                http_status=nav_status.get("http_status"),
+                error=str(exc),
+            )
+            if _is_on_instagram(page.url):
+                return True
+        if last_exc is not None:
+            logger.warning(
+                "browser_session.goto_failed",
+                username=username,
+                url=url,
+                http_status=nav_status.get("http_status"),
+                error=str(last_exc),
+            )
+        return _is_on_instagram(page.url)
+    finally:
+        try:
+            page.remove_listener("response", on_response)
+        except Exception:
+            pass
+
+
+async def _open_instagram_browser(page, *, username: str, need_login: bool) -> str | None:
+    """Open Instagram via a URL ladder; never fall back to about:blank."""
+    urls = [_INSTAGRAM_URL]
+    if need_login and not await _login_form_visible(page):
+        urls.append(_INSTAGRAM_LOGIN_URL)
+
+    nav_status: dict[str, Any] = {}
+    last_http_status: int | None = None
+    on_ig = False
+
+    for url in urls:
+        nav_status.clear()
+        landed = await _try_goto_url(page, url, username=username, nav_status=nav_status)
+        last_http_status = nav_status.get("http_status")
+        if landed or _is_on_instagram(page.url):
+            on_ig = True
+            if not need_login or url == _INSTAGRAM_LOGIN_URL:
+                return None
+            if await _login_form_visible(page):
+                return None
+
+    if on_ig:
+        return None
+    return _goto_warning_message(last_http_status)
 
 
 class BrowserSessionStatus(str, Enum):
@@ -105,6 +201,7 @@ class BrowserSessionState:
     proxy_country: str | None = None
     proxy_timezone: str | None = None
     proxy_instagram_reachable: bool | None = None
+    proxy_instagram_login_reachable: bool | None = None
     display: int = 0
     ws_port: int = 0
     vnc_path: str = ""
@@ -135,6 +232,19 @@ class BrowserSessionManager:
     def get(self, username: str) -> BrowserSessionState | None:
         return self._sessions.get(username)
 
+    def apply_proxy_snapshot(self, username: str, snapshot: Any) -> None:
+        session = self._sessions.get(username)
+        if session is None or snapshot is None:
+            return
+        if getattr(snapshot, "ip", None):
+            session.proxy_ip = snapshot.ip
+        if getattr(snapshot, "country", None):
+            session.proxy_geo_country = snapshot.country
+        session.proxy_instagram_reachable = getattr(snapshot, "instagram_reachable", None)
+        session.proxy_instagram_login_reachable = getattr(
+            snapshot, "instagram_login_reachable", None
+        )
+
     def status_dict(self, username: str) -> dict[str, Any]:
         session = self._sessions.get(username)
         if session is None:
@@ -153,6 +263,7 @@ class BrowserSessionManager:
                 "proxy_country": None,
                 "proxy_timezone": None,
                 "proxy_instagram_reachable": None,
+                "proxy_instagram_login_reachable": None,
             }
         return {
             "username": username,
@@ -169,6 +280,7 @@ class BrowserSessionManager:
             "proxy_country": session.proxy_country,
             "proxy_timezone": session.proxy_timezone,
             "proxy_instagram_reachable": session.proxy_instagram_reachable,
+            "proxy_instagram_login_reachable": session.proxy_instagram_login_reachable,
         }
 
     async def start_session(
@@ -203,11 +315,13 @@ class BrowserSessionManager:
 
             display = self._next_display()
             rfb_port, ws_port = allocate_ports(display)
+            lightweight = settings.browser_lightweight
             vnc = VncStack(
                 display=display,
                 rfb_port=rfb_port,
                 ws_port=ws_port,
-                screen=vnc_screen_size(resolved_surface),
+                screen=vnc_screen_size(resolved_surface, lightweight=lightweight),
+                lightweight=lightweight,
             )
             session = BrowserSessionState(
                 username=username,
@@ -231,6 +345,9 @@ class BrowserSessionManager:
                     or getattr(proxy, "last_geo_country", None)
                 ),
                 proxy_instagram_reachable=getattr(proxy_snapshot, "instagram_reachable", None),
+                proxy_instagram_login_reachable=getattr(
+                    proxy_snapshot, "instagram_login_reachable", None
+                ),
             )
             self._sessions[username] = session
 
@@ -298,12 +415,13 @@ class BrowserSessionManager:
         state_file = playwright_state_path(account.username)
         display_env = os.environ.copy()
         display_env["DISPLAY"] = vnc_stack_display(session)
+        lightweight = settings.browser_lightweight
 
         session.pw = await async_playwright().start()
         session.browser = await session.pw.chromium.launch(
             headless=False,
             ignore_default_args=["--enable-automation"],
-            args=browser_launch_args(surface),
+            args=browser_launch_args(surface, lightweight=lightweight),
             proxy=proxy_arg,
             env=display_env,
         )
@@ -316,6 +434,7 @@ class BrowserSessionManager:
             storage_state_path=str(state_file)
             if state_file.exists() and storage_state_has_session(account.username)
             else None,
+            lightweight=lightweight,
         )
 
         session.context = await session.browser.new_context(**context_kwargs)
@@ -328,32 +447,34 @@ class BrowserSessionManager:
                 pass
 
         page = session.page
-        if state_file.exists() and storage_state_has_session(account.username):
-            warning = await _navigate_browser_page(
-                page, url=_INSTAGRAM_URL, username=account.username
-            )
-        else:
-            warning = await _navigate_browser_page(
-                page, url=_INSTAGRAM_LOGIN_URL, username=account.username
-            )
+        has_saved_session = state_file.exists() and storage_state_has_session(account.username)
+        warning = await _open_instagram_browser(
+            page,
+            username=account.username,
+            need_login=not has_saved_session,
+        )
         if warning:
             session.launch_warning = warning
 
-        await _human_wait(1.0, 2.0)
-        if not session.launch_warning:
+        await _human_wait(0.2, 0.5)
+        on_ig = _is_on_instagram(page.url)
+        if on_ig or not session.launch_warning:
             await _accept_cookie_banner(page)
         session.page_url = page.url
 
-        if autofill_login and not session.launch_warning and not await _is_logged_in(session.context, page):
+        if (
+            autofill_login
+            and not await _is_logged_in(session.context, page)
+            and (on_ig or not session.launch_warning)
+        ):
             login_id = resolve_login_identifier(account)
             try:
-                await _ensure_login_page(page)
-                await _simulate_pre_login_behavior(page, surface=surface)
+                await _ensure_login_page(page, fast=True)
                 await _fill_login_field(page, password=False, text=login_id)
-                await _human_wait(0.8, 1.6)
+                await _human_wait(0.2, 0.5)
                 await _fill_login_field(page, password=True, text=account.password)
                 await _submit_login_form(page)
-                await _human_wait(2.0, 4.0)
+                await _human_wait(0.5, 1.0)
                 await _try_submit_totp(page, account.totp_seed)
                 await _dismiss_post_login_modals(page)
             except Exception as exc:

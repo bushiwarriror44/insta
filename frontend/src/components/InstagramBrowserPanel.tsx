@@ -73,6 +73,8 @@ export function InstagramBrowserPanel({
       autoconnect: "true",
       resize: "scale",
       path: vncPath,
+      quality: "5",
+      compression: "6",
     });
     if (adminToken) {
       params.set("token", adminToken);
@@ -161,6 +163,12 @@ export function InstagramBrowserPanel({
           <span className="text-slate-200">
             {loginSurface === "mobile" ? "Мобильный" : "Десктоп"}
           </span>
+          {loginSurface === "mobile" ? (
+            <span className="block mt-1 text-slate-500">
+              На VPS 1 GB режим <strong className="text-slate-400">Десктоп</strong> обычно
+              отзывчивее.
+            </span>
+          ) : null}
         </p>
       ) : null}
 
@@ -197,6 +205,12 @@ export function InstagramBrowserPanel({
         <div className="rounded-lg border border-amber-500/40 bg-amber-950/30 p-3 text-sm text-amber-100">
           Браузер запущен, но Instagram не загрузился автоматически — откройте вручную в окне
           справа. {session.warning}
+          {session.page_url === "about:blank" ? (
+            <span className="block mt-1 text-amber-200/90">
+              Попробуйте ввести <span className="font-mono">instagram.com</span> в адресной строке
+              Chromium внутри окна noVNC.
+            </span>
+          ) : null}
         </div>
       ) : null}
 
@@ -232,7 +246,17 @@ export function InstagramBrowserPanel({
                   session.proxy_instagram_reachable ? "text-emerald-300" : "text-rose-300"
                 }
               >
-                Instagram web: {session.proxy_instagram_reachable ? "доступен" : "недоступен"}
+                Instagram API: {session.proxy_instagram_reachable ? "доступен" : "недоступен"}
+              </span>
+            ) : null}
+            {session.proxy_instagram_login_reachable != null ? (
+              <span
+                className={
+                  session.proxy_instagram_login_reachable ? "text-emerald-300" : "text-rose-300"
+                }
+              >
+                Страница логина:{" "}
+                {session.proxy_instagram_login_reachable ? "доступна" : "недоступна"}
               </span>
             ) : null}
           </p>

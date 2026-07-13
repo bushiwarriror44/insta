@@ -17,6 +17,7 @@ from app.proxies.pool import (
     health_check_cached,
     health_check_record,
     reach_instagram,
+    reach_instagram_login_page,
     reset_health_cache,
     proxy_risk_score,
     upsert_proxy,
@@ -29,6 +30,12 @@ def _clear_cache():
     reset_health_cache()
     yield
     reset_health_cache()
+
+
+def _mock_login_page_route(status: int = 200) -> None:
+    respx.get("https://www.instagram.com/accounts/login/").mock(
+        return_value=httpx.Response(status, text="<html></html>")
+    )
 
 
 @respx.mock
@@ -65,6 +72,7 @@ def test_health_check_record_updates_proxy_on_success(db_session, make_proxy):
     respx.get("https://i.instagram.com/api/v1/zr/dual_tokens/").mock(
         return_value=httpx.Response(200, text="{}")
     )
+    _mock_login_page_route()
     respx.get("https://ipapi.co/country/").mock(
         return_value=httpx.Response(200, text="US")
     )
@@ -185,6 +193,7 @@ def test_health_check_cached_skips_network_within_ttl():
     respx.get("https://i.instagram.com/api/v1/zr/dual_tokens/").mock(
         return_value=httpx.Response(200, text="{}")
     )
+    _mock_login_page_route()
     respx.get("https://ipapi.co/country/").mock(
         return_value=httpx.Response(200, text="US")
     )
@@ -207,6 +216,7 @@ def test_health_check_cached_force_refresh_bypasses_cache():
     respx.get("https://i.instagram.com/api/v1/zr/dual_tokens/").mock(
         return_value=httpx.Response(200, text="{}")
     )
+    _mock_login_page_route()
     respx.get("https://ipapi.co/country/").mock(
         return_value=httpx.Response(200, text="US")
     )
@@ -229,6 +239,7 @@ def test_geo_mismatch_does_not_disable_proxy(db_session, make_proxy):
     respx.get("https://i.instagram.com/api/v1/zr/dual_tokens/").mock(
         return_value=httpx.Response(200, text="{}")
     )
+    _mock_login_page_route()
     respx.get("https://ipapi.co/country/").mock(
         return_value=httpx.Response(200, text="NL")
     )
@@ -240,12 +251,50 @@ def test_geo_mismatch_does_not_disable_proxy(db_session, make_proxy):
     assert proxy.last_geo_country == "NL"
 
 
+@respx.mock
+def test_reach_instagram_login_page_ok_on_2xx():
+    respx.get("https://www.instagram.com/accounts/login/").mock(
+        return_value=httpx.Response(200, text="<html></html>")
+    )
+    ok, status = reach_instagram_login_page("http://h:1", timeout=3)
+    assert ok is True
+    assert status == 200
+
+
+@respx.mock
+def test_reach_instagram_login_page_blocked_on_403():
+    respx.get("https://www.instagram.com/accounts/login/").mock(
+        return_value=httpx.Response(403, text="")
+    )
+    ok, status = reach_instagram_login_page("http://h:1", timeout=3)
+    assert ok is False
+    assert status == 403
+
+
+@respx.mock
+def test_health_check_cached_sets_login_reachable_flag():
+    respx.get(settings.proxy_health_url).mock(
+        return_value=httpx.Response(200, json={"ip": "1.2.3.4"})
+    )
+    respx.get("https://i.instagram.com/api/v1/zr/dual_tokens/").mock(
+        return_value=httpx.Response(200, text="{}")
+    )
+    _mock_login_page_route(403)
+    respx.get("https://ipapi.co/country/").mock(
+        return_value=httpx.Response(200, text="US")
+    )
+    snap = health_check_cached("http://h:1", force=True)
+    assert snap.instagram_reachable is True
+    assert snap.instagram_login_reachable is False
+
+
 def test_proxy_risk_score_detects_geo_mismatch():
     snap = HealthSnapshot(
         ok=True,
         ip="1.2.3.4",
         country="NL",
         instagram_reachable=True,
+        instagram_login_reachable=True,
         checked_at=datetime.now(timezone.utc),
     )
     score = proxy_risk_score(snap, advertised_country="DE")
@@ -258,6 +307,7 @@ def test_proxy_risk_score_usa_vs_us_not_mismatch():
         ip="1.2.3.4",
         country="US",
         instagram_reachable=True,
+        instagram_login_reachable=True,
         checked_at=datetime.now(timezone.utc),
     )
     score = proxy_risk_score(snap, advertised_country="USA")

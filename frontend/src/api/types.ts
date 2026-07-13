@@ -138,6 +138,7 @@ export interface ProxyHealthStepOut {
   ip?: string | null;
   geo_country?: string | null;
   instagram_reachable: boolean;
+  instagram_login_reachable?: boolean;
   geo_mismatch: boolean;
   error?: string | null;
 }
@@ -226,6 +227,7 @@ export interface BrowserSessionOut {
   proxy_country?: string | null;
   proxy_timezone?: string | null;
   proxy_instagram_reachable?: boolean | null;
+  proxy_instagram_login_reachable?: boolean | null;
 }
 
 export interface BrowserSaveOut extends BrowserSessionOut {

@@ -152,6 +152,7 @@ class ProxyHealthStepOut(BaseModel):
     ip: Optional[str] = None
     geo_country: Optional[str] = None
     instagram_reachable: bool = False
+    instagram_login_reachable: bool = False
     geo_mismatch: bool = False
     error: Optional[str] = None
 
@@ -241,6 +242,7 @@ class BrowserSessionOut(BaseModel):
     proxy_country: Optional[str] = None
     proxy_timezone: Optional[str] = None
     proxy_instagram_reachable: Optional[bool] = None
+    proxy_instagram_login_reachable: Optional[bool] = None
 
 
 class BrowserCodeIn(BaseModel):

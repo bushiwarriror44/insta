@@ -47,7 +47,16 @@ class HealthSnapshot:
     ip: str | None
     country: str | None
     instagram_reachable: bool
+    instagram_login_reachable: bool
     checked_at: datetime
+
+
+_CHROME_DESKTOP_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
+_INSTAGRAM_LOGIN_CHECK_URL = "https://www.instagram.com/accounts/login/"
 
 
 def proxy_risk_score(snapshot: HealthSnapshot, *, advertised_country: str | None = None) -> float:
@@ -57,6 +66,8 @@ def proxy_risk_score(snapshot: HealthSnapshot, *, advertised_country: str | None
         return 1.0
     if not snapshot.instagram_reachable:
         score += 0.6
+    if not snapshot.instagram_login_reachable:
+        score += 0.35
     if not snapshot.ip:
         score += 0.2
     if countries_mismatch(advertised_country, snapshot.country):
@@ -127,6 +138,33 @@ def reach_instagram(proxy_url: str, timeout: int | None = None) -> bool:
     return False
 
 
+def reach_instagram_login_page(proxy_url: str, timeout: int | None = None) -> tuple[bool, int | None]:
+    """Check whether the Instagram login page is reachable with a browser-like UA.
+
+    Unlike :func:`reach_instagram`, this hits ``/accounts/login/`` with a Chrome
+    desktop user-agent — closer to what headed Playwright uses.
+    """
+    timeout = timeout or settings.proxy_health_timeout_sec
+    try:
+        with httpx.Client(
+            proxy=proxy_url,
+            timeout=timeout,
+            transport=httpx.HTTPTransport(retries=0),
+            follow_redirects=True,
+        ) as client:
+            resp = client.get(
+                _INSTAGRAM_LOGIN_CHECK_URL,
+                headers={
+                    "User-Agent": _CHROME_DESKTOP_UA,
+                    "Accept-Language": "en-US,en;q=0.9",
+                },
+            )
+            return resp.status_code < 400, resp.status_code
+    except (httpx.HTTPError, OSError) as exc:
+        logger.debug("proxy.login_page_unreachable", error=str(exc))
+        return False, None
+
+
 def geo_verify(proxy_url: str, timeout: int | None = None) -> str | None:
     """Return the country code (ISO-2) the proxy's egress IP resolves to."""
     timeout = timeout or settings.proxy_health_timeout_sec
@@ -170,6 +208,7 @@ def health_check_cached(proxy_url: str, *, force: bool = False) -> HealthSnapsho
     ip = None
     ok = True
     ig_ok = False
+    ig_login_ok = False
     country = None
     try:
         data = health_check(proxy_url)
@@ -185,6 +224,14 @@ def health_check_cached(proxy_url: str, *, force: bool = False) -> HealthSnapsho
             ig_ok = False
 
     if ok:
+        ig_login_ok, login_status = reach_instagram_login_page(proxy_url)
+        if login_status is not None and login_status >= 400:
+            logger.warning(
+                "proxy.login_page_http_error",
+                status=login_status,
+            )
+
+    if ok:
         country = geo_verify(proxy_url)
 
     snapshot = HealthSnapshot(
@@ -192,6 +239,7 @@ def health_check_cached(proxy_url: str, *, force: bool = False) -> HealthSnapsho
         ip=ip,
         country=country,
         instagram_reachable=ig_ok,
+        instagram_login_reachable=ig_login_ok,
         checked_at=now,
     )
     with _CACHE_LOCK:
@@ -235,9 +283,12 @@ def health_check_record(db: Session, proxy: Proxy) -> tuple[bool, HealthSnapshot
         ip=proxy.last_known_ip,
         country=snapshot.country,
         instagram=snapshot.instagram_reachable,
+        instagram_login=snapshot.instagram_login_reachable,
     )
     if not snapshot.instagram_reachable:
         return True, snapshot, "Instagram unreachable through proxy"
+    if not snapshot.instagram_login_reachable:
+        return True, snapshot, "Instagram login page unreachable through proxy"
     return True, snapshot, None
 
 

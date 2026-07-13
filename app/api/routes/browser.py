@@ -14,7 +14,7 @@ from app.behavior.playwright_surface import resolve_playwright_surface
 from app.browser.session_manager import browser_session_manager
 from app.db import Account, Proxy
 from app.logging_setup import get_logger
-from app.proxies.pool import health_check_record
+from app.proxies.pool import ProxyError, health_check_cached
 
 logger = get_logger(__name__)
 
@@ -37,6 +37,13 @@ def _get_proxy(account: Account, db: Session) -> Proxy:
     return proxy
 
 
+async def _load_proxy_snapshot(proxy_url: str):
+    try:
+        return await asyncio.to_thread(health_check_cached, proxy_url, False)
+    except ProxyError:
+        return None
+
+
 @router.post("/{username}/browser/start", response_model=BrowserSessionOut, dependencies=[AuthDep])
 async def start_browser_session(
     username: str,
@@ -48,17 +55,19 @@ async def start_browser_session(
     resolved_surface = resolve_playwright_surface(login_surface or account.login_surface)
     account.login_surface = resolved_surface
     db.commit()
-    _healthy, proxy_snapshot, _health_err = health_check_record(db, proxy)
-    db.refresh(proxy)
+    health_task = asyncio.create_task(_load_proxy_snapshot(proxy.url))
     try:
         await browser_session_manager.start_session(
             account,
             proxy,
             surface=resolved_surface,
-            proxy_snapshot=proxy_snapshot,
+            proxy_snapshot=None,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    finally:
+        snapshot = await health_task
+    browser_session_manager.apply_proxy_snapshot(username, snapshot)
     return BrowserSessionOut(**browser_session_manager.status_dict(username))
 
 

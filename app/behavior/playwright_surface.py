@@ -33,12 +33,22 @@ def stealth_init_script(surface: LoginSurface) -> str:
 """
 
 
-def browser_launch_args(surface: LoginSurface) -> list[str]:
+_LIGHTWEIGHT_CHROMIUM_ARGS = [
+    "--disable-gpu",
+    "--disable-background-networking",
+    "--disable-sync",
+    "--disable-translate",
+    "--no-first-run",
+    "--disable-features=AudioServiceOutOfProcess",
+]
+
+
+def browser_launch_args(surface: LoginSurface, *, lightweight: bool = False) -> list[str]:
     if surface == "mobile":
         window_size = "430,932"
     else:
         window_size = "1280,800"
-    return [
+    args = [
         "--disable-blink-features=AutomationControlled",
         "--no-sandbox",
         "--disable-dev-shm-usage",
@@ -46,11 +56,17 @@ def browser_launch_args(surface: LoginSurface) -> list[str]:
         f"--window-size={window_size}",
         "--disable-features=IsolateOrigins,site-per-process",
     ]
+    if lightweight:
+        args.extend(_LIGHTWEIGHT_CHROMIUM_ARGS)
+    return args
 
 
-def vnc_screen_size(surface: LoginSurface) -> str:
+def vnc_screen_size(surface: LoginSurface, *, lightweight: bool = False) -> str:
     """Xvfb screen geometry for headed sessions."""
-    return "430x932x24" if surface == "mobile" else "1280x800x24"
+    depth = "16" if lightweight else "24"
+    if surface == "mobile":
+        return f"430x932x{depth}"
+    return f"1280x800x{depth}"
 
 
 def mouse_jitter_bounds(surface: LoginSurface) -> tuple[int, int, int, int]:
@@ -88,6 +104,7 @@ def playwright_context_kwargs(
     locale: str = "en-US",
     timezone_id: str = "UTC",
     storage_state_path: str | None = None,
+    lightweight: bool = False,
 ) -> dict[str, Any]:
     """Build Playwright ``browser.new_context`` kwargs for the given surface."""
     from app.behavior.warmup_playwright import (
@@ -107,12 +124,13 @@ def playwright_context_kwargs(
             resolution = device_settings.get("resolution")
         user_agent = _ua_for_device(device_settings, None)
         viewport = _viewport_from_resolution(resolution)
+        mobile_scale = 2 if lightweight else 3
         context: dict[str, Any] = {
             "locale": resolved_locale,
             "timezone_id": timezone_id,
             "user_agent": user_agent,
             "viewport": viewport,
-            "device_scale_factor": 3,
+            "device_scale_factor": mobile_scale,
             "has_touch": True,
             "is_mobile": True,
             "color_scheme": "light",

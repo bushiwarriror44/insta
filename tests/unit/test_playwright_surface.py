@@ -75,3 +75,20 @@ def test_playwright_context_kwargs_desktop():
 def test_vnc_screen_size():
     assert ps.vnc_screen_size("mobile") == "430x932x24"
     assert ps.vnc_screen_size("desktop") == "1280x800x24"
+    assert ps.vnc_screen_size("mobile", lightweight=True) == "430x932x16"
+    assert ps.vnc_screen_size("desktop", lightweight=True) == "1280x800x16"
+
+
+def test_browser_launch_args_lightweight_adds_performance_flags():
+    args = ps.browser_launch_args("desktop", lightweight=True)
+    assert "--disable-gpu" in args
+    assert "--no-first-run" in args
+    base = ps.browser_launch_args("desktop", lightweight=False)
+    assert "--disable-gpu" not in base
+
+
+def test_playwright_context_kwargs_mobile_lightweight_scale():
+    kwargs = ps.playwright_context_kwargs("mobile", fingerprint=None, lightweight=True)
+    assert kwargs["device_scale_factor"] == 2
+    full = ps.playwright_context_kwargs("mobile", fingerprint=None, lightweight=False)
+    assert full["device_scale_factor"] == 3

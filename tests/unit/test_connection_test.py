@@ -76,6 +76,7 @@ def test_connection_test_happy_path(api_client, db_session, monkeypatch):
         ip="1.2.3.4",
         country="US",
         instagram_reachable=True,
+        instagram_login_reachable=True,
         checked_at=datetime.now(timezone.utc),
     )
 
@@ -147,6 +148,7 @@ def test_connection_test_session_auth_failure(api_client, monkeypatch):
         ip="5.6.7.8",
         country="DE",
         instagram_reachable=True,
+        instagram_login_reachable=True,
         checked_at=datetime.now(timezone.utc),
     )
     monkeypatch.setattr(
@@ -202,6 +204,7 @@ def test_proxy_check_returns_instagram_reachable(api_client, monkeypatch):
         ip="9.9.9.9",
         country="US",
         instagram_reachable=True,
+        instagram_login_reachable=True,
         checked_at=datetime.now(timezone.utc),
     )
     monkeypatch.setattr(
@@ -241,6 +244,7 @@ def test_diagnostic_runs_list_after_connection_test(api_client, monkeypatch):
         ip="1.2.3.4",
         country="US",
         instagram_reachable=True,
+        instagram_login_reachable=True,
         checked_at=datetime.now(timezone.utc),
     )
     monkeypatch.setattr(
