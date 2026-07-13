@@ -68,7 +68,7 @@ _CHROME_DESKTOP_UA = (
 _INSTAGRAM_LOGIN_CHECK_URL = "https://www.instagram.com/accounts/login/"
 
 _CACHE_TTL = timedelta(minutes=30)
-_RATE_LIMIT_LOGIN_CACHE_TTL = timedelta(minutes=60)
+_RATE_LIMIT_LOGIN_CACHE_TTL = timedelta(hours=2)
 _HEALTH_CACHE: dict[str, HealthSnapshot] = {}
 _CACHE_LOCK = Lock()
 
@@ -105,7 +105,8 @@ def _inherit_cached_instagram_fields(
     prev: HealthSnapshot | None,
 ) -> tuple[bool, bool, int | None, str | None]:
     if prev is None:
-        return True, True, None, None
+        # Unknown login reachability — do not assume the page is open (avoids auto-goto into 429).
+        return True, False, None, None
     return (
         prev.instagram_reachable,
         prev.instagram_login_reachable,
@@ -270,12 +271,21 @@ def health_check_cached(
             ig_ok = False
 
         if ok:
-            ig_login_ok, login_status = reach_instagram_login_page(proxy_url)
-            if login_status is not None and login_status >= 400:
-                logger.warning(
-                    "proxy.login_page_http_error",
-                    status=login_status,
-                )
+            skip_login_probe = (
+                prev is not None
+                and prev.instagram_login_http_status == 429
+                and now - prev.checked_at < _RATE_LIMIT_LOGIN_CACHE_TTL
+            )
+            if skip_login_probe:
+                ig_login_ok = prev.instagram_login_reachable
+                login_status = prev.instagram_login_http_status
+            else:
+                ig_login_ok, login_status = reach_instagram_login_page(proxy_url)
+                if login_status is not None and login_status >= 400:
+                    logger.warning(
+                        "proxy.login_page_http_error",
+                        status=login_status,
+                    )
 
         if ok:
             country = geo_verify(proxy_url)

@@ -19,6 +19,7 @@ const apiMock = vi.hoisted(() => ({
   browserSave: vi.fn(),
   browserStop: vi.fn(),
   browserSubmitCode: vi.fn(),
+  browserOpenInstagram: vi.fn(),
   updateNotes: vi.fn(),
 }));
 

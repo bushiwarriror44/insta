@@ -60,6 +60,11 @@ _GOTO_WARNING_MESSAGE = (
     "Введите instagram.com вручную в браузере или смените прокси/режим на Десктоп."
 )
 
+_MANUAL_OPEN_HINT = (
+    "Браузер запущен без автозахода на Instagram — нажмите «Открыть Instagram» "
+    "или введите адрес вручную в окне VNC, чтобы снизить риск HTTP 429."
+)
+
 def _is_on_instagram(url: str | None) -> bool:
     return bool(url and "instagram.com" in url)
 
@@ -81,10 +86,23 @@ def _goto_warning_message(http_status: int | None) -> str:
 _RATE_LIMIT_STATUSES = frozenset({429, 503})
 
 
-def _is_rate_limited(http_status: int | None, url: str | None) -> bool:
+def _is_rate_limited(
+    http_status: int | None,
+    url: str | None,
+    *,
+    error_text: str | None = None,
+) -> bool:
     if http_status in _RATE_LIMIT_STATUSES:
         return True
-    return bool(url and url.startswith("chrome-error://"))
+    if error_text and "429" in error_text:
+        return True
+    if http_status == 429:
+        return True
+    return bool(
+        url
+        and url.startswith("chrome-error://")
+        and http_status in _RATE_LIMIT_STATUSES
+    )
 
 
 def _proxy_login_blocked(
@@ -163,7 +181,11 @@ async def _try_goto_url(
                 http_status=nav_status.get("http_status"),
                 error=str(exc),
             )
-            if _is_rate_limited(nav_status.get("http_status"), page.url):
+            if _is_rate_limited(
+                nav_status.get("http_status"),
+                page.url,
+                error_text=str(exc),
+            ):
                 return False
             if _is_on_instagram(page.url):
                 return True
@@ -490,27 +512,74 @@ class BrowserSessionManager:
         page = session.page
         has_saved_session = state_file.exists() and storage_state_has_session(account.username)
         need_login = not has_saved_session
-        if need_login and _proxy_login_blocked(
+        await self._maybe_open_instagram(
+            session,
+            account,
+            proxy,
+            page=page,
+            need_login=need_login,
+            autofill_login=autofill_login,
+        )
+
+        session.page_url = page.url
+        await self._refresh_code_state(session)
+
+    async def _maybe_open_instagram(
+        self,
+        session: BrowserSessionState,
+        account,
+        proxy,
+        *,
+        page,
+        need_login: bool,
+        autofill_login: bool,
+    ) -> None:
+        blocked = need_login and _proxy_login_blocked(
             login_reachable=session.proxy_instagram_login_reachable,
             login_http_status=session.proxy_instagram_login_http_status,
-        ):
+        )
+        if blocked:
             session.launch_warning = _warning_from_proxy_preflight(
                 login_reachable=session.proxy_instagram_login_reachable,
                 login_http_status=session.proxy_instagram_login_http_status,
             )
-        else:
-            warning, login_http_status = await _open_instagram_browser(
-                page,
-                username=account.username,
-                need_login=need_login,
-            )
-            if warning:
-                session.launch_warning = warning
-            if login_http_status is not None:
-                session.proxy_instagram_login_http_status = login_http_status
-                if login_http_status >= 400:
-                    session.proxy_instagram_login_reachable = False
-                    note_proxy_login_http_status(proxy.url, int(login_http_status))
+            return
+
+        if not settings.browser_auto_open_instagram:
+            session.launch_warning = _MANUAL_OPEN_HINT
+            return
+
+        await self._navigate_instagram_and_maybe_autofill(
+            session,
+            account,
+            proxy,
+            page=page,
+            need_login=need_login,
+            autofill_login=autofill_login and settings.browser_autofill_on_start,
+        )
+
+    async def _navigate_instagram_and_maybe_autofill(
+        self,
+        session: BrowserSessionState,
+        account,
+        proxy,
+        *,
+        page,
+        need_login: bool,
+        autofill_login: bool,
+    ) -> None:
+        warning, login_http_status = await _open_instagram_browser(
+            page,
+            username=account.username,
+            need_login=need_login,
+        )
+        if warning:
+            session.launch_warning = warning
+        if login_http_status is not None:
+            session.proxy_instagram_login_http_status = login_http_status
+            if login_http_status >= 400:
+                session.proxy_instagram_login_reachable = False
+                note_proxy_login_http_status(proxy.url, int(login_http_status))
 
         await _human_wait(0.2, 0.5)
         on_ig = _is_on_instagram(page.url)
@@ -537,6 +606,30 @@ class BrowserSessionManager:
                 logger.warning("browser_session.autofill_failed", username=account.username, error=str(exc))
 
         session.page_url = page.url
+
+    async def open_instagram(self, account, proxy, *, autofill_login: bool = False) -> None:
+        session = self._sessions.get(account.username)
+        if session is None or session.page is None or session.context is None:
+            raise RuntimeError("No active browser session for this account")
+        if session.status not in (
+            BrowserSessionStatus.running,
+            BrowserSessionStatus.awaiting_code,
+        ):
+            raise RuntimeError("Browser session is not running")
+
+        state_file = playwright_state_path(account.username)
+        need_login = not (
+            state_file.exists() and storage_state_has_session(account.username)
+        )
+        session.launch_warning = None
+        await self._navigate_instagram_and_maybe_autofill(
+            session,
+            account,
+            proxy,
+            page=session.page,
+            need_login=need_login,
+            autofill_login=autofill_login and settings.browser_autofill_on_start,
+        )
         await self._refresh_code_state(session)
 
     async def _poll_session(self, session: BrowserSessionState, account) -> None:

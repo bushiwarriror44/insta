@@ -353,6 +353,8 @@ async def test_start_session_autofill_uses_fast_path(monkeypatch):
     import app.browser.session_manager as sm
 
     monkeypatch.setattr(settings, "browser_vnc_enabled", True)
+    monkeypatch.setattr(settings, "browser_auto_open_instagram", True)
+    monkeypatch.setattr(settings, "browser_autofill_on_start", True)
     monkeypatch.setattr(sm, "vnc_stack_available", lambda: True)
     monkeypatch.setattr(sm, "playwright_browsers_available", lambda: True)
 
@@ -432,6 +434,75 @@ async def test_start_session_autofill_uses_fast_path(monkeypatch):
     assert session.status == BrowserSessionStatus.running
     assert session.launch_warning is None
     assert ensure_calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_start_session_skips_instagram_goto_by_default(monkeypatch):
+    from app.config import settings
+    import app.browser.session_manager as sm
+
+    monkeypatch.setattr(settings, "browser_vnc_enabled", True)
+    monkeypatch.setattr(settings, "browser_auto_open_instagram", False)
+    monkeypatch.setattr(sm, "vnc_stack_available", lambda: True)
+    monkeypatch.setattr(sm, "playwright_browsers_available", lambda: True)
+
+    goto_calls: list[str] = []
+
+    class FakeVnc:
+        async def start(self):
+            return None
+
+        def stop(self):
+            return None
+
+    monkeypatch.setattr(sm, "VncStack", lambda **kwargs: FakeVnc())
+    monkeypatch.setattr(sm, "allocate_ports", lambda _d: (5900, 6080))
+
+    page = AsyncMock()
+    page.url = "about:blank"
+    page.main_frame = MagicMock()
+    page.goto = AsyncMock(side_effect=lambda url, **kwargs: goto_calls.append(url))
+    page.on = MagicMock()
+    page.remove_listener = MagicMock()
+
+    context = AsyncMock()
+    context.new_page = AsyncMock(return_value=page)
+    browser = AsyncMock()
+    browser.new_context = AsyncMock(return_value=context)
+    pw = AsyncMock()
+    pw.chromium.launch = AsyncMock(return_value=browser)
+    pw.stop = AsyncMock()
+    playwright_manager = MagicMock()
+    playwright_manager.start = AsyncMock(return_value=pw)
+
+    monkeypatch.setattr(sm, "load_fingerprint", lambda _u: None)
+    monkeypatch.setattr(sm, "playwright_state_path", lambda _u: __import__("pathlib").Path("/tmp/none"))
+    monkeypatch.setattr(sm, "storage_state_has_session", lambda _u: False)
+    monkeypatch.setattr(sm, "_apply_stealth_context", AsyncMock())
+
+    fake_module = __import__("types").ModuleType("playwright.async_api")
+    fake_module.async_playwright = lambda: playwright_manager
+    monkeypatch.setitem(__import__("sys").modules, "playwright.async_api", fake_module)
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "playwright_stealth",
+        __import__("types").ModuleType("playwright_stealth"),
+    )
+
+    mgr = BrowserSessionManager()
+    mgr._cleanup_session = AsyncMock()  # type: ignore[method-assign]
+    mgr._refresh_code_state = AsyncMock()  # type: ignore[method-assign]
+    mgr._poll_session = AsyncMock()  # type: ignore[method-assign]
+    mgr._auto_stop = AsyncMock()  # type: ignore[method-assign]
+    account = MagicMock(username="alice", password="secret", totp_seed=None)
+    proxy = MagicMock(url="http://u:p@1.2.3.4:8080", timezone="UTC", country="US")
+
+    session = await mgr.start_session(account, proxy, surface="mobile")
+
+    assert session.status == BrowserSessionStatus.running
+    assert goto_calls == []
+    assert session.launch_warning is not None
+    assert "без автозахода" in session.launch_warning
 
 
 @pytest.mark.asyncio

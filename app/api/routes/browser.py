@@ -96,6 +96,21 @@ async def start_browser_session(
     return _browser_session_response(username, db)
 
 
+@router.post("/{username}/browser/open-instagram", response_model=BrowserSessionOut, dependencies=[AuthDep])
+async def open_instagram_in_browser(
+    username: str,
+    autofill: bool = Query(default=False),
+    db: Session = Depends(get_db),
+) -> BrowserSessionOut:
+    account = _get_account(username, db)
+    proxy = _get_proxy(account, db)
+    try:
+        await browser_session_manager.open_instagram(account, proxy, autofill_login=autofill)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _browser_session_response(username, db)
+
+
 @router.get("/{username}/browser/status", response_model=BrowserSessionOut, dependencies=[AuthDep])
 def browser_session_status(username: str, db: Session = Depends(get_db)) -> BrowserSessionOut:
     return _browser_session_response(username, db)

@@ -109,6 +109,19 @@ export function InstagramBrowserPanel({
     }
   }
 
+  async function openInstagram() {
+    setBusy(true);
+    try {
+      const data = await api.accounts.browserOpenInstagram(username);
+      setSession(data);
+      push("Запрос на открытие Instagram отправлен", "success");
+    } catch (err) {
+      push(formatApiError(err), "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveSession() {
     setBusy(true);
     try {
@@ -219,6 +232,16 @@ export function InstagramBrowserPanel({
         <div className="rounded-lg border border-emerald-700/50 bg-emerald-950/30 p-3 text-sm text-emerald-200 flex items-center gap-2">
           <CheckCircle2 size={16} />
           Сессия сохранена — можно остановить браузер и нажать «Готово» в модале
+        </div>
+      ) : null}
+
+      {session?.status === "running" &&
+      (session.warning?.includes("без автозахода") ||
+        session.page_url === "about:blank" ||
+        session.page_url?.startsWith("chrome://")) ? (
+        <div className="rounded-lg border border-sky-500/30 bg-sky-950/20 p-3 text-sm text-sky-100">
+          Instagram не открывается автоматически — так меньше шанс HTTP 429. Когда будете готовы,
+          нажмите «Открыть Instagram» или введите адрес вручную в окне VNC.
         </div>
       ) : null}
 
@@ -359,6 +382,14 @@ export function InstagramBrowserPanel({
         <button type="button" className="btn-primary" disabled={busy || !!active} onClick={startBrowser}>
           <MonitorPlay size={16} className={busy ? "animate-spin" : ""} />
           Запустить браузер
+        </button>
+        <button
+          type="button"
+          className="btn-ghost"
+          disabled={busy || !active}
+          onClick={openInstagram}
+        >
+          Открыть Instagram
         </button>
         <button type="button" className="btn-ghost" disabled={busy || !active || savedOk} onClick={saveSession}>
           <Save size={16} />

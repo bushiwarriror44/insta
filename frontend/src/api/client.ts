@@ -282,6 +282,14 @@ export const api = {
           query: opts?.loginSurface ? { login_surface: opts.loginSurface } : undefined,
         }
       ),
+    browserOpenInstagram: (username: string, opts?: { autofill?: boolean }) =>
+      request<BrowserSessionOut>(
+        `/api/accounts/${encodeURIComponent(username)}/browser/open-instagram`,
+        {
+          method: "POST",
+          query: opts?.autofill ? { autofill: true } : undefined,
+        }
+      ),
     browserStatus: (username: string) =>
       request<BrowserSessionOut>(
         `/api/accounts/${encodeURIComponent(username)}/browser/status`
