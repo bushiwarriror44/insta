@@ -28,6 +28,32 @@ def allocate_ports(display: int) -> tuple[int, int]:
     return _PORT_BASE + offset, _WS_PORT_BASE + offset
 
 
+def _screen_with_depth(screen: str, depth: str) -> str:
+    if screen.count("x") >= 2:
+        return screen.rsplit("x", 1)[0] + f"x{depth}"
+    return screen
+
+
+def _lightweight_x11vnc_args() -> list[str]:
+    """x11vnc flags that work on Debian/Ubuntu packages (no invalid -framerate)."""
+    return [
+        "-ncache",
+        "10",
+        "-wait",
+        "20",
+        "-defer",
+        "20",
+    ]
+
+
+def _require_running(proc: subprocess.Popen, name: str, *, cmd: list[str]) -> None:
+    if proc.poll() is None:
+        return
+    raise RuntimeError(
+        f"{name} exited immediately (code={proc.returncode}); command={cmd!r}"
+    )
+
+
 @dataclass
 class VncStack:
     display: int
@@ -48,19 +74,8 @@ class VncStack:
         env = os.environ.copy()
         env["DISPLAY"] = self.display_name
 
-        xvfb_cmd = [
-            "Xvfb",
-            self.display_name,
-            "-screen",
-            "0",
-            self.screen,
-            "-ac",
-        ]
-        if self.lightweight:
-            xvfb_cmd.append("-noreset")
-        else:
-            xvfb_cmd.extend(["+extension", "GLX", "+render", "-noreset"])
-
+        screen = self.screen
+        xvfb_cmd = self._xvfb_command(screen)
         xvfb = subprocess.Popen(
             xvfb_cmd,
             stdout=subprocess.DEVNULL,
@@ -68,6 +83,21 @@ class VncStack:
             env=env,
         )
         self._procs.append(xvfb)
+        await asyncio.sleep(0.35)
+        if xvfb.poll() is not None and self.lightweight and screen.endswith("x16"):
+            logger.warning("vnc.xvfb_16bit_failed", screen=screen, code=xvfb.returncode)
+            self._procs.clear()
+            screen = _screen_with_depth(screen, "24")
+            xvfb_cmd = self._xvfb_command(screen)
+            xvfb = subprocess.Popen(
+                xvfb_cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=env,
+            )
+            self._procs.append(xvfb)
+            await asyncio.sleep(0.35)
+        _require_running(xvfb, "Xvfb", cmd=xvfb_cmd)
         await self._wait_display_ready(env, timeout_sec=8.0)
 
         x11vnc_cmd = [
@@ -83,18 +113,7 @@ class VncStack:
             "-noxdamage",
         ]
         if self.lightweight:
-            x11vnc_cmd.extend(
-                [
-                    "-ncache",
-                    "10",
-                    "-framerate",
-                    "15",
-                    "-quality",
-                    "5",
-                    "-threads",
-                    "2",
-                ]
-            )
+            x11vnc_cmd.extend(_lightweight_x11vnc_args())
 
         x11vnc = subprocess.Popen(
             x11vnc_cmd,
@@ -104,27 +123,47 @@ class VncStack:
         )
         self._procs.append(x11vnc)
         await asyncio.sleep(0.4)
+        _require_running(x11vnc, "x11vnc", cmd=x11vnc_cmd)
 
+        websockify_cmd = [
+            "websockify",
+            "--web",
+            "/usr/share/novnc",
+            str(self.ws_port),
+            f"localhost:{self.rfb_port}",
+        ]
         websockify = subprocess.Popen(
-            [
-                "websockify",
-                "--web",
-                "/usr/share/novnc",
-                str(self.ws_port),
-                f"localhost:{self.rfb_port}",
-            ],
+            websockify_cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
         self._procs.append(websockify)
         await asyncio.sleep(0.3)
+        _require_running(websockify, "websockify", cmd=websockify_cmd)
+
         logger.info(
             "vnc.started",
             display=self.display,
             rfb_port=self.rfb_port,
             ws_port=self.ws_port,
             lightweight=self.lightweight,
+            screen=screen,
         )
+
+    def _xvfb_command(self, screen: str) -> list[str]:
+        cmd = [
+            "Xvfb",
+            self.display_name,
+            "-screen",
+            "0",
+            screen,
+            "-ac",
+        ]
+        if self.lightweight:
+            cmd.append("-noreset")
+        else:
+            cmd.extend(["+extension", "GLX", "+render", "-noreset"])
+        return cmd
 
     async def _wait_display_ready(self, env: dict[str, str], *, timeout_sec: float) -> None:
         # Xvfb needs a short warm-up before Chromium can attach.
