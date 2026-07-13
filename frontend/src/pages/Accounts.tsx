@@ -759,6 +759,7 @@ function AddAccountModal({
     email_password: "",
     account_line: "",
     backup_codes: "",
+    notes: "",
   });
 
   useEffect(() => {
@@ -784,6 +785,7 @@ function AddAccountModal({
         email_password: form.email_password?.trim() ? form.email_password : null,
         account_line: form.account_line?.trim() ? form.account_line.trim() : null,
         backup_codes: form.backup_codes?.trim() ? form.backup_codes.trim() : null,
+        notes: form.notes?.trim() ? form.notes.trim() : null,
       };
       await api.accounts.create(payload);
       await onSaved();
@@ -803,6 +805,7 @@ function AddAccountModal({
         email_password: "",
         account_line: "",
         backup_codes: "",
+        notes: "",
       });
     } catch (err) {
       push((err as Error).message, "error");
@@ -1016,6 +1019,15 @@ function AddAccountModal({
             <p className="text-xs text-slate-500 mt-1">
               Используется для получения кода подтверждения через IMAP.
             </p>
+          </div>
+          <div>
+            <label className="label">Заметки</label>
+            <textarea
+              className="input min-h-[72px]"
+              value={form.notes ?? ""}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              placeholder="Заметки администратора по аккаунту"
+            />
           </div>
         </div>
       </form>

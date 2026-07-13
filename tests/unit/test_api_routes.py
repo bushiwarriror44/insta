@@ -546,6 +546,37 @@ def test_accounts_update_proxy_rejects_missing_proxy(api_client):
     assert "proxy" in res.json()["detail"].lower()
 
 
+def test_accounts_patch_notes(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-notes", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/accounts",
+        json={
+            "username": "notesuser",
+            "password": "secret",
+            "proxy_label": "px-notes",
+            "notes": "initial note",
+        },
+    )
+
+    listed = api_client.get("/api/accounts")
+    row = next(a for a in listed.json() if a["username"] == "notesuser")
+    assert row["notes"] == "initial note"
+
+    patch = api_client.patch(
+        "/api/accounts/notesuser/notes",
+        json={"notes": "updated by admin"},
+    )
+    assert patch.status_code == 200
+    assert patch.json()["notes"] == "updated by admin"
+
+    clear = api_client.patch("/api/accounts/notesuser/notes", json={"notes": None})
+    assert clear.status_code == 200
+    assert clear.json()["notes"] is None
+
+
 def test_accounts_create_rejects_missing_proxy(api_client):
     res = api_client.post(
         "/api/accounts",
@@ -899,6 +930,14 @@ def test_browser_routes_start_status_code_save_stop(api_client, app_env, monkeyp
     assert start.status_code == 200
     assert start.json()["status"] == "running"
     assert start.json()["login_surface"] == "mobile"
+    assert start.json()["account_username"] == "browser_user"
+    assert start.json()["account_login"] == "browser_user"
+    assert start.json()["account_password"] == "secret"
+    assert start.json()["account_notes"] is None
+
+    status = api_client.get("/api/accounts/browser_user/browser/status")
+    assert status.status_code == 200
+    assert status.json()["account_password"] == "secret"
 
     code = api_client.post("/api/accounts/browser_user/browser/code", json={"code": "123456"})
     assert code.status_code == 200

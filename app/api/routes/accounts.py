@@ -14,6 +14,7 @@ from app.accounts.backup_codes import parse_account_line, serialize_backup_codes
 from app.accounts.connection_test import run_account_connection_test
 from app.accounts.cookie_formats import CookieFormatError, import_cookies_data, write_dolphin_cookies_export
 from app.accounts.device_factory import device_path, load_fingerprint
+from app.accounts.login_identifier import resolve_login_identifier
 from app.accounts.first_login_service import run_account_first_login
 from app.accounts.playwright_session import login_debug_screenshot_path, playwright_state_path
 from app.accounts.session_export import export_sessionid
@@ -26,6 +27,7 @@ from app.api.deps import AuthDep, get_db
 from app.api.schemas import (
     AccountConnectionTestOut,
     AccountIn,
+    AccountNotesUpdate,
     AccountOut,
     AccountProxyUpdate,
     AccountSessionOut,
@@ -107,6 +109,7 @@ def _serialize(account: Account, *, db: Session, today: str) -> AccountOut:
         session_source=session_source,
         posts_today=posts_today,
         failures_today=failures_today,
+        notes=account.notes,
     )
 
 
@@ -157,6 +160,8 @@ def create_account(payload: AccountIn, db: Session = Depends(get_db)) -> Account
         from app.behavior.playwright_surface import resolve_playwright_surface
 
         account.login_surface = resolve_playwright_surface(payload.login_surface)
+    if payload.notes is not None:
+        account.notes = payload.notes.strip() or None
     if payload.account_line:
         try:
             parsed = parse_account_line(payload.account_line)
@@ -198,6 +203,24 @@ def update_account_proxy(
     db.refresh(account)
 
     ensure_fingerprint_and_proxy(account.username, country=proxy.country or "US")
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    return _serialize(account, db=db, today=today)
+
+
+@router.patch("/{username}/notes", response_model=AccountOut)
+def update_account_notes(
+    username: str,
+    payload: AccountNotesUpdate,
+    db: Session = Depends(get_db),
+) -> AccountOut:
+    account = db.scalar(select(Account).where(Account.username == username))
+    if account is None:
+        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+
+    account.notes = payload.notes.strip() if payload.notes else None
+    db.commit()
+    db.refresh(account)
 
     today = datetime.now(timezone.utc).date().isoformat()
     return _serialize(account, db=db, today=today)

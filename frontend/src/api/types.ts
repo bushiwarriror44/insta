@@ -90,6 +90,11 @@ export interface AccountOut {
   session_source: "database" | "session_file" | "none";
   posts_today: number;
   failures_today: number;
+  notes?: string | null;
+}
+
+export interface AccountNotesUpdate {
+  notes?: string | null;
 }
 
 export interface AccountIn {
@@ -110,6 +115,7 @@ export interface AccountIn {
   backup_codes?: string | null;
   login_surface?: LoginSurface | null;
   account_line?: string | null;
+  notes?: string | null;
 }
 
 export interface AccountProxyUpdate {
@@ -229,6 +235,10 @@ export interface BrowserSessionOut {
   proxy_instagram_reachable?: boolean | null;
   proxy_instagram_login_reachable?: boolean | null;
   proxy_instagram_login_http_status?: number | null;
+  account_username?: string | null;
+  account_login?: string | null;
+  account_password?: string | null;
+  account_notes?: string | null;
 }
 
 export interface BrowserSaveOut extends BrowserSessionOut {

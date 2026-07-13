@@ -1,4 +1,4 @@
-import { Loader2, MonitorPlay, Save, Square, Send, CheckCircle2 } from "lucide-react";
+import { CheckCircle2, Eye, EyeOff, Loader2, MonitorPlay, Save, Send, Square } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, formatApiError } from "../api/client";
@@ -45,6 +45,8 @@ export function InstagramBrowserPanel({
   const [savedOk, setSavedOk] = useState(false);
   const [busy, setBusy] = useState(false);
   const [code, setCode] = useState("");
+  const [notesDraft, setNotesDraft] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const pollRef = useRef<number | null>(null);
 
   const refreshStatus = useCallback(async () => {
@@ -64,6 +66,10 @@ export function InstagramBrowserPanel({
       if (pollRef.current !== null) window.clearInterval(pollRef.current);
     };
   }, [refreshStatus, username]);
+
+  useEffect(() => {
+    setNotesDraft(session?.account_notes ?? "");
+  }, [session?.account_notes]);
 
   const vncPath = session?.vnc_path?.replace(/^\//, "") ?? "";
 
@@ -119,6 +125,21 @@ export function InstagramBrowserPanel({
         push(err, "error");
         onSessionSaved?.(data);
       }
+    } catch (err) {
+      push(formatApiError(err), "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveNotes() {
+    setBusy(true);
+    try {
+      await api.accounts.updateNotes(username, {
+        notes: notesDraft.trim() ? notesDraft.trim() : null,
+      });
+      setSession((prev) => (prev ? { ...prev, account_notes: notesDraft.trim() || null } : prev));
+      push("Заметки сохранены", "success");
     } catch (err) {
       push(formatApiError(err), "error");
     } finally {
@@ -224,6 +245,61 @@ export function InstagramBrowserPanel({
               Chromium внутри окна noVNC.
             </span>
           ) : null}
+        </div>
+      ) : null}
+
+      {session?.account_username ? (
+        <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-3 text-sm text-slate-300 space-y-2">
+          <p className="text-xs uppercase tracking-wide text-slate-500">Аккаунт</p>
+          <p>
+            <span className="text-slate-400">Username:</span>{" "}
+            <span className="text-slate-100 font-mono">@{session.account_username}</span>
+          </p>
+          <p>
+            <span className="text-slate-400">Логин для Instagram:</span>{" "}
+            <span className="text-slate-100 font-mono">{session.account_login ?? "—"}</span>
+            {session.account_login &&
+            session.account_username &&
+            session.account_login !== session.account_username ? (
+              <span className="text-slate-500 text-xs ml-1">(отличается от username)</span>
+            ) : null}
+          </p>
+          <p className="flex flex-wrap items-center gap-2">
+            <span className="text-slate-400">Пароль:</span>
+            <span className="text-slate-100 font-mono">
+              {showPassword ? session.account_password ?? "—" : "••••••••"}
+            </span>
+            {session.account_password ? (
+              <button
+                type="button"
+                className="btn-ghost px-2 py-1 text-xs"
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? "Скрыть пароль" : "Показать пароль"}
+              >
+                {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            ) : null}
+          </p>
+          <div className="space-y-1">
+            <label className="text-slate-400 text-xs" htmlFor={`account-notes-${username}`}>
+              Заметки
+            </label>
+            <textarea
+              id={`account-notes-${username}`}
+              className="input min-h-[72px] text-sm w-full"
+              value={notesDraft}
+              onChange={(e) => setNotesDraft(e.target.value)}
+              placeholder="Заметки администратора по этому аккаунту"
+            />
+            <button
+              type="button"
+              className="btn-ghost text-xs"
+              disabled={busy}
+              onClick={() => void saveNotes()}
+            >
+              Сохранить заметки
+            </button>
+          </div>
         </div>
       ) : null}
 

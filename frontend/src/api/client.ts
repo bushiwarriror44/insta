@@ -1,6 +1,7 @@
 import type {
   AccountConnectionTestOut,
   AccountIn,
+  AccountNotesUpdate,
   AccountOut,
   AccountProxyUpdate,
   AccountSessionOut,
@@ -58,7 +59,7 @@ export function formatApiError(err: unknown): string {
   return detail || `HTTP ${err.status}`;
 }
 
-type Method = "GET" | "POST" | "PUT" | "DELETE";
+type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 interface RequestOptions {
   method?: Method;
@@ -221,6 +222,11 @@ export const api = {
       request<AccountOut>(
         `/api/accounts/${encodeURIComponent(username)}/proxy`,
         { method: "PUT", body: payload }
+      ),
+    updateNotes: (username: string, payload: AccountNotesUpdate) =>
+      request<AccountOut>(
+        `/api/accounts/${encodeURIComponent(username)}/notes`,
+        { method: "PATCH", body: payload }
       ),
     updateSession: (username: string, payload: AccountSessionUpdate) =>
       request<AccountOut>(

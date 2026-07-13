@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.accounts.connection_test import run_account_connection_test
+from app.accounts.login_identifier import resolve_login_identifier
 from app.api.deps import AuthDep, get_db, verify_ws_token
 from app.api.schemas import BrowserCodeIn, BrowserSaveOut, BrowserSessionOut, DiagnosticLogLineOut
 from app.behavior.playwright_surface import resolve_playwright_surface
@@ -49,6 +50,26 @@ async def _load_proxy_snapshot(proxy_url: str):
         return None
 
 
+def _account_credentials(account: Account) -> dict[str, str | None]:
+    return {
+        "account_username": account.username,
+        "account_login": resolve_login_identifier(account),
+        "account_password": account.password,
+        "account_notes": account.notes,
+    }
+
+
+def _browser_session_response(username: str, db: Session) -> BrowserSessionOut:
+    account = db.scalar(select(Account).where(Account.username == username))
+    if account is None:
+        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+    payload = {
+        **browser_session_manager.status_dict(username),
+        **_account_credentials(account),
+    }
+    return BrowserSessionOut(**payload)
+
+
 @router.post("/{username}/browser/start", response_model=BrowserSessionOut, dependencies=[AuthDep])
 async def start_browser_session(
     username: str,
@@ -72,12 +93,12 @@ async def start_browser_session(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     if snapshot is not None:
         browser_session_manager.apply_proxy_snapshot(username, snapshot)
-    return BrowserSessionOut(**browser_session_manager.status_dict(username))
+    return _browser_session_response(username, db)
 
 
 @router.get("/{username}/browser/status", response_model=BrowserSessionOut, dependencies=[AuthDep])
-def browser_session_status(username: str) -> BrowserSessionOut:
-    return BrowserSessionOut(**browser_session_manager.status_dict(username))
+def browser_session_status(username: str, db: Session = Depends(get_db)) -> BrowserSessionOut:
+    return _browser_session_response(username, db)
 
 
 @router.post("/{username}/browser/code", response_model=BrowserSessionOut, dependencies=[AuthDep])
@@ -93,7 +114,7 @@ async def submit_browser_code(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return BrowserSessionOut(**browser_session_manager.status_dict(username))
+    return _browser_session_response(username, db)
 
 
 @router.post("/{username}/browser/save", response_model=BrowserSaveOut, dependencies=[AuthDep])
@@ -117,7 +138,7 @@ async def save_browser_session(
 
     return BrowserSaveOut(
         **result,
-        **browser_session_manager.status_dict(username),
+        **_browser_session_response(username, db).model_dump(),
         overall_ok=overall_ok,
         connection_test=connection_test,
         logs=[DiagnosticLogLineOut(**line.__dict__) for line in connection_test.logs],
@@ -125,9 +146,9 @@ async def save_browser_session(
 
 
 @router.delete("/{username}/browser/stop", response_model=BrowserSessionOut, dependencies=[AuthDep])
-async def stop_browser_session(username: str) -> BrowserSessionOut:
+async def stop_browser_session(username: str, db: Session = Depends(get_db)) -> BrowserSessionOut:
     await browser_session_manager.stop_session(username)
-    return BrowserSessionOut(**browser_session_manager.status_dict(username))
+    return _browser_session_response(username, db)
 
 
 @router.websocket("/{username}/browser/vnc/ws")

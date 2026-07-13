@@ -10,11 +10,16 @@ const apiMock = vi.hoisted(() => ({
     status: "running",
     awaiting_code: false,
     vnc_path: "api/accounts/alice/browser/vnc/ws",
+    account_username: "alice",
+    account_login: "alice@mail.com",
+    account_password: "secret123",
+    account_notes: "test note",
   }),
   browserStart: vi.fn(),
   browserSave: vi.fn(),
   browserStop: vi.fn(),
   browserSubmitCode: vi.fn(),
+  updateNotes: vi.fn(),
 }));
 
 vi.mock("../../api/client", async () => {
@@ -34,11 +39,16 @@ vi.mock("../../api/client", async () => {
 describe("InstagramBrowserPanel", () => {
   beforeEach(() => {
     apiMock.browserSave.mockReset();
+    apiMock.updateNotes.mockReset();
     apiMock.browserStatus.mockResolvedValue({
       username: "alice",
       status: "running",
       awaiting_code: false,
       vnc_path: "api/accounts/alice/browser/vnc/ws",
+      account_username: "alice",
+      account_login: "alice@mail.com",
+      account_password: "secret123",
+      account_notes: "test note",
     });
   });
 
@@ -50,6 +60,32 @@ describe("InstagramBrowserPanel", () => {
     );
     expect(await screen.findByRole("button", { name: /Запустить браузер/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/Код подтверждения/i)).toBeInTheDocument();
+    expect(screen.getByText(/Аккаунт/i)).toBeInTheDocument();
+    expect(screen.getByText(/alice@mail.com/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Заметки/i)).toHaveValue("test note");
+    });
+  });
+
+  it("saves account notes", async () => {
+    apiMock.updateNotes.mockResolvedValueOnce({
+      username: "alice",
+      notes: "saved note",
+    });
+
+    render(
+      <ToastProvider>
+        <InstagramBrowserPanel username="alice" adminToken="tok" />
+      </ToastProvider>
+    );
+
+    const notes = await screen.findByLabelText(/Заметки/i);
+    fireEvent.change(notes, { target: { value: "saved note" } });
+    fireEvent.click(screen.getByRole("button", { name: /Сохранить заметки/i }));
+
+    await waitFor(() => {
+      expect(apiMock.updateNotes).toHaveBeenCalledWith("alice", { notes: "saved note" });
+    });
   });
 
   it("calls onSessionSaved after successful save in setup mode", async () => {

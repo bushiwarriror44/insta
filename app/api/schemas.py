@@ -95,6 +95,7 @@ class AccountOut(BaseModel):
     session_source: Literal["database", "session_file", "none"] = "none"
     posts_today: int = 0
     failures_today: int = 0
+    notes: Optional[str] = None
 
 
 class AccountIn(BaseModel):
@@ -115,6 +116,7 @@ class AccountIn(BaseModel):
     backup_codes: Optional[str] = Field(default=None, max_length=4000)
     login_surface: Optional[Literal["mobile", "desktop"]] = None
     account_line: Optional[str] = Field(default=None, max_length=8000)
+    notes: Optional[str] = Field(default=None, max_length=8000)
 
     @model_validator(mode="after")
     def _validate_business_rules(self) -> "AccountIn":
@@ -128,6 +130,10 @@ class AccountIn(BaseModel):
 
 class AccountProxyUpdate(BaseModel):
     proxy_label: str = Field(min_length=1)
+
+
+class AccountNotesUpdate(BaseModel):
+    notes: Optional[str] = Field(default=None, max_length=8000)
 
 
 class AccountSessionUpdate(BaseModel):
@@ -244,6 +250,10 @@ class BrowserSessionOut(BaseModel):
     proxy_instagram_reachable: Optional[bool] = None
     proxy_instagram_login_reachable: Optional[bool] = None
     proxy_instagram_login_http_status: Optional[int] = None
+    account_username: Optional[str] = None
+    account_login: Optional[str] = None
+    account_password: Optional[str] = None
+    account_notes: Optional[str] = None
 
 
 class BrowserCodeIn(BaseModel):
