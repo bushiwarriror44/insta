@@ -186,7 +186,12 @@ def geo_verify(proxy_url: str, timeout: int | None = None) -> str | None:
     return None
 
 
-def health_check_cached(proxy_url: str, *, force: bool = False) -> HealthSnapshot:
+def health_check_cached(
+    proxy_url: str,
+    *,
+    force: bool = False,
+    check_login_page: bool = True,
+) -> HealthSnapshot:
     """Run :func:`health_check` + :func:`reach_instagram` with a 10-min cache.
 
     Used by the worker before each publish: cuts redundant ipify+IG pings
@@ -224,12 +229,17 @@ def health_check_cached(proxy_url: str, *, force: bool = False) -> HealthSnapsho
             ig_ok = False
 
     if ok:
-        ig_login_ok, login_status = reach_instagram_login_page(proxy_url)
-        if login_status is not None and login_status >= 400:
-            logger.warning(
-                "proxy.login_page_http_error",
-                status=login_status,
-            )
+        if check_login_page:
+            ig_login_ok, login_status = reach_instagram_login_page(proxy_url)
+            if login_status is not None and login_status >= 400:
+                logger.warning(
+                    "proxy.login_page_http_error",
+                    status=login_status,
+                )
+        else:
+            with _CACHE_LOCK:
+                prev = _HEALTH_CACHE.get(proxy_url)
+            ig_login_ok = prev.instagram_login_reachable if prev else False
 
     if ok:
         country = geo_verify(proxy_url)

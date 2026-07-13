@@ -64,11 +64,26 @@ def _is_on_instagram(url: str | None) -> bool:
 
 
 def _goto_warning_message(http_status: int | None) -> str:
+    if http_status == 429:
+        return (
+            "Instagram ограничил запросы с этого IP прокси (HTTP 429). "
+            "Подождите 30–60 минут, не перезапускайте браузер часто, или смените прокси. "
+            "После паузы попробуйте режим «Десктоп»."
+        )
     if http_status is not None:
         return (
             f"Страница логина вернула HTTP {http_status} через прокси. {_GOTO_WARNING_MESSAGE}"
         )
     return _GOTO_WARNING_MESSAGE
+
+
+_RATE_LIMIT_STATUSES = frozenset({429, 503})
+
+
+def _is_rate_limited(http_status: int | None, url: str | None) -> bool:
+    if http_status in _RATE_LIMIT_STATUSES:
+        return True
+    return bool(url and url.startswith("chrome-error://"))
 
 
 async def _try_goto_url(
@@ -102,6 +117,8 @@ async def _try_goto_url(
                 wait_until="commit",
                 http_status=nav_status.get("http_status"),
             )
+            if _is_rate_limited(nav_status.get("http_status"), page.url):
+                return False
             return True
         except Exception as exc:
             last_exc = exc
@@ -113,8 +130,12 @@ async def _try_goto_url(
                 http_status=nav_status.get("http_status"),
                 error=str(exc),
             )
+            if _is_rate_limited(nav_status.get("http_status"), page.url):
+                return False
             if _is_on_instagram(page.url):
                 return True
+        if _is_rate_limited(nav_status.get("http_status"), page.url):
+            return False
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=goto_timeout)
             logger.info(
@@ -155,9 +176,7 @@ async def _try_goto_url(
 
 async def _open_instagram_browser(page, *, username: str, need_login: bool) -> str | None:
     """Open Instagram via a URL ladder; never fall back to about:blank."""
-    urls = [_INSTAGRAM_URL]
-    if need_login and not await _login_form_visible(page):
-        urls.append(_INSTAGRAM_LOGIN_URL)
+    urls = [_INSTAGRAM_LOGIN_URL] if need_login else [_INSTAGRAM_URL]
 
     nav_status: dict[str, Any] = {}
     last_http_status: int | None = None
@@ -167,6 +186,8 @@ async def _open_instagram_browser(page, *, username: str, need_login: bool) -> s
         nav_status.clear()
         landed = await _try_goto_url(page, url, username=username, nav_status=nav_status)
         last_http_status = nav_status.get("http_status")
+        if _is_rate_limited(last_http_status, page.url):
+            break
         if landed or _is_on_instagram(page.url):
             on_ig = True
             if not need_login or url == _INSTAGRAM_LOGIN_URL:
@@ -176,6 +197,8 @@ async def _open_instagram_browser(page, *, username: str, need_login: bool) -> s
 
     if on_ig:
         return None
+    if _is_rate_limited(last_http_status, page.url):
+        return _goto_warning_message(429)
     return _goto_warning_message(last_http_status)
 
 

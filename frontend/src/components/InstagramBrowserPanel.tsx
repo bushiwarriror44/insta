@@ -71,7 +71,7 @@ export function InstagramBrowserPanel({
     if (!vncPath || session?.status === "stopped") return null;
     const params = new URLSearchParams({
       autoconnect: "true",
-      resize: "remote",
+      resize: "scale",
       path: vncPath,
       quality: "6",
       compression: "2",

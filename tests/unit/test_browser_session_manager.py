@@ -18,6 +18,43 @@ async def test_status_dict_stopped_by_default():
 
 
 @pytest.mark.asyncio
+async def test_open_instagram_browser_rate_limit_warning():
+    import app.browser.session_manager as sm
+
+    page = AsyncMock()
+    page.url = "chrome-error://chromewebdata/"
+    page.main_frame = MagicMock()
+    calls: list[str] = []
+
+    def on_response(event, handler):
+        if event == "response":
+            handler(
+                MagicMock(
+                    request=MagicMock(
+                        is_navigation_request=lambda: True,
+                        frame=page.main_frame,
+                    ),
+                    status=429,
+                    url="https://www.instagram.com/accounts/login/",
+                )
+            )
+
+    async def goto(url, **kwargs):
+        calls.append(kwargs.get("wait_until", ""))
+        raise RuntimeError("net::ERR_HTTP_RESPONSE_CODE_FAILURE")
+
+    page.goto = goto
+    page.on = on_response
+    page.remove_listener = MagicMock()
+
+    warning = await sm._open_instagram_browser(page, username="alice", need_login=True)
+
+    assert warning is not None
+    assert "429" in warning
+    assert calls == ["commit"]
+
+
+@pytest.mark.asyncio
 async def test_start_session_disabled(monkeypatch):
     from app.config import settings
 
@@ -158,27 +195,29 @@ async def test_open_instagram_browser_no_about_blank_on_goto_failure():
 
 
 @pytest.mark.asyncio
-async def test_open_instagram_browser_partial_success_on_root(monkeypatch):
+async def test_open_instagram_browser_partial_success_on_login(monkeypatch):
     import app.browser.session_manager as sm
 
     page = AsyncMock()
-    page.url = "https://www.instagram.com/"
+    page.url = "https://www.instagram.com/accounts/login/"
     page.main_frame = MagicMock()
+    visited: list[str] = []
 
     async def goto(url, **kwargs):
-        if url.endswith("instagram.com/"):
-            page.url = "https://www.instagram.com/"
+        visited.append(url)
+        if "accounts/login" in url:
+            page.url = "https://www.instagram.com/accounts/login/"
             return None
         raise RuntimeError("net::ERR_HTTP_RESPONSE_CODE_FAILURE")
 
     page.goto = goto
     page.on = MagicMock()
     page.remove_listener = MagicMock()
-    monkeypatch.setattr(sm, "_login_form_visible", AsyncMock(return_value=False))
 
     warning = await sm._open_instagram_browser(page, username="alice", need_login=True)
 
     assert warning is None
+    assert visited == ["https://www.instagram.com/accounts/login/"]
     assert "instagram.com" in page.url
 
 

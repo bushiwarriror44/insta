@@ -39,7 +39,12 @@ def _get_proxy(account: Account, db: Session) -> Proxy:
 
 async def _load_proxy_snapshot(proxy_url: str):
     try:
-        return await asyncio.to_thread(health_check_cached, proxy_url, False)
+        return await asyncio.to_thread(
+            health_check_cached,
+            proxy_url,
+            force=False,
+            check_login_page=False,
+        )
     except ProxyError:
         return None
 

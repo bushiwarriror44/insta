@@ -272,6 +272,25 @@ def test_reach_instagram_login_page_blocked_on_403():
 
 
 @respx.mock
+def test_health_check_cached_skips_login_page_when_disabled():
+    respx.get(settings.proxy_health_url).mock(
+        return_value=httpx.Response(200, json={"ip": "1.2.3.4"})
+    )
+    respx.get("https://i.instagram.com/api/v1/zr/dual_tokens/").mock(
+        return_value=httpx.Response(200, text="{}")
+    )
+    respx.get("https://ipapi.co/country/").mock(
+        return_value=httpx.Response(200, text="US")
+    )
+    login_route = respx.get("https://www.instagram.com/accounts/login/")
+    login_route.mock(return_value=httpx.Response(200, text="<html></html>"))
+
+    snap = health_check_cached("http://h:1", force=True, check_login_page=False)
+    assert snap.instagram_reachable is True
+    assert login_route.call_count == 0
+
+
+@respx.mock
 def test_health_check_cached_sets_login_reachable_flag():
     respx.get(settings.proxy_health_url).mock(
         return_value=httpx.Response(200, json={"ip": "1.2.3.4"})
