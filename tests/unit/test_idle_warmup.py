@@ -46,7 +46,7 @@ def test_idle_warmup_happy_path_stamps_account(
     app_env, db_session, make_account, fake_login, monkeypatch
 ):
     account = make_account()
-    monkeypatch.setattr(idle_module, "health_check_cached", lambda url: None)
+    monkeypatch.setattr(idle_module, "health_check_cached", lambda url, **kwargs: None)
     monkeypatch.setattr(
         idle_module, "ensure_fingerprint_and_proxy",
         lambda username, country="US": object(),

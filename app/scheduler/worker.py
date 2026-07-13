@@ -56,7 +56,7 @@ from app.db import (
 from app.diagnostics.collector import DiagnosticCollector
 from app.logging_setup import configure_logging, get_logger
 from app.geo.country_codes import countries_mismatch
-from app.proxies.pool import ProxyError, health_check_cached, proxy_risk_score
+from app.proxies.pool import ProxyError, HealthCheckScope, health_check_cached, proxy_risk_score
 from app.publisher.reels_publisher import (
     ActionCooldownError,
     HardPublishError,
@@ -273,7 +273,7 @@ def _process_job(db: Session, job: PostJob) -> None:
 
     diag.info("proxy", f"Проверка прокси {proxy.label}")
     try:
-        snapshot = health_check_cached(proxy.url)
+        snapshot = health_check_cached(proxy.url, scope=HealthCheckScope.MINIMAL)
     except ProxyError as exc:
         proxy.is_healthy = False
         proxy.last_checked_at = datetime.now(timezone.utc)

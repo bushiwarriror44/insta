@@ -48,6 +48,7 @@ from app.behavior.playwright_surface import (
     vnc_screen_size,
 )
 from app.browser.vnc_stack import VncStack, allocate_ports, vnc_stack_available
+from app.proxies.pool import note_proxy_login_http_status
 from app.config import settings
 from app.geo.timezone_normalize import normalize_playwright_timezone
 from app.logging_setup import get_logger
@@ -84,6 +85,38 @@ def _is_rate_limited(http_status: int | None, url: str | None) -> bool:
     if http_status in _RATE_LIMIT_STATUSES:
         return True
     return bool(url and url.startswith("chrome-error://"))
+
+
+def _proxy_login_blocked(
+    *,
+    login_reachable: bool | None,
+    login_http_status: int | None,
+) -> bool:
+    if login_http_status in _RATE_LIMIT_STATUSES:
+        return True
+    if login_http_status in (403, 451):
+        return True
+    return login_reachable is False
+
+
+def _warning_from_proxy_preflight(
+    *,
+    login_reachable: bool | None,
+    login_http_status: int | None,
+) -> str:
+    if login_http_status == 429:
+        return _goto_warning_message(429)
+    if login_reachable is False:
+        if login_http_status:
+            return (
+                f"Страница логина Instagram недоступна через этот прокси (HTTP {login_http_status}). "
+                "Смените IP прокси или подождите — эмуляция браузера это не обходит."
+            )
+        return (
+            "Страница логина Instagram недоступна через этот прокси. "
+            "Смените IP прокси или подождите — эмуляция браузера это не обходит."
+        )
+    return _goto_warning_message(login_http_status)
 
 
 async def _try_goto_url(
@@ -134,30 +167,6 @@ async def _try_goto_url(
                 return False
             if _is_on_instagram(page.url):
                 return True
-        if _is_rate_limited(nav_status.get("http_status"), page.url):
-            return False
-        try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=goto_timeout)
-            logger.info(
-                "browser_session.goto_ok",
-                username=username,
-                url=url,
-                wait_until="domcontentloaded",
-                http_status=nav_status.get("http_status"),
-            )
-            return True
-        except Exception as exc:
-            last_exc = exc
-            logger.warning(
-                "browser_session.goto_attempt_failed",
-                username=username,
-                url=url,
-                wait_until="domcontentloaded",
-                http_status=nav_status.get("http_status"),
-                error=str(exc),
-            )
-            if _is_on_instagram(page.url):
-                return True
         if last_exc is not None:
             logger.warning(
                 "browser_session.goto_failed",
@@ -174,7 +183,7 @@ async def _try_goto_url(
             pass
 
 
-async def _open_instagram_browser(page, *, username: str, need_login: bool) -> str | None:
+async def _open_instagram_browser(page, *, username: str, need_login: bool) -> tuple[str | None, int | None]:
     """Open Instagram via a URL ladder; never fall back to about:blank."""
     urls = [_INSTAGRAM_LOGIN_URL] if need_login else [_INSTAGRAM_URL]
 
@@ -191,15 +200,15 @@ async def _open_instagram_browser(page, *, username: str, need_login: bool) -> s
         if landed or _is_on_instagram(page.url):
             on_ig = True
             if not need_login or url == _INSTAGRAM_LOGIN_URL:
-                return None
+                return None, last_http_status
             if await _login_form_visible(page):
-                return None
+                return None, last_http_status
 
     if on_ig:
-        return None
+        return None, last_http_status
     if _is_rate_limited(last_http_status, page.url):
-        return _goto_warning_message(429)
-    return _goto_warning_message(last_http_status)
+        return _goto_warning_message(429), last_http_status or 429
+    return _goto_warning_message(last_http_status), last_http_status
 
 
 class BrowserSessionStatus(str, Enum):
@@ -225,6 +234,7 @@ class BrowserSessionState:
     proxy_timezone: str | None = None
     proxy_instagram_reachable: bool | None = None
     proxy_instagram_login_reachable: bool | None = None
+    proxy_instagram_login_http_status: int | None = None
     display: int = 0
     ws_port: int = 0
     vnc_path: str = ""
@@ -267,6 +277,9 @@ class BrowserSessionManager:
         session.proxy_instagram_login_reachable = getattr(
             snapshot, "instagram_login_reachable", None
         )
+        session.proxy_instagram_login_http_status = getattr(
+            snapshot, "instagram_login_http_status", None
+        )
 
     def status_dict(self, username: str) -> dict[str, Any]:
         session = self._sessions.get(username)
@@ -287,6 +300,7 @@ class BrowserSessionManager:
                 "proxy_timezone": None,
                 "proxy_instagram_reachable": None,
                 "proxy_instagram_login_reachable": None,
+                "proxy_instagram_login_http_status": None,
             }
         return {
             "username": username,
@@ -304,6 +318,7 @@ class BrowserSessionManager:
             "proxy_timezone": session.proxy_timezone,
             "proxy_instagram_reachable": session.proxy_instagram_reachable,
             "proxy_instagram_login_reachable": session.proxy_instagram_login_reachable,
+            "proxy_instagram_login_http_status": session.proxy_instagram_login_http_status,
         }
 
     async def start_session(
@@ -370,6 +385,9 @@ class BrowserSessionManager:
                 proxy_instagram_reachable=getattr(proxy_snapshot, "instagram_reachable", None),
                 proxy_instagram_login_reachable=getattr(
                     proxy_snapshot, "instagram_login_reachable", None
+                ),
+                proxy_instagram_login_http_status=getattr(
+                    proxy_snapshot, "instagram_login_http_status", None
                 ),
             )
             self._sessions[username] = session
@@ -471,13 +489,28 @@ class BrowserSessionManager:
 
         page = session.page
         has_saved_session = state_file.exists() and storage_state_has_session(account.username)
-        warning = await _open_instagram_browser(
-            page,
-            username=account.username,
-            need_login=not has_saved_session,
-        )
-        if warning:
-            session.launch_warning = warning
+        need_login = not has_saved_session
+        if need_login and _proxy_login_blocked(
+            login_reachable=session.proxy_instagram_login_reachable,
+            login_http_status=session.proxy_instagram_login_http_status,
+        ):
+            session.launch_warning = _warning_from_proxy_preflight(
+                login_reachable=session.proxy_instagram_login_reachable,
+                login_http_status=session.proxy_instagram_login_http_status,
+            )
+        else:
+            warning, login_http_status = await _open_instagram_browser(
+                page,
+                username=account.username,
+                need_login=need_login,
+            )
+            if warning:
+                session.launch_warning = warning
+            if login_http_status is not None:
+                session.proxy_instagram_login_http_status = login_http_status
+                if login_http_status >= 400:
+                    session.proxy_instagram_login_reachable = False
+                    note_proxy_login_http_status(proxy.url, int(login_http_status))
 
         await _human_wait(0.2, 0.5)
         on_ig = _is_on_instagram(page.url)

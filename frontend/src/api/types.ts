@@ -228,6 +228,7 @@ export interface BrowserSessionOut {
   proxy_timezone?: string | null;
   proxy_instagram_reachable?: boolean | null;
   proxy_instagram_login_reachable?: boolean | null;
+  proxy_instagram_login_http_status?: number | null;
 }
 
 export interface BrowserSaveOut extends BrowserSessionOut {

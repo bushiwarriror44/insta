@@ -30,7 +30,7 @@ from app.behavior.humanizer import think
 from app.behavior.warmup_instagrapi import warmup
 from app.db import Account, AccountStatus, Event, EventLevel, Proxy
 from app.logging_setup import get_logger
-from app.proxies.pool import ProxyError, health_check_cached
+from app.proxies.pool import HealthCheckScope, ProxyError, health_check_cached
 
 logger = get_logger(__name__)
 
@@ -102,7 +102,7 @@ def idle_warmup(username: str) -> bool:
         account_id = account.id
 
     try:
-        health_check_cached(proxy_url)
+        health_check_cached(proxy_url, scope=HealthCheckScope.MINIMAL)
     except ProxyError as exc:
         log.warning("idle.proxy_unhealthy", error=str(exc))
         return False

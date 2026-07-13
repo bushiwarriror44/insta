@@ -15,14 +15,15 @@ Anti-detection extensions (in addition to the basic IP-echo health check):
   service for the proxy's egress IP and compare with the operator-provided
   ``proxy.country``. We *warn* on mismatch (some providers route via
   multiple countries) but do not auto-disable.
-* In-process 10-minute cache (:func:`health_check_cached`) — the worker
-  now hits the cache for back-to-back jobs instead of pinging the network
-  on every claim.
+* In-process cache (:func:`health_check_cached`) — routine paths use
+  :attr:`HealthCheckScope.MINIMAL` (ipify only, Instagram flags from cache).
+  Full Instagram probes run only on explicit proxy check / connection test.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from threading import Lock
 from typing import Optional
 
@@ -41,6 +42,13 @@ class ProxyError(Exception):
     pass
 
 
+class HealthCheckScope(str, Enum):
+    """How aggressively :func:`health_check_cached` hits the network."""
+
+    MINIMAL = "minimal"  # ipify only; reuse Instagram/login/geo from cache
+    FULL = "full"  # ipify + IG API + login page + geo (manual checks only)
+
+
 @dataclass(frozen=True)
 class HealthSnapshot:
     ok: bool
@@ -49,6 +57,7 @@ class HealthSnapshot:
     instagram_reachable: bool
     instagram_login_reachable: bool
     checked_at: datetime
+    instagram_login_http_status: int | None = None
 
 
 _CHROME_DESKTOP_UA = (
@@ -57,6 +66,11 @@ _CHROME_DESKTOP_UA = (
 )
 
 _INSTAGRAM_LOGIN_CHECK_URL = "https://www.instagram.com/accounts/login/"
+
+_CACHE_TTL = timedelta(minutes=30)
+_RATE_LIMIT_LOGIN_CACHE_TTL = timedelta(minutes=60)
+_HEALTH_CACHE: dict[str, HealthSnapshot] = {}
+_CACHE_LOCK = Lock()
 
 
 def proxy_risk_score(snapshot: HealthSnapshot, *, advertised_country: str | None = None) -> float:
@@ -75,9 +89,45 @@ def proxy_risk_score(snapshot: HealthSnapshot, *, advertised_country: str | None
     return min(1.0, score)
 
 
-_CACHE_TTL = timedelta(minutes=10)
-_HEALTH_CACHE: dict[str, HealthSnapshot] = {}
-_CACHE_LOCK = Lock()
+def _cache_ttl_for(snapshot: HealthSnapshot) -> timedelta:
+    if snapshot.instagram_login_http_status == 429:
+        return _RATE_LIMIT_LOGIN_CACHE_TTL
+    if (
+        snapshot.ok
+        and snapshot.instagram_reachable
+        and snapshot.instagram_login_reachable
+    ):
+        return _CACHE_TTL
+    return _CACHE_TTL / 2
+
+
+def _inherit_cached_instagram_fields(
+    prev: HealthSnapshot | None,
+) -> tuple[bool, bool, int | None, str | None]:
+    if prev is None:
+        return True, True, None, None
+    return (
+        prev.instagram_reachable,
+        prev.instagram_login_reachable,
+        prev.instagram_login_http_status,
+        prev.country,
+    )
+
+
+def note_proxy_login_http_status(proxy_url: str, status: int) -> None:
+    """Update in-memory health cache after a browser navigation sees HTTP *status*."""
+    now = datetime.now(timezone.utc)
+    with _CACHE_LOCK:
+        cached = _HEALTH_CACHE.get(proxy_url)
+        if cached is None:
+            return
+
+        _HEALTH_CACHE[proxy_url] = replace(
+            cached,
+            instagram_login_http_status=status,
+            instagram_login_reachable=status < 400,
+            checked_at=now,
+        )
 
 
 def health_check(proxy_url: str, timeout: int | None = None) -> dict[str, str]:
@@ -112,30 +162,20 @@ def reach_instagram(proxy_url: str, timeout: int | None = None) -> bool:
     against ipify passed.
     """
     timeout = timeout or settings.proxy_health_timeout_sec
-    targets = (
-        "https://i.instagram.com/api/v1/zr/dual_tokens/",
-        "https://www.instagram.com/data/manifest.json",
-    )
-    last_exc: Exception | None = None
-    for url in targets:
-        try:
-            with httpx.Client(
-                proxy=proxy_url,
-                timeout=timeout,
-                transport=httpx.HTTPTransport(retries=0),
-                follow_redirects=False,
-            ) as client:
-                resp = client.get(url, headers={"User-Agent": "Instagram 351.1.0.39.105 Android"})
-                # Anything that came back from IG (even 4xx) is "reachable".
-                if resp.status_code < 500:
-                    return True
-                last_exc = RuntimeError(f"http {resp.status_code}")
-        except (httpx.HTTPError, OSError) as exc:
-            last_exc = exc
-            continue
-    if last_exc is not None:
-        raise ProxyError(f"Proxy {_mask(proxy_url)} cannot reach Instagram: {last_exc}")
-    return False
+    url = "https://i.instagram.com/api/v1/zr/dual_tokens/"
+    try:
+        with httpx.Client(
+            proxy=proxy_url,
+            timeout=timeout,
+            transport=httpx.HTTPTransport(retries=0),
+            follow_redirects=False,
+        ) as client:
+            resp = client.get(url, headers={"User-Agent": "Instagram 351.1.0.39.105 Android"})
+            if resp.status_code < 500:
+                return True
+            raise ProxyError(f"Proxy {_mask(proxy_url)} cannot reach Instagram: http {resp.status_code}")
+    except (httpx.HTTPError, OSError) as exc:
+        raise ProxyError(f"Proxy {_mask(proxy_url)} cannot reach Instagram: {exc}") from exc
 
 
 def reach_instagram_login_page(proxy_url: str, timeout: int | None = None) -> tuple[bool, int | None]:
@@ -190,59 +230,55 @@ def health_check_cached(
     proxy_url: str,
     *,
     force: bool = False,
-    check_login_page: bool = True,
+    scope: HealthCheckScope = HealthCheckScope.MINIMAL,
 ) -> HealthSnapshot:
-    """Run :func:`health_check` + :func:`reach_instagram` with a 10-min cache.
+    """Run proxy health with an in-memory cache.
 
-    Used by the worker before each publish: cuts redundant ipify+IG pings
-    when several jobs claim the same proxy back-to-back, while still
-    refreshing once per cache window so a slow-degrading proxy is caught.
+    * ``MINIMAL`` (default) — only ipify; Instagram/login/geo flags are reused
+      from cache. Used by worker, idle warmup, browser start.
+    * ``FULL`` — ipify + one IG API probe + login page + geo. Manual checks only.
     """
     now = datetime.now(timezone.utc)
     if not force:
         with _CACHE_LOCK:
             cached = _HEALTH_CACHE.get(proxy_url)
-            if cached and now - cached.checked_at < _CACHE_TTL:
-                if cached.ok:
-                    return cached
-                # Negative cache: re-check after TTL/2 to give bad proxies
-                # a faster recovery path.
-                if now - cached.checked_at < _CACHE_TTL / 2:
-                    return cached
+            if cached:
+                ttl = _cache_ttl_for(cached)
+                if now - cached.checked_at < ttl:
+                    if cached.ok:
+                        return cached
+                    if now - cached.checked_at < ttl / 2:
+                        return cached
+
+    with _CACHE_LOCK:
+        prev = _HEALTH_CACHE.get(proxy_url)
 
     ip = None
     ok = True
-    ig_ok = False
-    ig_login_ok = False
-    country = None
+    ig_ok, ig_login_ok, login_status, country = _inherit_cached_instagram_fields(prev)
     try:
         data = health_check(proxy_url)
         ip = data.get("ip") or None
     except ProxyError:
         ok = False
 
-    if ok:
+    if ok and scope is HealthCheckScope.FULL:
         try:
             ig_ok = reach_instagram(proxy_url)
         except ProxyError:
             ok = False
             ig_ok = False
 
-    if ok:
-        if check_login_page:
+        if ok:
             ig_login_ok, login_status = reach_instagram_login_page(proxy_url)
             if login_status is not None and login_status >= 400:
                 logger.warning(
                     "proxy.login_page_http_error",
                     status=login_status,
                 )
-        else:
-            with _CACHE_LOCK:
-                prev = _HEALTH_CACHE.get(proxy_url)
-            ig_login_ok = prev.instagram_login_reachable if prev else False
 
-    if ok:
-        country = geo_verify(proxy_url)
+        if ok:
+            country = geo_verify(proxy_url)
 
     snapshot = HealthSnapshot(
         ok=ok,
@@ -251,6 +287,7 @@ def health_check_cached(
         instagram_reachable=ig_ok,
         instagram_login_reachable=ig_login_ok,
         checked_at=now,
+        instagram_login_http_status=login_status,
     )
     with _CACHE_LOCK:
         _HEALTH_CACHE[proxy_url] = snapshot
@@ -265,7 +302,7 @@ def health_check_record(db: Session, proxy: Proxy) -> tuple[bool, HealthSnapshot
     Returns ``(is_healthy, snapshot, error_message)``.
     """
     try:
-        snapshot = health_check_cached(proxy.url, force=True)
+        snapshot = health_check_cached(proxy.url, force=True, scope=HealthCheckScope.FULL)
     except ProxyError as exc:
         proxy.is_healthy = False
         proxy.last_checked_at = datetime.now(timezone.utc)

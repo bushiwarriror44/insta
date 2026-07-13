@@ -243,6 +243,7 @@ class BrowserSessionOut(BaseModel):
     proxy_timezone: Optional[str] = None
     proxy_instagram_reachable: Optional[bool] = None
     proxy_instagram_login_reachable: Optional[bool] = None
+    proxy_instagram_login_http_status: Optional[int] = None
 
 
 class BrowserCodeIn(BaseModel):

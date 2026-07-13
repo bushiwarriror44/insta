@@ -203,9 +203,22 @@ export function InstagramBrowserPanel({
 
       {session?.status === "running" && session.warning ? (
         <div className="rounded-lg border border-amber-500/40 bg-amber-950/30 p-3 text-sm text-amber-100">
-          Браузер запущен, но Instagram не загрузился автоматически — откройте вручную в окне
-          справа. {session.warning}
-          {session.page_url === "about:blank" ? (
+          {session.warning.includes("429") || session.proxy_instagram_login_http_status === 429 ? (
+            <>
+              Instagram временно ограничил запросы с IP прокси{" "}
+              <span className="font-mono">{session.proxy_ip ?? ""}</span> (HTTP 429). Это лимит
+              по IP, а не детект автоматизации — эмуляция телефона здесь не помогает. Подождите
+              30–60 минут, не нажимайте Reload в браузере, или смените прокси на другой IP.
+            </>
+          ) : (
+            <>
+              Браузер запущен, но Instagram не загрузился автоматически — откройте вручную в окне
+              справа. {session.warning}
+            </>
+          )}
+          {session.page_url === "about:blank" &&
+          !session.warning.includes("429") &&
+          session.proxy_instagram_login_http_status !== 429 ? (
             <span className="block mt-1 text-amber-200/90">
               Попробуйте ввести <span className="font-mono">instagram.com</span> в адресной строке
               Chromium внутри окна noVNC.
@@ -257,6 +270,9 @@ export function InstagramBrowserPanel({
               >
                 Страница логина:{" "}
                 {session.proxy_instagram_login_reachable ? "доступна" : "недоступна"}
+                {session.proxy_instagram_login_http_status
+                  ? ` (HTTP ${session.proxy_instagram_login_http_status})`
+                  : null}
               </span>
             ) : null}
           </p>

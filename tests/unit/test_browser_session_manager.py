@@ -47,10 +47,11 @@ async def test_open_instagram_browser_rate_limit_warning():
     page.on = on_response
     page.remove_listener = MagicMock()
 
-    warning = await sm._open_instagram_browser(page, username="alice", need_login=True)
+    warning, status = await sm._open_instagram_browser(page, username="alice", need_login=True)
 
     assert warning is not None
     assert "429" in warning
+    assert status == 429
     assert calls == ["commit"]
 
 
@@ -187,7 +188,7 @@ async def test_open_instagram_browser_no_about_blank_on_goto_failure():
     page.on = MagicMock()
     page.remove_listener = MagicMock()
 
-    warning = await sm._open_instagram_browser(page, username="alice", need_login=True)
+    warning, _status = await sm._open_instagram_browser(page, username="alice", need_login=True)
 
     assert warning is not None
     assert "HTTP" in warning or "Instagram" in warning
@@ -214,7 +215,7 @@ async def test_open_instagram_browser_partial_success_on_login(monkeypatch):
     page.on = MagicMock()
     page.remove_listener = MagicMock()
 
-    warning = await sm._open_instagram_browser(page, username="alice", need_login=True)
+    warning, _status = await sm._open_instagram_browser(page, username="alice", need_login=True)
 
     assert warning is None
     assert visited == ["https://www.instagram.com/accounts/login/"]

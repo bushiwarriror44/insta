@@ -9,6 +9,7 @@ import respx
 
 from app.config import settings
 from app.proxies.pool import (
+    HealthCheckScope,
     HealthSnapshot,
     ProxyError,
     _mask,
@@ -16,6 +17,7 @@ from app.proxies.pool import (
     health_check,
     health_check_cached,
     health_check_record,
+    note_proxy_login_http_status,
     reach_instagram,
     reach_instagram_login_page,
     reset_health_cache,
@@ -147,25 +149,18 @@ def test_reach_instagram_returns_true_on_2xx():
 
 
 @respx.mock
-def test_reach_instagram_falls_back_on_first_failure():
-    """If the first probe URL errors but the second 4xx replies, we count it
-    as reachable (TLS handshake is what we are validating)."""
+def test_reach_instagram_raises_on_connect_failure():
     respx.get("https://i.instagram.com/api/v1/zr/dual_tokens/").mock(
         side_effect=httpx.ConnectTimeout("nope")
     )
-    respx.get("https://www.instagram.com/data/manifest.json").mock(
-        return_value=httpx.Response(401, text="auth required")
-    )
-    assert reach_instagram("http://h:1", timeout=3) is True
+    with pytest.raises(ProxyError):
+        reach_instagram("http://h:1", timeout=3)
 
 
 @respx.mock
-def test_reach_instagram_raises_when_all_probes_fail():
+def test_reach_instagram_raises_when_probe_returns_5xx():
     respx.get("https://i.instagram.com/api/v1/zr/dual_tokens/").mock(
-        side_effect=httpx.ConnectTimeout("nope")
-    )
-    respx.get("https://www.instagram.com/data/manifest.json").mock(
-        side_effect=httpx.ConnectTimeout("nope")
+        return_value=httpx.Response(503, text="busy")
     )
     with pytest.raises(ProxyError):
         reach_instagram("http://h:1", timeout=3)
@@ -272,21 +267,42 @@ def test_reach_instagram_login_page_blocked_on_403():
 
 
 @respx.mock
-def test_health_check_cached_skips_login_page_when_disabled():
+def test_note_proxy_login_http_status_updates_cache():
     respx.get(settings.proxy_health_url).mock(
         return_value=httpx.Response(200, json={"ip": "1.2.3.4"})
     )
     respx.get("https://i.instagram.com/api/v1/zr/dual_tokens/").mock(
         return_value=httpx.Response(200, text="{}")
     )
+    _mock_login_page_route(200)
     respx.get("https://ipapi.co/country/").mock(
         return_value=httpx.Response(200, text="US")
     )
-    login_route = respx.get("https://www.instagram.com/accounts/login/")
-    login_route.mock(return_value=httpx.Response(200, text="<html></html>"))
+    health_check_cached("http://h:1", force=True, scope=HealthCheckScope.FULL)
+    note_proxy_login_http_status("http://h:1", 429)
+    snap = health_check_cached("http://h:1", force=False)
+    assert snap.instagram_login_http_status == 429
+    assert snap.instagram_login_reachable is False
 
-    snap = health_check_cached("http://h:1", force=True, check_login_page=False)
-    assert snap.instagram_reachable is True
+
+@respx.mock
+def test_health_check_cached_minimal_skips_instagram_probes():
+    respx.get(settings.proxy_health_url).mock(
+        return_value=httpx.Response(200, json={"ip": "1.2.3.4"})
+    )
+    ig_route = respx.get("https://i.instagram.com/api/v1/zr/dual_tokens/").mock(
+        return_value=httpx.Response(200, text="{}")
+    )
+    login_route = respx.get("https://www.instagram.com/accounts/login/").mock(
+        return_value=httpx.Response(200, text="<html></html>")
+    )
+    respx.get("https://ipapi.co/country/").mock(
+        return_value=httpx.Response(200, text="US")
+    )
+
+    snap = health_check_cached("http://h:1", force=True, scope=HealthCheckScope.MINIMAL)
+    assert snap.ip == "1.2.3.4"
+    assert ig_route.call_count == 0
     assert login_route.call_count == 0
 
 
@@ -302,9 +318,10 @@ def test_health_check_cached_sets_login_reachable_flag():
     respx.get("https://ipapi.co/country/").mock(
         return_value=httpx.Response(200, text="US")
     )
-    snap = health_check_cached("http://h:1", force=True)
+    snap = health_check_cached("http://h:1", force=True, scope=HealthCheckScope.FULL)
     assert snap.instagram_reachable is True
     assert snap.instagram_login_reachable is False
+    assert snap.instagram_login_http_status == 403
 
 
 def test_proxy_risk_score_detects_geo_mismatch():
