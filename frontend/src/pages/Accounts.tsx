@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Server,
   ShieldOff,
+  Sparkles,
   Trash2,
   XCircle,
 } from "lucide-react";
@@ -24,7 +25,12 @@ import { CountryFlag, countryCodeToFlag } from "../components/CountryFlag";
 import { DiagnosticLogPanel } from "../components/DiagnosticLogPanel";
 import { Loader } from "../components/Loader";
 import { Modal } from "../components/Modal";
-import { isSessionMissing, SessionSetupModal } from "../components/SessionSetupModal";
+import {
+  isSessionExpired,
+  isSessionMissing,
+  SESSION_EXPIRED_MOBILE_HINT,
+  SessionSetupModal,
+} from "../components/SessionSetupModal";
 import { InstagramBrowserPanel } from "../components/InstagramBrowserPanel";
 import { StatusBadge } from "../components/StatusBadge";
 import { useAuth } from "../context/AuthContext";
@@ -1076,6 +1082,7 @@ function ConnectionModal({
 }) {
   const { push } = useToast();
   const [running, setRunning] = useState(false);
+  const [minting, setMinting] = useState(false);
   const [result, setResult] = useState<AccountConnectionTestOut | null>(null);
   const [history, setHistory] = useState<DiagnosticRunOut[]>([]);
   const [selectedHistoryId, setSelectedHistoryId] = useState<number | "current">("current");
@@ -1085,6 +1092,7 @@ function ConnectionModal({
     if (!open) return;
     setResult(null);
     setRunning(false);
+    setMinting(false);
     setSelectedHistoryId("current");
     setHistory([]);
   }, [open, account?.username]);
@@ -1130,6 +1138,40 @@ function ConnectionModal({
       setHistoryTick((n) => n + 1);
     } finally {
       setRunning(false);
+    }
+  }
+
+  async function preparePublishSession() {
+    if (!account) return;
+    setMinting(true);
+    setSelectedHistoryId("current");
+    try {
+      const minted = await api.accounts.mintMobileSession(account.username);
+      if (!minted.ok) {
+        push(
+          minted.challenge
+            ? "Нужно подтверждение Instagram (challenge) — откройте браузер или дождитесь кода"
+            : minted.error ?? "Не удалось создать mobile-сессию",
+          "error"
+        );
+        setHistoryTick((n) => n + 1);
+        return;
+      }
+      push("Mobile-сессия создана — проверяем подключение…", "success");
+      const data = await api.accounts.testConnection(account.username);
+      setResult(data);
+      onResult?.(account, data);
+      push(
+        data.overall_ok
+          ? `@${account.username}: готов к автопостингу`
+          : `@${account.username}: сессия создана, но проверка ещё не прошла`,
+        data.overall_ok ? "success" : "error"
+      );
+    } catch (err) {
+      push((err as Error).message, "error");
+      setHistoryTick((n) => n + 1);
+    } finally {
+      setMinting(false);
     }
   }
 
@@ -1212,6 +1254,11 @@ function ConnectionModal({
   const missingSession =
     result?.instagram_auth != null && isSessionMissing(result.instagram_auth);
 
+  const sessionExpired =
+    result?.instagram_auth != null &&
+    !result.instagram_auth.ok &&
+    isSessionExpired(result.instagram_auth);
+
   const statusBanner =
     result != null && selectedHistoryId === "current"
       ? {
@@ -1247,7 +1294,7 @@ function ConnectionModal({
           <button
             type="button"
             className="btn-primary"
-            disabled={running || !account}
+            disabled={running || minting || !account}
             onClick={runTest}
           >
             <RefreshCw size={16} className={running ? "animate-spin" : ""} />
@@ -1390,6 +1437,15 @@ function ConnectionModal({
           </div>
         ) : null}
 
+        {sessionExpired && !missingSession ? (
+          <div className="rounded-xl border border-amber-500/50 bg-amber-950/40 p-4 text-sm text-amber-100">
+            <div className="font-semibold text-amber-200">
+              Mobile API отклонил sessionid
+            </div>
+            <p className="mt-1 text-xs text-amber-100/90">{SESSION_EXPIRED_MOBILE_HINT}</p>
+          </div>
+        ) : null}
+
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="text-xs font-medium text-slate-400 uppercase tracking-wide">
@@ -1439,6 +1495,17 @@ function ConnectionModal({
           >
             <KeyRound size={14} /> Настроить сессию
           </button>
+          {sessionExpired && !missingSession ? (
+            <button
+              type="button"
+              className="btn-primary text-sm shadow-lg shadow-brand-500/20"
+              disabled={minting || running || !account}
+              onClick={() => void preparePublishSession()}
+            >
+              <Sparkles size={14} className={minting ? "animate-spin" : ""} />
+              {minting ? "Создание mobile-сессии…" : "Подготовить к автопостингу"}
+            </button>
+          ) : null}
         </div>
       </div>
     </Modal>
@@ -1703,19 +1770,25 @@ function SessionModal({
         </p>
         {verifyResult ? (
           <div
-            className={`text-xs rounded-lg p-2 ${
+            className={`text-xs rounded-lg p-2 space-y-1 ${
               verifyResult.instagram_auth.ok
                 ? "text-emerald-300 bg-emerald-950/40"
                 : "text-rose-300 bg-rose-950/40"
             }`}
           >
-            {verifyResult.instagram_auth.ok
-              ? `Действительна через ${verifyResult.instagram_auth.method}${
-                  verifyResult.instagram_auth.ig_username
-                    ? ` (@${verifyResult.instagram_auth.ig_username})`
-                    : ""
-                }`
-              : verifyResult.instagram_auth.error ?? "Сессия недействительна"}
+            <div>
+              {verifyResult.instagram_auth.ok
+                ? `Действительна через ${verifyResult.instagram_auth.method}${
+                    verifyResult.instagram_auth.ig_username
+                      ? ` (@${verifyResult.instagram_auth.ig_username})`
+                      : ""
+                  }`
+                : verifyResult.instagram_auth.error ?? "Сессия недействительна"}
+            </div>
+            {!verifyResult.instagram_auth.ok &&
+            isSessionExpired(verifyResult.instagram_auth) ? (
+              <p className="text-amber-100/90">{SESSION_EXPIRED_MOBILE_HINT}</p>
+            ) : null}
           </div>
         ) : null}
       </div>

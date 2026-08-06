@@ -3,7 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ToastProvider } from "../../context/ToastContext";
 import { ApiError } from "../../api/client";
-import { SessionSetupModal } from "../SessionSetupModal";
+import {
+  isSessionExpired,
+  isSessionMissing,
+  SessionSetupModal,
+} from "../SessionSetupModal";
 
 const account = {
   id: 1,
@@ -193,6 +197,18 @@ describe("SessionSetupModal", () => {
     expect(apiMock.accounts.testConnection).not.toHaveBeenCalled();
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /Готово/i })).toBeEnabled()
+    );
+  });
+});
+
+describe("session auth helpers", () => {
+  it("detects session_expired for mobile probe failures", () => {
+    expect(
+      isSessionExpired({ error_code: "session_expired", error: "session_id недействителен или истёк" })
+    ).toBe(true);
+    expect(isSessionMissing({ error_code: "session_expired", error: "x" })).toBe(false);
+    expect(isSessionExpired({ error_code: "session_missing", error: "Нет session_id в БД" })).toBe(
+      false
     );
   });
 });

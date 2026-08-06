@@ -175,7 +175,7 @@ export interface DiagnosticLogLine {
 
 export interface DiagnosticRunOut {
   id: number;
-  kind: "connection_test" | "publish_job" | "first_login";
+  kind: "connection_test" | "publish_job" | "first_login" | "mint_mobile_session";
   account_id: number;
   account_username: string | null;
   job_id: number | null;
@@ -208,6 +208,15 @@ export interface FirstLoginOut {
   connection_test?: AccountConnectionTestOut | null;
   error?: string | null;
   login_debug_available: boolean;
+  logs: DiagnosticLogLine[];
+}
+
+export interface MintMobileSessionOut {
+  run_id: number;
+  ok: boolean;
+  challenge: boolean;
+  session_id?: string | null;
+  error?: string | null;
   logs: DiagnosticLogLine[];
 }
 

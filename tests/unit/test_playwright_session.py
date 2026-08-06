@@ -67,6 +67,20 @@ def test_import_playwright_session_to_account(db_session, make_account, app_env)
     assert account.session_id == "b" * 40
 
 
+def test_import_playwright_session_preserves_mobile_dump(db_session, make_account, app_env):
+    from app.accounts.session_manager import session_path
+
+    account = make_account(username="keepdump")
+    path = session_path("keepdump")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"keep": true}', encoding="utf-8")
+    assert import_playwright_session_to_account(
+        db_session, account, session_id="d" * 40
+    ) is True
+    assert path.exists()
+    assert json.loads(path.read_text(encoding="utf-8"))["keep"] is True
+
+
 def test_import_playwright_session_with_explicit_session_id(db_session, make_account):
     account = make_account(username="directsid")
     sid = "c" * 40

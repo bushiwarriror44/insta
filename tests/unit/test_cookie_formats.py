@@ -172,7 +172,22 @@ def test_import_cookies_data_dolphin(app_env):
     result = import_cookies_data("dolphinuser", data)
     assert result.format == "dolphin"
     assert result.session_id == sid
+    assert result.session_file_cleared is False
     assert playwright_state_path("dolphinuser").exists()
+
+
+def test_import_cookies_preserves_mobile_session_file(app_env):
+    from app.accounts.session_manager import session_path
+
+    sid = "p" * 40
+    path = session_path("keepmobile")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"mobile": true}', encoding="utf-8")
+    data = [{"name": "sessionid", "value": sid, "domain": ".instagram.com"}]
+    result = import_cookies_data("keepmobile", data)
+    assert result.session_file_cleared is False
+    assert path.exists()
+    assert json.loads(path.read_text(encoding="utf-8"))["mobile"] is True
 
 
 def test_import_cookies_data_decodes_and_filters_noise(app_env):

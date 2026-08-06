@@ -26,6 +26,7 @@ from app.accounts.session_manager import (
     build_client,
     clear_session_file,
     login_or_resume,
+    probe_session_auth,
     session_path,
 )
 
@@ -535,3 +536,38 @@ def test_backup_code_strips_spaces(app_env, fake_client_class, fingerprint):
         verification_code="12 34 56 78",
     )
     assert client.last_login_kwargs == {"verification_code": "12345678"}
+
+
+def test_probe_falls_through_to_session_file_when_db_sid_invalid(
+    app_env, fake_client_class, fingerprint
+):
+    _write_fake_session("probefile", app_env)
+    import app.accounts.session_manager as sm
+
+    real = sm.Client
+    diag_lines: list[tuple[str, str, str]] = []
+
+    def _factory(*args, **kwargs):
+        c = real(*args, **kwargs)
+        c.account_info_username = "probefile"
+        c.sessionid_exc = ClientError("invalid sessionid")
+        return c
+
+    sm.Client = _factory  # type: ignore[assignment]
+    try:
+        result = probe_session_auth(
+            "probefile",
+            fingerprint,
+            "http://p:1",
+            session_id=VALID_SESSION_ID,
+            diag=lambda level, step, msg: diag_lines.append((level, step, msg)),
+        )
+    finally:
+        sm.Client = real  # type: ignore[assignment]
+
+    assert result.ok is True
+    assert result.method == "session_file"
+    joined = " | ".join(m for _, _, m in diag_lines)
+    assert "пробуем session_*.json" in joined
+    assert "session_file OK" in joined
+    assert any("elapsed_ms=" in m for _, _, m in diag_lines)

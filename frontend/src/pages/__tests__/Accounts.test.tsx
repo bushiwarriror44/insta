@@ -15,6 +15,7 @@ const apiMock = vi.hoisted(() => ({
     getSession: vi.fn(),
     testConnection: vi.fn(),
     firstLogin: vi.fn(),
+    mintMobileSession: vi.fn(),
     exportCookies: vi.fn(),
     exportPlaywrightState: vi.fn(),
     exportDeviceFingerprint: vi.fn(),
@@ -574,7 +575,114 @@ describe("Accounts page", () => {
     expect(
       within(modal).getAllByText(/session_id недействителен или истёк/i).length
     ).toBeGreaterThanOrEqual(1);
+    expect(within(modal).getByText(/mobile api отклонил sessionid/i)).toBeInTheDocument();
+    expect(
+      within(modal).getByText(/web-cookie из dolphin часто отклоняется/i)
+    ).toBeInTheDocument();
+    expect(
+      within(modal).getByRole("button", { name: /подготовить к автопостингу/i })
+    ).toBeInTheDocument();
     expect(within(modal).queryByText(/выполняется проверка/i)).not.toBeInTheDocument();
+  });
+
+  it("mints mobile session from connection modal when session expired", async () => {
+    apiMock.diagnostics.list.mockResolvedValue([]);
+    apiMock.accounts.testConnection
+      .mockResolvedValueOnce({
+        username: "alice",
+        proxy_assigned: true,
+        proxy_label: "res-de-1",
+        proxy_health: {
+          ok: true,
+          ip: "203.0.113.1",
+          geo_country: "DE",
+          instagram_reachable: true,
+          instagram_login_reachable: true,
+          geo_mismatch: false,
+        },
+        session_storage: {
+          has_session_id: true,
+          session_file_exists: false,
+          device_file_exists: true,
+          session_source: "database",
+        },
+        instagram_auth: {
+          ok: false,
+          method: "sessionid",
+          ig_username: null,
+          error: "session_id недействителен или истёк",
+          error_code: "session_expired",
+          challenge: false,
+        },
+        overall_ok: false,
+        checked_at: "2026-06-29T10:00:00Z",
+        run_id: 35,
+        logs: [],
+      })
+      .mockResolvedValueOnce({
+        username: "alice",
+        proxy_assigned: true,
+        proxy_label: "res-de-1",
+        proxy_health: {
+          ok: true,
+          ip: "203.0.113.1",
+          geo_country: "DE",
+          instagram_reachable: true,
+          instagram_login_reachable: true,
+          geo_mismatch: false,
+        },
+        session_storage: {
+          has_session_id: true,
+          session_file_exists: true,
+          device_file_exists: true,
+          session_source: "database",
+        },
+        instagram_auth: {
+          ok: true,
+          method: "sessionid",
+          ig_username: "alice",
+          challenge: false,
+        },
+        overall_ok: true,
+        checked_at: "2026-06-29T10:05:00Z",
+        run_id: 36,
+        logs: [],
+      });
+    apiMock.accounts.mintMobileSession.mockResolvedValue({
+      run_id: 99,
+      ok: true,
+      challenge: false,
+      session_id: "m".repeat(40),
+      logs: [],
+    });
+
+    renderAccounts();
+    await screen.findByText("@alice");
+    fireEvent.click(
+      screen.getByRole("button", { name: /^подключение для alice$/i })
+    );
+    const heading = await screen.findByRole("heading", {
+      name: /подключение · @alice/i,
+    });
+    const modal = heading.closest("div.card") as HTMLElement;
+    fireEvent.click(within(modal).getByRole("button", { name: /запустить проверку/i }));
+
+    await waitFor(() =>
+      expect(
+        within(modal).getByRole("button", { name: /подготовить к автопостингу/i })
+      ).toBeInTheDocument()
+    );
+    fireEvent.click(
+      within(modal).getByRole("button", { name: /подготовить к автопостингу/i })
+    );
+
+    await waitFor(() =>
+      expect(apiMock.accounts.mintMobileSession).toHaveBeenCalledWith("alice")
+    );
+    await waitFor(() =>
+      expect(within(modal).getByText(/готов к автопостингу/i)).toBeInTheDocument()
+    );
+    expect(apiMock.accounts.testConnection).toHaveBeenCalledTimes(2);
   });
 
   it("opens session setup modal when connection test reports missing session", async () => {

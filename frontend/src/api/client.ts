@@ -16,6 +16,7 @@ import type {
   FirstLoginOut,
   Health,
   JobOut,
+  MintMobileSessionOut,
   PublicationOut,
   ProxyIn,
   ProxyOut,
@@ -259,6 +260,11 @@ export const api = {
           method: "POST",
           query: opts?.loginSurface ? { login_surface: opts.loginSurface } : undefined,
         }
+      ),
+    mintMobileSession: (username: string) =>
+      request<MintMobileSessionOut>(
+        `/api/accounts/${encodeURIComponent(username)}/mint-mobile-session`,
+        { method: "POST" }
       ),
     exportCookies: (username: string) =>
       downloadFile(

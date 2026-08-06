@@ -7,7 +7,6 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.accounts.session_cookie import sessionid_from_cookies_array
-from app.accounts.session_manager import clear_session_file
 from app.config import settings
 from app.db import Account
 
@@ -83,12 +82,15 @@ def import_playwright_session_to_account(
     *,
     session_id: str | None = None,
 ) -> bool:
-    """Persist sessionid into the account row (from arg or Playwright state file)."""
+    """Persist sessionid into the account row (from arg or Playwright state file).
+
+    Does not clear the mobile ``session_*.json`` dump — web cookies and mobile
+    dumps coexist so publish can still resume from the file.
+    """
     resolved = (session_id or "").strip() or sessionid_from_playwright_state(account.username)
     if not resolved:
         return False
     account.session_id = resolved
-    clear_session_file(account.username)
     db.commit()
     db.refresh(account)
     return True

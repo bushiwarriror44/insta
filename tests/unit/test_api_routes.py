@@ -660,6 +660,37 @@ def test_accounts_import_cookies_bad_format(api_client):
     assert res.status_code == 400
 
 
+def test_accounts_mint_mobile_session(api_client, monkeypatch):
+    _create_account(api_client, "route_mint", "px-mint")
+    sid = "r" * 40
+    monkeypatch.setattr(
+        "app.accounts.mint_mobile_session.ensure_fingerprint_and_proxy",
+        lambda *a, **k: object(),
+    )
+    monkeypatch.setattr(
+        "app.accounts.mint_mobile_session.make_handler",
+        lambda *a, **k: (lambda u, c: "123456"),
+    )
+    monkeypatch.setattr(
+        "app.accounts.mint_mobile_session.login_and_export_sessionid",
+        lambda *a, **k: sid,
+    )
+    monkeypatch.setattr(
+        "app.accounts.mint_mobile_session.log_account_credentials",
+        lambda *a, **k: None,
+    )
+
+    res = api_client.post("/api/accounts/route_mint/mint-mobile-session")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["ok"] is True
+    assert body["session_id"] == sid
+
+    listed = api_client.get("/api/accounts").json()
+    row = next(a for a in listed if a["username"] == "route_mint")
+    assert row["has_session_id"] is True
+
+
 def test_accounts_update_proxy_rejects_missing_proxy(api_client):
     api_client.post(
         "/api/proxies",

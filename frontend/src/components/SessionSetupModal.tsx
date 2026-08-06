@@ -53,6 +53,17 @@ export function isSessionMissing(auth: Pick<InstagramAuthStepOut, "error" | "err
   );
 }
 
+/** Mobile probe rejected sessionid (common for Dolphin / browser web cookies). */
+export function isSessionExpired(auth: Pick<InstagramAuthStepOut, "error" | "error_code">): boolean {
+  if (auth.error_code === "session_expired") return true;
+  if (!auth.error) return false;
+  const lower = auth.error.toLowerCase();
+  return lower.includes("недействителен") || lower.includes("истёк") || lower.includes("истек");
+}
+
+export const SESSION_EXPIRED_MOBILE_HINT =
+  "Проверка и автопостинг идут через mobile API — web-cookie из Dolphin часто отклоняется, даже если sessionid есть в БД. Нажмите «Подготовить к автопостингу», чтобы войти по паролю через mobile API (нужны пароль и при 2FA — TOTP). Для экспорта в Dolphin не жмите «Проверить».";
+
 export function SessionSetupModal({ account, open, onClose, onCompleted }: Props) {
   const { push } = useToast();
   const { state: authState } = useAuth();

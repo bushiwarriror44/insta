@@ -16,6 +16,15 @@ def normalize_sessionid(value: str | None) -> str | None:
     return cleaned
 
 
+def sessionid_diag_label(value: str | None) -> str:
+    """Safe label for diagnostic logs: length + short prefix (never full cookie)."""
+    cleaned = (value or "").strip()
+    if not cleaned:
+        return "нет"
+    prefix = cleaned[:8]
+    return f"len={len(cleaned)}, prefix={prefix}…"
+
+
 def _cookie_expires(item: dict) -> float:
     raw = item.get("expires")
     if raw is None:

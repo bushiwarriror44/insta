@@ -12,7 +12,7 @@ from app.accounts.session_cookie import (
     sessionid_from_cookies_array,
 )
 from app.accounts.session_export import export_sessionid
-from app.accounts.session_manager import clear_session_file, session_path
+from app.accounts.session_manager import session_path
 
 CookieExportSource = Literal["playwright", "session_file", "database"]
 CookieImportFormat = Literal["dolphin", "playwright_state"]
@@ -213,12 +213,13 @@ def import_cookies_data(username: str, data: object) -> CookiesImportResult:
             cookie["value"] = session_id
 
     save_playwright_state(username, state)
-    cleared = clear_session_file(username)
+    # Keep mobile session_*.json if present — web cookies live in Playwright state;
+    # clearing the dump would break publish/probe that still use the mobile file.
     return CookiesImportResult(
         format=fmt,
         session_id=session_id,
         playwright_state_saved=True,
-        session_file_cleared=cleared,
+        session_file_cleared=False,
     )
 
 

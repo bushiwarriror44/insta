@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.accounts.account_diagnostics import log_account_credentials
 from app.accounts.device_factory import device_path
+from app.accounts.session_cookie import normalize_sessionid, sessionid_diag_label
 from app.accounts.session_export import export_sessionid
 from app.accounts.session_manager import (
     ensure_fingerprint_and_proxy,
@@ -240,6 +241,14 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
         country=normalize_country_code(proxy.country) or proxy.country or "US",
         timezone_id=tz_id,
     )
+    sid_raw = (account.session_id or "").strip()
+    sid_norm = normalize_sessionid(sid_raw) or ""
+    collector.info(
+        "session_probe",
+        f"Перед проверкой: sessionid в БД="
+        f"{'да (' + sessionid_diag_label(sid_norm) + ')' if sid_norm else 'нет'}, "
+        f"файл session_*.json={'да' if file_exists else 'нет'}",
+    )
     collector.info("session_probe", "Проверка сессии Instagram")
     try:
         probe = probe_session_auth(
@@ -247,6 +256,7 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
             fingerprint=fingerprint,
             proxy_url=proxy.url,
             session_id=account.session_id,
+            diag=collector.callback(),
         )
     except ProxyError as exc:
         collector.error("session_probe", str(exc))

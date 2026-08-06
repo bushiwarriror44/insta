@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import random
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -41,11 +42,13 @@ from app.accounts.device_factory import (
     rotate_session_uuids,
     save_fingerprint,
 )
-from app.accounts.session_cookie import normalize_sessionid
+from app.accounts.session_cookie import normalize_sessionid, sessionid_diag_label
 from app.config import settings
 from app.logging_setup import get_logger
 
 logger = get_logger(__name__)
+
+DiagCallback = Callable[[Literal["info", "warn", "error"], str, str], None]
 
 
 class AuthenticationError(Exception):
@@ -368,6 +371,7 @@ def login_and_export_sessionid(
     *,
     totp_seed: str | None = None,
     login_identifier: str | None = None,
+    challenge_handler=None,
 ) -> str:
     """Password-login via instagrapi and return the resulting sessionid."""
     from app.accounts.session_cookie import MIN_SESSIONID_LEN
@@ -381,6 +385,7 @@ def login_and_export_sessionid(
         totp_seed=totp_seed,
         session_id=None,
         login_identifier=login_identifier,
+        challenge_handler=challenge_handler,
     )
     exported = export_sessionid(username)
     if exported is None or len(exported.session_id) < MIN_SESSIONID_LEN:
@@ -403,11 +408,23 @@ def probe_session_auth(
     fingerprint: DeviceFingerprint,
     proxy_url: str,
     session_id: Optional[str] = None,
+    *,
+    diag: DiagCallback | None = None,
 ) -> ProbeSessionResult:
     """Validate an existing session without password fallback (admin diagnostics)."""
     log = logger.bind(username=username)
     proxy_url = (proxy_url or "").strip()
     stripped_sid = normalize_sessionid(session_id) or ""
+    started = time.monotonic()
+    file_exists = session_path(username).exists()
+
+    def _d(level: Literal["info", "warn", "error"], step: str, message: str) -> None:
+        if diag is not None:
+            diag(level, step, message)
+
+    def _elapsed() -> str:
+        ms = int((time.monotonic() - started) * 1000)
+        return f"elapsed_ms={ms}"
 
     def _fresh_client() -> Client:
         return build_client(
@@ -416,24 +433,42 @@ def probe_session_auth(
             proxy_url=proxy_url,
         )
 
+    _d(
+        "info",
+        "session_probe",
+        f"Старт: DB sessionid={sessionid_diag_label(stripped_sid or None)}, "
+        f"файл session_*.json={'да' if file_exists else 'нет'}",
+    )
+
     if stripped_sid:
+        _d(
+            "info",
+            "session_probe",
+            f"Попытка login_by_sessionid ({sessionid_diag_label(stripped_sid)})",
+        )
         client = _fresh_client()
         try:
             if _try_login_by_sessionid(client, stripped_sid, username, log):
                 _dump_session_settings(client, username)
                 actual = _account_username_from_info(client.account_info())
+                _d(
+                    "info",
+                    "session_probe",
+                    f"sessionid OK как @{actual or username}; {_elapsed()}",
+                )
                 return ProbeSessionResult(
                     ok=True,
                     method="sessionid",
                     ig_username=actual or username,
                 )
-            return ProbeSessionResult(
-                ok=False,
-                method="sessionid",
-                error="session_id недействителен или истёк",
-                error_code="session_expired",
+            _d(
+                "warn",
+                "session_probe",
+                "DB sessionid отклонён (невалиден/истёк) — пробуем session_*.json",
             )
+            log.info("session.probe_sessionid_invalid_trying_file")
         except HardCheckpoint as exc:
+            _d("warn", "session_probe", f"challenge на sessionid: {exc}; {_elapsed()}")
             return ProbeSessionResult(
                 ok=False,
                 method="sessionid",
@@ -442,8 +477,10 @@ def probe_session_auth(
                 error_code="challenge_required",
             )
         except AuthenticationError as exc:
+            _d("error", "session_probe", f"sessionid auth error: {exc}; {_elapsed()}")
             return ProbeSessionResult(ok=False, method="sessionid", error=str(exc))
         except ChallengeRequired as exc:
+            _d("warn", "session_probe", f"challenge_required: {exc}; {_elapsed()}")
             return ProbeSessionResult(
                 ok=False,
                 method="sessionid",
@@ -452,9 +489,24 @@ def probe_session_auth(
                 error_code="challenge_required",
             )
         except PleaseWaitFewMinutes as exc:
+            _d("error", "session_probe", f"rate-limited: {exc}; {_elapsed()}")
             return ProbeSessionResult(ok=False, method="sessionid", error=str(exc))
+        # Match login_or_resume: invalid DB sessionid → try mobile dump before failing.
 
     if not session_path(username).exists():
+        if stripped_sid:
+            _d(
+                "error",
+                "session_probe",
+                f"файл сессии отсутствует; DB sid мёртв; {_elapsed()}",
+            )
+            return ProbeSessionResult(
+                ok=False,
+                method="sessionid",
+                error="session_id недействителен или истёк",
+                error_code="session_expired",
+            )
+        _d("error", "session_probe", f"нет DB sid и нет файла сессии; {_elapsed()}")
         return ProbeSessionResult(
             ok=False,
             method="none",
@@ -465,16 +517,35 @@ def probe_session_auth(
             error_code="session_missing",
         )
 
+    _d("info", "session_probe", "Загрузка session_*.json (mobile dump)")
     client = _fresh_client()
     try:
         resumed = _resume_from_session_file(client, username, proxy_url, log)
         if resumed is not None:
             actual = _account_username_from_info(resumed.account_info())
+            _d(
+                "info",
+                "session_probe",
+                f"session_file OK как @{actual or username}; {_elapsed()}",
+            )
             return ProbeSessionResult(
                 ok=True,
                 method="session_file",
                 ig_username=actual or username,
             )
+        if stripped_sid:
+            _d(
+                "error",
+                "session_probe",
+                f"session_file устарел; DB sid тоже мёртв; {_elapsed()}",
+            )
+            return ProbeSessionResult(
+                ok=False,
+                method="sessionid",
+                error="session_id недействителен или истёк",
+                error_code="session_expired",
+            )
+        _d("error", "session_probe", f"session_file устарел или недействителен; {_elapsed()}")
         return ProbeSessionResult(
             ok=False,
             method="session_file",
@@ -482,6 +553,7 @@ def probe_session_auth(
             error_code="session_expired",
         )
     except HardCheckpoint as exc:
+        _d("warn", "session_probe", f"challenge на session_file: {exc}; {_elapsed()}")
         return ProbeSessionResult(
             ok=False,
             method="session_file",
@@ -490,6 +562,7 @@ def probe_session_auth(
             error_code="challenge_required",
         )
     except ChallengeRequired as exc:
+        _d("warn", "session_probe", f"challenge_required на file: {exc}; {_elapsed()}")
         return ProbeSessionResult(
             ok=False,
             method="session_file",
@@ -498,6 +571,7 @@ def probe_session_auth(
             error_code="challenge_required",
         )
     except PleaseWaitFewMinutes as exc:
+        _d("error", "session_probe", f"rate-limited на file: {exc}; {_elapsed()}")
         return ProbeSessionResult(ok=False, method="session_file", error=str(exc))
 
 

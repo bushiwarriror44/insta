@@ -296,6 +296,26 @@ describe("body serialization", () => {
     expect(out.session_id).toBe("a".repeat(40));
   });
 
+  it("mints mobile session via POST", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      makeResponse({
+        json: {
+          run_id: 7,
+          ok: true,
+          challenge: false,
+          session_id: "m".repeat(40),
+          logs: [],
+        },
+      })
+    );
+    const out = await api.accounts.mintMobileSession("alice");
+    const { url, init } = getCall();
+    expect(url).toBe("/api/accounts/alice/mint-mobile-session");
+    expect(init.method).toBe("POST");
+    expect(out.ok).toBe(true);
+    expect(out.session_id).toBe("m".repeat(40));
+  });
+
   it("uses manual redirect for POST requests", async () => {
     fetchSpy.mockResolvedValueOnce(
       makeResponse({ status: 200, json: { run_id: 1, ok: true, logs: [] } })

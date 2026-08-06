@@ -191,7 +191,7 @@ class DiagnosticLogLineOut(BaseModel):
 
 class DiagnosticRunOut(BaseModel):
     id: int
-    kind: Literal["connection_test", "publish_job", "first_login"]
+    kind: Literal["connection_test", "publish_job", "first_login", "mint_mobile_session"]
     account_id: int
     account_username: Optional[str] = None
     job_id: Optional[int] = None
@@ -224,6 +224,15 @@ class FirstLoginOut(BaseModel):
     connection_test: Optional[AccountConnectionTestOut] = None
     error: Optional[str] = None
     login_debug_available: bool = False
+    logs: list[DiagnosticLogLineOut] = Field(default_factory=list)
+
+
+class MintMobileSessionOut(BaseModel):
+    run_id: int
+    ok: bool
+    challenge: bool = False
+    session_id: Optional[str] = None
+    error: Optional[str] = None
     logs: list[DiagnosticLogLineOut] = Field(default_factory=list)
 
 

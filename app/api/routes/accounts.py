@@ -16,6 +16,7 @@ from app.accounts.cookie_formats import CookieFormatError, import_cookies_data, 
 from app.accounts.device_factory import device_path, load_fingerprint
 from app.accounts.login_identifier import resolve_login_identifier
 from app.accounts.first_login_service import run_account_first_login
+from app.accounts.mint_mobile_session import mint_mobile_session
 from app.accounts.playwright_session import login_debug_screenshot_path, playwright_state_path
 from app.accounts.session_export import export_sessionid
 from app.accounts.session_cookie import normalize_sessionid
@@ -35,6 +36,7 @@ from app.api.schemas import (
     AccountSessionUpdate,
     CookiesImportOut,
     FirstLoginOut,
+    MintMobileSessionOut,
 )
 from app.db import Account, AccountStatus, DailyStat, Proxy
 from app.geo.country_codes import normalize_country_code
@@ -444,3 +446,13 @@ def account_first_login(
             detail="Chromium не установлен — выполните install-playwright на сервере",
         )
     return run_account_first_login(account, db, surface=login_surface)
+
+
+@router.post("/{username}/mint-mobile-session", response_model=MintMobileSessionOut)
+def account_mint_mobile_session(
+    username: str, db: Session = Depends(get_db)
+) -> MintMobileSessionOut:
+    account = db.scalar(select(Account).where(Account.username == username))
+    if account is None:
+        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+    return mint_mobile_session(account, db)
