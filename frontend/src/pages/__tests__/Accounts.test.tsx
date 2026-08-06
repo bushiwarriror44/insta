@@ -257,10 +257,8 @@ describe("Accounts page", () => {
         session_id: sessionId,
       })
     );
-    await waitFor(() =>
-      expect(apiMock.accounts.testConnection).toHaveBeenCalledWith("alice")
-    );
-    // Modal stays open after save so the user can see verification result.
+    expect(apiMock.accounts.testConnection).not.toHaveBeenCalled();
+    // Modal stays open after save.
     expect(screen.getByRole("heading", { name: /сессия · @alice/i })).toBeInTheDocument();
   });
 
@@ -316,6 +314,7 @@ describe("Accounts page", () => {
         session_id: decoded,
       })
     );
+    expect(apiMock.accounts.testConnection).not.toHaveBeenCalled();
   });
 
   it("accepts .txt cookie files in session import", async () => {
@@ -430,6 +429,7 @@ describe("Accounts page", () => {
     await waitFor(() =>
       expect(apiMock.accounts.importCookiesFile).toHaveBeenCalledWith("alice", file)
     );
+    expect(apiMock.accounts.testConnection).not.toHaveBeenCalled();
   });
 
   it("can test proxy from change-proxy modal and shows instagram reachability", async () => {
@@ -1022,7 +1022,7 @@ describe("Accounts page", () => {
 
     expect((byLabel(/имя пользователя/i, modal) as HTMLInputElement).value).toBe("");
     expect((byLabel(/^пароль$/i, modal) as HTMLInputElement).value).toBe("");
-    expect((byLabel(/часовой пояс/i, modal) as HTMLInputElement).value).toBe("UTC");
+    expect((byLabel(/часовой пояс/i, modal) as HTMLInputElement).value).toBe("Europe/Berlin");
     expect((byLabel(/профиль подписей/i, modal) as HTMLSelectElement).value).toBe("");
   });
 });

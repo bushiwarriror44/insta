@@ -156,7 +156,7 @@ export function Accounts() {
     push("Прокси аккаунта обновлён", "success");
   };
   const onImportedSession = async () => {
-    // Keep SessionModal open so the user can see verify result; only refresh list.
+    // Keep SessionModal open after import; refresh list so has_session_id updates.
     await reload();
     if (sessionAccount) {
       const refreshed = await api.accounts.list().catch(() => null);
@@ -1512,8 +1512,9 @@ function SessionModal({
       const payload: AccountSessionUpdate = { session_id: trimmed };
       await api.accounts.updateSession(account.username, payload);
       setSessionId(trimmed);
+      setVerifyResult(null);
       await onSaved();
-      await verifySession();
+      // Do not auto-call testConnection — mobile probe often burns the web sessionid.
     } catch (err) {
       push((err as Error).message, "error");
     } finally {
@@ -1559,8 +1560,9 @@ function SessionModal({
         "success"
       );
       setImportFile(null);
+      setVerifyResult(null);
       await onSaved();
-      await verifySession();
+      // Do not auto-call testConnection — mobile probe often burns the web sessionid.
     } catch (err) {
       push((err as Error).message, "error");
     } finally {
@@ -1674,6 +1676,10 @@ function SessionModal({
           <RefreshCw size={14} className={verifying ? "animate-spin" : ""} />
           {verifying ? "Проверка…" : "Проверить сессию"}
         </button>
+        <p className="text-xs text-amber-200/90">
+          Mobile-проверка может инвалидировать web-cookie. Не запускайте сразу после
+          импорта, если нужен экспорт в Dolphin.
+        </p>
         {verifyResult ? (
           <div
             className={`text-xs rounded-lg p-2 ${

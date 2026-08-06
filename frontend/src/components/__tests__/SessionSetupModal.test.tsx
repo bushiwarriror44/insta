@@ -172,4 +172,27 @@ describe("SessionSetupModal", () => {
       expect(screen.getByText(/Метод не разрешён \(405\)/i)).toBeInTheDocument()
     );
   });
+
+  it("saves pasted sessionid without auto testConnection", async () => {
+    const sessionId = "s".repeat(40);
+    apiMock.accounts.updateSession.mockResolvedValue({
+      ...account,
+      has_session_id: true,
+    });
+    renderModal();
+    fireEvent.click(screen.getByRole("button", { name: /вставить sessionid вручную/i }));
+    fireEvent.change(screen.getByPlaceholderText(/sessionid/i), {
+      target: { value: sessionId },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Сохранить сессию/i }));
+    await waitFor(() =>
+      expect(apiMock.accounts.updateSession).toHaveBeenCalledWith("alice", {
+        session_id: sessionId,
+      })
+    );
+    expect(apiMock.accounts.testConnection).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Готово/i })).toBeEnabled()
+    );
+  });
 });

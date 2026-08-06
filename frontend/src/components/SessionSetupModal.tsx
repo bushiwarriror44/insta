@@ -65,6 +65,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
   const [firstLoginResult, setFirstLoginResult] = useState<FirstLoginOut | null>(null);
   const [connectionResult, setConnectionResult] = useState<AccountConnectionTestOut | null>(null);
   const [browserSuccess, setBrowserSuccess] = useState(false);
+  const [manualSaved, setManualSaved] = useState(false);
   const [loginDebugUrl, setLoginDebugUrl] = useState<string | null>(null);
   const loginDebugUrlRef = useRef<string | null>(null);
 
@@ -72,7 +73,8 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
     firstLoginResult?.ok === true ||
     connectionResult?.overall_ok === true ||
     firstLoginResult?.connection_test?.overall_ok === true ||
-    browserSuccess;
+    browserSuccess ||
+    manualSaved;
 
   useEffect(() => {
     if (!open) return;
@@ -82,6 +84,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
     setFirstLoginResult(null);
     setConnectionResult(null);
     setBrowserSuccess(false);
+    setManualSaved(false);
     setAutoBusy(false);
     setManualBusy(false);
     if (loginDebugUrlRef.current) {
@@ -190,13 +193,9 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
       const payload: AccountSessionUpdate = { session_id: trimmed };
       await api.accounts.updateSession(account.username, payload);
       setSessionId(trimmed);
-      const test = await api.accounts.testConnection(account.username);
-      setConnectionResult(test);
-      if (test.overall_ok) {
-        push(`@${account.username}: сессия сохранена и проверена`, "success");
-      } else {
-        push(test.instagram_auth.error ?? "Проверка сессии не пройдена", "error");
-      }
+      setManualSaved(true);
+      // Do not auto-call testConnection — mobile probe often burns the web sessionid.
+      push(`@${account.username}: сессия сохранена`, "success");
     } catch (err) {
       push(formatApiError(err), "error");
     } finally {
@@ -270,7 +269,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
               disabled={manualBusy}
             >
               <KeyRound size={16} />
-              {manualBusy ? "Сохранение…" : "Сохранить и проверить"}
+              {manualBusy ? "Сохранение…" : "Сохранить сессию"}
             </button>
           )}
         </>
@@ -375,7 +374,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
               <li>Убедитесь, что прокси назначен и Instagram доступен.</li>
               <li>Нажмите «Создать сессию» — сервер выполнит вход через Playwright Chromium.</li>
               <li>Если на аккаунте включена 2FA, укажите TOTP seed в настройках аккаунта.</li>
-              <li>После успеха sessionid сохранится в БД и запустится повторная проверка.</li>
+              <li>После успеха sessionid сохранится в БД (без mobile-проверки).</li>
             </ol>
             <p className="text-xs text-slate-400">
               Если входите по email или телефону, укажите это в настройках аккаунта в поле «Логин
@@ -410,7 +409,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
               <li>Откройте Dolphin Anty (или браузер) с тем же прокси, что у аккаунта.</li>
               <li>Войдите в Instagram и пройдите challenge при необходимости.</li>
               <li>Скопируйте cookie <span className="font-mono text-xs">sessionid</span> из DevTools.</li>
-              <li>Вставьте ниже и нажмите «Сохранить и проверить».</li>
+              <li>Вставьте ниже и нажмите «Сохранить сессию».</li>
             </ol>
             <form id="session-setup-manual-form" onSubmit={submitManual} className="space-y-3">
               <div>
@@ -434,7 +433,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
         {success ? (
           <div className="rounded-xl border border-emerald-800/60 bg-emerald-950/30 p-3 text-sm text-emerald-200">
             <div className="font-medium">
-              Сессия создана · @{account?.username} подтверждён
+              Сессия сохранена · @{account?.username}
             </div>
             {(connectionResult ?? firstLoginResult?.connection_test)?.instagram_auth.ig_username ? (
               <div className="mt-1 text-xs opacity-90">
