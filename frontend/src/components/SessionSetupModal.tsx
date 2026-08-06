@@ -38,10 +38,16 @@ interface Props {
 
 export function isSessionMissing(auth: Pick<InstagramAuthStepOut, "error" | "error_code">): boolean {
   if (auth.error_code === "session_missing") return true;
+  // Expired / challenge means a session was present — do not treat as "missing".
+  if (auth.error_code === "session_expired" || auth.error_code === "challenge_required") {
+    return false;
+  }
   if (!auth.error) return false;
   const lower = auth.error.toLowerCase();
   return (
-    lower.includes("session_id") ||
+    lower.includes("нет session_id") ||
+    lower.includes("импортируйте sessionid") ||
+    lower.includes("сессия не найдена") ||
     auth.error.includes("файла сессии") ||
     auth.error.includes("нет файла сессии")
   );
@@ -172,7 +178,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
   async function submitManual(e: React.FormEvent) {
     e.preventDefault();
     if (!account) return;
-    const trimmed = sessionId.trim();
+    const trimmed = decodeURIComponent(sessionId.trim().replace(/\+/g, " "));
     if (trimmed.length < 31) {
       push("Вставьте корректную cookie sessionid (31+ символов)", "error");
       return;
@@ -183,6 +189,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
     try {
       const payload: AccountSessionUpdate = { session_id: trimmed };
       await api.accounts.updateSession(account.username, payload);
+      setSessionId(trimmed);
       const test = await api.accounts.testConnection(account.username);
       setConnectionResult(test);
       if (test.overall_ok) {

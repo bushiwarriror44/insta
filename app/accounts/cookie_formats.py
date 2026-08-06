@@ -7,7 +7,10 @@ from pathlib import Path
 from typing import Literal
 
 from app.accounts.playwright_session import playwright_state_path, save_playwright_state
-from app.accounts.session_cookie import MIN_SESSIONID_LEN, sessionid_from_cookies_array
+from app.accounts.session_cookie import (
+    normalize_sessionid,
+    sessionid_from_cookies_array,
+)
 from app.accounts.session_export import export_sessionid
 from app.accounts.session_manager import clear_session_file, session_path
 
@@ -45,6 +48,12 @@ def detect_import_format(data: object) -> ImportFormatDetect:
     return "unknown"
 
 
+def _is_instagram_cookie_domain(domain: str | None) -> bool:
+    if not isinstance(domain, str) or not domain.strip():
+        return True
+    return "instagram.com" in domain.lower()
+
+
 def normalize_dolphin_cookie(item: dict) -> dict:
     name = item.get("name")
     value = item.get("value")
@@ -56,9 +65,14 @@ def normalize_dolphin_cookie(item: dict) -> dict:
     path = item.get("path")
     if not isinstance(path, str) or not path.strip():
         path = "/"
+    cookie_value = value
+    if name == "sessionid":
+        decoded = normalize_sessionid(value)
+        if decoded is not None:
+            cookie_value = decoded
     out: dict = {
         "name": name,
-        "value": value,
+        "value": cookie_value,
         "domain": domain,
         "path": path,
         "secure": bool(item.get("secure", True)),
@@ -73,8 +87,19 @@ def normalize_dolphin_cookie(item: dict) -> dict:
     return out
 
 
+def filter_instagram_cookies(cookies: list) -> list:
+    """Keep only Instagram-domain cookies (drop Google/ads noise from Dolphin dumps)."""
+    ig = [
+        c
+        for c in cookies
+        if isinstance(c, dict) and _is_instagram_cookie_domain(c.get("domain"))
+    ]
+    return ig if ig else [c for c in cookies if isinstance(c, dict)]
+
+
 def cookies_array_to_playwright_state(cookies: list) -> dict:
-    normalized = [normalize_dolphin_cookie(c) for c in cookies if isinstance(c, dict)]
+    filtered = filter_instagram_cookies(cookies)
+    normalized = [normalize_dolphin_cookie(c) for c in filtered if isinstance(c, dict)]
     if not normalized:
         raise CookieFormatError("Список cookies пуст")
     return {"cookies": normalized, "origins": []}
@@ -182,6 +207,10 @@ def import_cookies_data(username: str, data: object) -> CookiesImportResult:
     session_id = sessionid_from_cookies_array(state["cookies"])
     if not session_id:
         raise CookieFormatError("В файле не найдена cookie sessionid (31+ символов)")
+    # Ensure Playwright state stores the decoded sessionid value.
+    for cookie in state["cookies"]:
+        if isinstance(cookie, dict) and cookie.get("name") == "sessionid":
+            cookie["value"] = session_id
 
     save_playwright_state(username, state)
     cleared = clear_session_file(username)

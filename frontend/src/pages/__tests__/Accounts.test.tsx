@@ -45,6 +45,16 @@ vi.mock("../../api/client", async () => {
   };
 });
 
+vi.mock("../../context/AuthContext", () => ({
+  useAuth: () => ({
+    state: { state: "open" as const },
+    login: vi.fn(),
+    logout: vi.fn(),
+    authRequired: false,
+  }),
+  AuthProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+
 const proxy: ProxyOut = {
   id: 1,
   label: "res-de-1",
@@ -122,7 +132,7 @@ describe("Accounts page", () => {
     const matches = screen.getAllByText("res-de-1");
     expect(matches.length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("203.0.113.1")).toBeInTheDocument();
-    const instagramLink = screen.getByRole("link", { name: /открыть instagram/i });
+    const instagramLink = screen.getByRole("link", { name: /профиль/i });
     expect(instagramLink).toHaveAttribute(
       "href",
       "https://www.instagram.com/alice/"
@@ -197,8 +207,37 @@ describe("Accounts page", () => {
     const updatedAccount = { ...account, has_session_id: true };
     apiMock.accounts.list
       .mockResolvedValueOnce([account])
-      .mockResolvedValueOnce([updatedAccount]);
+      .mockResolvedValueOnce([updatedAccount])
+      .mockResolvedValue([updatedAccount]);
     apiMock.accounts.updateSession.mockResolvedValue(updatedAccount);
+    apiMock.accounts.testConnection.mockResolvedValue({
+      username: "alice",
+      proxy_assigned: true,
+      proxy_label: "res-de-1",
+      proxy_health: {
+        ok: true,
+        ip: "1.2.3.4",
+        geo_country: "DE",
+        instagram_reachable: true,
+        geo_mismatch: false,
+      },
+      session_storage: {
+        has_session_id: true,
+        session_file_exists: false,
+        device_file_exists: true,
+        session_source: "database",
+      },
+      instagram_auth: {
+        ok: true,
+        method: "sessionid",
+        ig_username: "alice",
+        challenge: false,
+      },
+      overall_ok: true,
+      checked_at: "2026-06-29T10:00:00Z",
+      run_id: 11,
+      logs: [],
+    });
 
     renderAccounts();
     await screen.findByText("@alice");
@@ -218,6 +257,75 @@ describe("Accounts page", () => {
         session_id: sessionId,
       })
     );
+    await waitFor(() =>
+      expect(apiMock.accounts.testConnection).toHaveBeenCalledWith("alice")
+    );
+    // Modal stays open after save so the user can see verification result.
+    expect(screen.getByRole("heading", { name: /сессия · @alice/i })).toBeInTheDocument();
+  });
+
+  it("decodes URL-encoded sessionid before save", async () => {
+    const encoded =
+      "38945170646%3AG5p9NNhoGGVDGE%3A20%3AAYhWdcBsbiU0mVgtsM9jvb0aRWnNqazSIs__yXPUMw";
+    const decoded =
+      "38945170646:G5p9NNhoGGVDGE:20:AYhWdcBsbiU0mVgtsM9jvb0aRWnNqazSIs__yXPUMw";
+    apiMock.accounts.list.mockResolvedValue([account]);
+    apiMock.accounts.updateSession.mockResolvedValue({ ...account, has_session_id: true });
+    apiMock.accounts.testConnection.mockResolvedValue({
+      username: "alice",
+      proxy_assigned: true,
+      proxy_label: "res-de-1",
+      proxy_health: {
+        ok: true,
+        ip: "1.2.3.4",
+        geo_country: "DE",
+        instagram_reachable: true,
+        geo_mismatch: false,
+      },
+      session_storage: {
+        has_session_id: true,
+        session_file_exists: false,
+        device_file_exists: true,
+        session_source: "database",
+      },
+      instagram_auth: {
+        ok: false,
+        method: "sessionid",
+        error: "session_id недействителен или истёк",
+        error_code: "session_expired",
+        challenge: false,
+      },
+      overall_ok: false,
+      checked_at: "2026-06-29T10:00:00Z",
+      run_id: 12,
+      logs: [],
+    });
+
+    renderAccounts();
+    await screen.findByText("@alice");
+    fireEvent.click(screen.getByRole("button", { name: /сессия для alice/i }));
+    const heading = await screen.findByRole("heading", { name: /сессия · @alice/i });
+    const modal = heading.closest("div.card") as HTMLElement;
+    fireEvent.change(byLabel(/cookie sessionid/i, modal), {
+      target: { value: encoded },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /сохранить сессию/i }));
+
+    await waitFor(() =>
+      expect(apiMock.accounts.updateSession).toHaveBeenCalledWith("alice", {
+        session_id: decoded,
+      })
+    );
+  });
+
+  it("accepts .txt cookie files in session import", async () => {
+    renderAccounts();
+    await screen.findByText("@alice");
+    fireEvent.click(screen.getByRole("button", { name: /сессия для alice/i }));
+    const heading = await screen.findByRole("heading", { name: /сессия · @alice/i });
+    const modal = heading.closest("div.card") as HTMLElement;
+    const input = within(modal).getByLabelText(/импорт cookies из файла/i);
+    expect(input).toHaveAttribute("accept", expect.stringContaining(".txt"));
   });
 
   it("can export session from the session modal", async () => {
@@ -407,6 +515,67 @@ describe("Accounts page", () => {
     await waitFor(() =>
       expect(within(modal).getByText(/готов к автопостингу/i)).toBeInTheDocument()
     );
+  });
+
+  it("shows connection failure after test completes", async () => {
+    apiMock.diagnostics.list.mockResolvedValue([]);
+    apiMock.accounts.testConnection.mockResolvedValue({
+      username: "alice",
+      proxy_assigned: true,
+      proxy_label: "res-de-1",
+      proxy_health: {
+        ok: true,
+        ip: "203.0.113.1",
+        geo_country: "DE",
+        instagram_reachable: true,
+        instagram_login_reachable: true,
+        geo_mismatch: false,
+      },
+      session_storage: {
+        has_session_id: true,
+        session_file_exists: false,
+        device_file_exists: true,
+        session_source: "database",
+      },
+      instagram_auth: {
+        ok: false,
+        method: "sessionid",
+        ig_username: null,
+        error: "session_id недействителен или истёк",
+        error_code: "session_expired",
+        challenge: false,
+      },
+      overall_ok: false,
+      checked_at: "2026-06-29T10:00:00Z",
+      run_id: 35,
+      logs: [
+        {
+          ts: "2026-06-29T10:00:00Z",
+          level: "error",
+          step: "session_probe",
+          message: "session_id недействителен или истёк",
+        },
+      ],
+    });
+
+    renderAccounts();
+    await screen.findByText("@alice");
+    fireEvent.click(
+      screen.getByRole("button", { name: /^подключение для alice$/i })
+    );
+    const heading = await screen.findByRole("heading", {
+      name: /подключение · @alice/i,
+    });
+    const modal = heading.closest("div.card") as HTMLElement;
+    fireEvent.click(within(modal).getByRole("button", { name: /запустить проверку/i }));
+
+    await waitFor(() =>
+      expect(within(modal).getByText(/не готов к автопостингу/i)).toBeInTheDocument()
+    );
+    expect(
+      within(modal).getAllByText(/session_id недействителен или истёк/i).length
+    ).toBeGreaterThanOrEqual(1);
+    expect(within(modal).queryByText(/выполняется проверка/i)).not.toBeInTheDocument();
   });
 
   it("opens session setup modal when connection test reports missing session", async () => {
@@ -757,6 +926,10 @@ describe("Accounts page", () => {
         totp_seed: "JBSWY3DPEHPK3PXP",
         email: "a@b.test",
         email_password: "mail-secret",
+        login_identifier: null,
+        account_line: null,
+        backup_codes: null,
+        notes: null,
       })
     );
   });

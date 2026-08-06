@@ -18,6 +18,7 @@ from app.accounts.login_identifier import resolve_login_identifier
 from app.accounts.first_login_service import run_account_first_login
 from app.accounts.playwright_session import login_debug_screenshot_path, playwright_state_path
 from app.accounts.session_export import export_sessionid
+from app.accounts.session_cookie import normalize_sessionid
 from app.accounts.session_manager import (
     clear_session_file,
     ensure_fingerprint_and_proxy,
@@ -145,7 +146,7 @@ def create_account(payload: AccountIn, db: Session = Depends(get_db)) -> Account
     if payload.totp_seed is not None:
         account.totp_seed = payload.totp_seed.strip() or None
     if payload.session_id is not None:
-        account.session_id = payload.session_id.strip() or None
+        account.session_id = normalize_sessionid(payload.session_id)
         if account.session_id:
             clear_session_file(account.username)
     if payload.login_identifier is not None:
@@ -236,7 +237,13 @@ def update_account_session(
     if account is None:
         raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
 
-    account.session_id = payload.session_id.strip()
+    normalized = normalize_sessionid(payload.session_id)
+    if not normalized:
+        raise HTTPException(
+            status_code=400,
+            detail="Некорректная cookie sessionid (нужно 31+ символов после декодирования)",
+        )
+    account.session_id = normalized
     clear_session_file(account.username)
     db.commit()
     db.refresh(account)

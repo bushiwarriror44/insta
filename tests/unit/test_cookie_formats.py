@@ -10,11 +10,13 @@ from app.accounts.cookie_formats import (
     cookies_array_to_playwright_state,
     detect_import_format,
     export_dolphin_cookies,
+    filter_instagram_cookies,
     import_cookies_data,
     instagrapi_session_to_dolphin_cookies,
     sessionid_from_cookies_array,
 )
 from app.accounts.playwright_session import playwright_state_path
+from app.accounts.session_cookie import normalize_sessionid
 from app.accounts.session_manager import session_path
 
 
@@ -33,12 +35,51 @@ def test_detect_import_format_unknown():
     assert detect_import_format([]) == "unknown"
 
 
+def test_normalize_sessionid_decodes_percent_3a():
+    raw = "38945170646%3AG5p9NNhoGGVDGE%3A20%3AAYhWdcBsbiU0mVgtsM9jvb0aRWnNqazSIs__yXPUMw"
+    out = normalize_sessionid(raw)
+    assert out is not None
+    assert "%3A" not in out
+    assert out.count(":") == 3
+    assert out.startswith("38945170646:")
+
+
+def test_normalize_sessionid_rejects_short():
+    assert normalize_sessionid("short") is None
+    assert normalize_sessionid(None) is None
+
+
 def test_sessionid_from_cookies_array():
     cookies = [
         {"name": "csrftoken", "value": "x"},
         {"name": "sessionid", "value": "b" * 40},
     ]
     assert sessionid_from_cookies_array(cookies) == "b" * 40
+
+
+def test_sessionid_from_cookies_array_decodes_url():
+    cookies = [
+        {
+            "name": "sessionid",
+            "value": "38945170646%3AG5p9NNhoGGVDGE%3A20%3AAYhWdcBsbiU0mVgtsM9jvb0aRWnNqazSIs__yXPUMw",
+            "domain": ".instagram.com",
+        }
+    ]
+    sid = sessionid_from_cookies_array(cookies)
+    assert sid is not None
+    assert ":" in sid
+    assert "%3A" not in sid
+
+
+def test_filter_instagram_cookies_drops_noise():
+    cookies = [
+        {"name": "AEC", "value": "x", "domain": ".google.com"},
+        {"name": "sessionid", "value": "s" * 40, "domain": ".instagram.com"},
+        {"name": "mid", "value": "m", "domain": ".instagram.com"},
+    ]
+    filtered = filter_instagram_cookies(cookies)
+    assert len(filtered) == 2
+    assert all("instagram.com" in c["domain"] for c in filtered)
 
 
 def test_instagrapi_session_to_dolphin_cookies():
@@ -112,6 +153,23 @@ def test_import_cookies_data_dolphin(app_env):
     assert result.format == "dolphin"
     assert result.session_id == sid
     assert playwright_state_path("dolphinuser").exists()
+
+
+def test_import_cookies_data_decodes_and_filters_noise(app_env):
+    encoded = "38945170646%3AG5p9NNhoGGVDGE%3A20%3AAYhWdcBsbiU0mVgtsM9jvb0aRWnNqazSIs__yXPUMw"
+    data = [
+        {"name": "AEC", "value": "noise", "domain": ".google.com"},
+        {"name": "sessionid", "value": encoded, "domain": ".instagram.com"},
+        {"name": "csrftoken", "value": "tok", "domain": ".instagram.com"},
+    ]
+    result = import_cookies_data("decodeuser", data)
+    assert "%3A" not in result.session_id
+    assert result.session_id.startswith("38945170646:")
+    state = json.loads(playwright_state_path("decodeuser").read_text(encoding="utf-8"))
+    domains = {c["domain"] for c in state["cookies"]}
+    assert ".google.com" not in domains
+    sid_cookie = next(c for c in state["cookies"] if c["name"] == "sessionid")
+    assert sid_cookie["value"] == result.session_id
 
 
 def test_import_cookies_data_playwright_state(app_env):

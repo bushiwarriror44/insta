@@ -41,6 +41,7 @@ from app.accounts.device_factory import (
     rotate_session_uuids,
     save_fingerprint,
 )
+from app.accounts.session_cookie import normalize_sessionid
 from app.config import settings
 from app.logging_setup import get_logger
 
@@ -228,7 +229,7 @@ def _try_login_by_sessionid(
     log,
 ) -> bool:
     """Attempt ``login_by_sessionid``; return True if session validates for *expected_username*."""
-    session_id = (session_id or "").strip()
+    session_id = normalize_sessionid(session_id) or ""
     if len(session_id) <= 30:
         log.warning("auth.session_id_too_short")
         return False
@@ -283,7 +284,7 @@ def login_or_resume(
     """
     log = logger.bind(username=username)
     proxy_url = (proxy_url or "").strip()
-    stripped_sid = (session_id or "").strip()
+    stripped_sid = normalize_sessionid(session_id) or ""
     login_id = (login_identifier or username).strip()
 
     def _fresh_client() -> Client:
@@ -406,7 +407,7 @@ def probe_session_auth(
     """Validate an existing session without password fallback (admin diagnostics)."""
     log = logger.bind(username=username)
     proxy_url = (proxy_url or "").strip()
-    stripped_sid = (session_id or "").strip()
+    stripped_sid = normalize_sessionid(session_id) or ""
 
     def _fresh_client() -> Client:
         return build_client(

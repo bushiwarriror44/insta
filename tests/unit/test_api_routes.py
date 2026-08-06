@@ -286,6 +286,26 @@ def test_accounts_update_session_success(api_client):
     assert "session_id" not in body
 
 
+def test_accounts_update_session_decodes_url_encoded(api_client, app_env):
+    from app.db import Account, SessionLocal
+
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-enc", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/accounts",
+        json={"username": "encuser", "password": "secret", "proxy_label": "px-enc"},
+    )
+    encoded = "38945170646%3AG5p9NNhoGGVDGE%3A20%3AAYhWdcBsbiU0mVgtsM9jvb0aRWnNqazSIs__yXPUMw"
+    res = api_client.put("/api/accounts/encuser/session", json={"session_id": encoded})
+    assert res.status_code == 200, res.text
+    with SessionLocal() as db:
+        row = db.query(Account).filter_by(username="encuser").one()
+        assert "%3A" not in (row.session_id or "")
+        assert (row.session_id or "").startswith("38945170646:")
+
+
 def test_accounts_update_session_rejects_missing_account(api_client):
     res = api_client.put(
         "/api/accounts/missing/session",
@@ -520,6 +540,31 @@ def test_accounts_import_cookies_dolphin(api_client, app_env):
     listed = api_client.get("/api/accounts").json()
     row = next(a for a in listed if a["username"] == "impuser")
     assert row["has_session_id"] is True
+
+
+def test_accounts_import_cookies_txt_with_encoded_sessionid(api_client, app_env):
+    import json
+
+    from app.db import Account, SessionLocal
+
+    _create_account(api_client, "txtimp", "px-txtimp")
+    encoded = "38945170646%3AG5p9NNhoGGVDGE%3A20%3AAYhWdcBsbiU0mVgtsM9jvb0aRWnNqazSIs__yXPUMw"
+    payload = json.dumps(
+        [
+            {"name": "AEC", "value": "x", "domain": ".google.com"},
+            {"name": "sessionid", "value": encoded, "domain": ".instagram.com"},
+        ]
+    ).encode("utf-8")
+    res = api_client.post(
+        "/api/accounts/txtimp/cookies/import",
+        files={"file": ("dolphin-anty-cookies-profile2.txt", io.BytesIO(payload), "text/plain")},
+    )
+    assert res.status_code == 200, res.text
+    with SessionLocal() as db:
+        row = db.query(Account).filter_by(username="txtimp").one()
+        assert row.session_id is not None
+        assert "%3A" not in row.session_id
+        assert row.session_id.startswith("38945170646:")
 
 
 def test_accounts_import_cookies_bad_format(api_client):

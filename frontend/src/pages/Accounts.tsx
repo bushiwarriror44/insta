@@ -156,8 +156,15 @@ export function Accounts() {
     push("Прокси аккаунта обновлён", "success");
   };
   const onImportedSession = async () => {
-    setSessionAccount(null);
+    // Keep SessionModal open so the user can see verify result; only refresh list.
     await reload();
+    if (sessionAccount) {
+      const refreshed = await api.accounts.list().catch(() => null);
+      if (refreshed) {
+        const next = refreshed.find((a) => a.username === sessionAccount.username);
+        if (next) setSessionAccount(next);
+      }
+    }
     push("Сессия сохранена", "success");
   };
   const onSessionSetupCompleted = async () => {
@@ -1055,6 +1062,7 @@ function ConnectionModal({
   const [result, setResult] = useState<AccountConnectionTestOut | null>(null);
   const [history, setHistory] = useState<DiagnosticRunOut[]>([]);
   const [selectedHistoryId, setSelectedHistoryId] = useState<number | "current">("current");
+  const [historyTick, setHistoryTick] = useState(0);
 
   useEffect(() => {
     if (!open) return;
@@ -1079,12 +1087,13 @@ function ConnectionModal({
     return () => {
       cancelled = true;
     };
-  }, [open, connectionUsername, result?.run_id]);
+  }, [open, connectionUsername, result?.run_id, historyTick]);
 
   async function runTest() {
     if (!account) return;
     setRunning(true);
     setResult(null);
+    setSelectedHistoryId("current");
     try {
       const data = await api.accounts.testConnection(account.username);
       setResult(data);
@@ -1101,10 +1110,33 @@ function ConnectionModal({
       );
     } catch (err) {
       push((err as Error).message, "error");
+      setHistoryTick((n) => n + 1);
     } finally {
       setRunning(false);
     }
   }
+
+  const latestFinished = history.find((h) => h.status !== "running") ?? null;
+  const selectedHistory =
+    selectedHistoryId === "current"
+      ? null
+      : history.find((h) => h.id === selectedHistoryId) ?? null;
+  const viewingHistory = selectedHistory != null && !running;
+
+  const displayLogs =
+    selectedHistoryId === "current"
+      ? result?.logs ?? (running ? [] : latestFinished?.logs ?? [])
+      : selectedHistory?.logs ?? [];
+
+  const historyOverall: StepVisual | null = viewingHistory
+    ? selectedHistory.status === "ok"
+      ? "ok"
+      : selectedHistory.status === "warn"
+        ? "warn"
+        : selectedHistory.status === "fail"
+          ? "fail"
+          : "running"
+    : null;
 
   const step1: StepVisual = running
     ? "running"
@@ -1112,9 +1144,15 @@ function ConnectionModal({
       ? result.proxy_assigned
         ? "ok"
         : "fail"
-      : account?.proxy_label
-        ? "ok"
-        : "pending";
+      : viewingHistory && historyOverall
+        ? historyOverall === "running"
+          ? "pending"
+          : account?.proxy_label
+            ? "ok"
+            : "fail"
+        : account?.proxy_label
+          ? "ok"
+          : "pending";
 
   const step2: StepVisual = running
     ? "running"
@@ -1124,7 +1162,11 @@ function ConnectionModal({
           ? "warn"
           : "ok"
         : "fail"
-      : "pending";
+      : viewingHistory && historyOverall && historyOverall !== "running"
+        ? historyOverall === "ok"
+          ? "ok"
+          : "fail"
+        : "pending";
 
   const step3: StepVisual = running
     ? "running"
@@ -1132,7 +1174,11 @@ function ConnectionModal({
       ? result.proxy_health.instagram_reachable
         ? "ok"
         : "fail"
-      : "pending";
+      : viewingHistory && historyOverall && historyOverall !== "running"
+        ? historyOverall === "ok"
+          ? "ok"
+          : "fail"
+        : "pending";
 
   const step4: StepVisual = running
     ? "running"
@@ -1142,10 +1188,34 @@ function ConnectionModal({
         : result.instagram_auth.challenge
           ? "warn"
           : "fail"
-      : "pending";
+      : viewingHistory && historyOverall
+        ? historyOverall
+        : "pending";
 
   const missingSession =
     result?.instagram_auth != null && isSessionMissing(result.instagram_auth);
+
+  const statusBanner =
+    result != null && selectedHistoryId === "current"
+      ? {
+          ok: result.overall_ok,
+          title: result.overall_ok ? "Готов к автопостингу" : "Не готов к автопостингу",
+          detail: !result.overall_ok ? result.instagram_auth.error : null,
+          checkedAt: result.checked_at,
+        }
+      : viewingHistory
+        ? {
+            ok: selectedHistory.status === "ok",
+            title:
+              selectedHistory.status === "ok"
+                ? "Проверка пройдена (из истории)"
+                : selectedHistory.status === "running"
+                  ? "Проверка в истории ещё помечена как running"
+                  : "Проверка не пройдена (из истории)",
+            detail: selectedHistory.summary,
+            checkedAt: selectedHistory.finished_at ?? selectedHistory.created_at,
+          }
+        : null;
 
   return (
     <Modal
@@ -1190,6 +1260,9 @@ function ConnectionModal({
               <span className="text-slate-500">{sessionSourceLabel(account.session_source)}</span>
             ) : null}
           </div>
+          <p className="text-xs text-slate-500">
+            Проверка сессии Instagram может занять 1–2 минуты — не закрывайте окно.
+          </p>
         </div>
 
         <div className="space-y-2">
@@ -1215,7 +1288,12 @@ function ConnectionModal({
                   ) : null}
                 </span>
               ) : (
-                result?.proxy_health.error ?? (running ? "Проверка прокси…" : "Ещё не проверено")
+                result?.proxy_health.error ??
+                (running
+                  ? "Проверка прокси…"
+                  : viewingHistory
+                    ? selectedHistory.summary ?? "См. лог истории"
+                    : "Ещё не проверено")
               )
             }
           />
@@ -1229,7 +1307,9 @@ function ConnectionModal({
                   : "Прокси не может достучаться до Instagram"
                 : running
                   ? "Проверка Instagram…"
-                  : "Ещё не проверено"
+                  : viewingHistory
+                    ? selectedHistory.summary ?? "См. лог истории"
+                    : "Ещё не проверено"
             }
           />
           <ConnectionStepRow
@@ -1245,31 +1325,31 @@ function ConnectionModal({
                 </span>
               ) : (
                 result?.instagram_auth.error ??
-                (running ? "Проверка сессии…" : "Ещё не проверено")
+                (running
+                  ? "Проверка сессии… (до 1–2 мин)"
+                  : viewingHistory
+                    ? selectedHistory.summary ?? "См. лог истории"
+                    : "Ещё не проверено")
               )
             }
           />
         </div>
 
-        {result ? (
+        {statusBanner ? (
           <div
             className={`rounded-xl border p-3 text-sm ${
-              result.overall_ok
+              statusBanner.ok
                 ? "border-emerald-800/60 bg-emerald-950/30 text-emerald-200"
                 : "border-rose-800/60 bg-rose-950/30 text-rose-200"
             }`}
           >
-            <div className="font-medium">
-              {result.overall_ok
-                ? "Готов к автопостингу"
-                : "Не готов к автопостингу"}
-            </div>
-            {!result.overall_ok && result.instagram_auth.error ? (
-              <div className="mt-1 text-xs opacity-90">{result.instagram_auth.error}</div>
+            <div className="font-medium">{statusBanner.title}</div>
+            {statusBanner.detail ? (
+              <div className="mt-1 text-xs opacity-90">{statusBanner.detail}</div>
             ) : null}
-            {result.checked_at ? (
+            {statusBanner.checkedAt ? (
               <div className="mt-1 text-xs opacity-70">
-                Проверено {new Date(result.checked_at).toLocaleString()}
+                Проверено {new Date(statusBanner.checkedAt).toLocaleString()}
               </div>
             ) : null}
           </div>
@@ -1311,12 +1391,12 @@ function ConnectionModal({
             ) : null}
           </div>
           <DiagnosticLogPanel
-            lines={
-              selectedHistoryId === "current"
-                ? result?.logs ?? []
-                : history.find((h) => h.id === selectedHistoryId)?.logs ?? []
+            lines={displayLogs}
+            emptyLabel={
+              running
+                ? "Выполняется проверка… (может занять 1–2 минуты)"
+                : "Запустите проверку, чтобы увидеть пошаговые логи."
             }
-            emptyLabel={running ? "Выполняется проверка…" : "Запустите проверку, чтобы увидеть пошаговые логи."}
             maxHeightClass="max-h-64"
           />
         </div>
@@ -1404,7 +1484,8 @@ function SessionModal({
   async function submitImport(e: React.FormEvent) {
     e.preventDefault();
     if (!account) return;
-    const trimmed = sessionId.trim();
+    // Decode %3A → : (Dolphin / browser often export URL-encoded sessionid).
+    const trimmed = decodeURIComponent(sessionId.trim().replace(/\+/g, " "));
     if (trimmed.length < 31) {
       push("Вставьте корректную cookie sessionid (31+ символов)", "error");
       return;
@@ -1413,7 +1494,9 @@ function SessionModal({
     try {
       const payload: AccountSessionUpdate = { session_id: trimmed };
       await api.accounts.updateSession(account.username, payload);
+      setSessionId(trimmed);
       await onSaved();
+      await verifySession();
     } catch (err) {
       push((err as Error).message, "error");
     } finally {
@@ -1622,16 +1705,19 @@ function SessionModal({
             />
             <p className="text-xs text-slate-500 mt-1">
               Импортируйте после подтверждения challenge в Dolphin на том же прокси.
+              Если в значении есть <span className="font-mono">%3A</span>, оно будет
+              декодировано в <span className="font-mono">:</span> автоматически.
             </p>
           </div>
           <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 space-y-3">
             <div className="text-sm text-slate-400">Импорт из файла</div>
             <p className="text-xs text-slate-500">
-              Поддерживаются JSON cookies Dolphin и Playwright state.json
+              JSON cookies Dolphin (.json / .txt) или Playwright state.json. Лишние
+              cookies (Google, реклама) отфильтруются — нужен sessionid Instagram.
             </p>
             <input
               type="file"
-              accept=".json,application/json"
+              accept=".json,.txt,application/json,text/plain"
               aria-label="Импорт cookies из файла"
               className="block w-full text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:bg-slate-800 file:text-slate-200"
               onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
