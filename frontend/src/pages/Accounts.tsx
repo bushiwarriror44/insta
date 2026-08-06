@@ -1084,6 +1084,7 @@ function ConnectionModal({
   const [running, setRunning] = useState(false);
   const [minting, setMinting] = useState(false);
   const [result, setResult] = useState<AccountConnectionTestOut | null>(null);
+  const [lastCheckMode, setLastCheckMode] = useState<"cookies" | "mobile" | null>(null);
   const [history, setHistory] = useState<DiagnosticRunOut[]>([]);
   const [selectedHistoryId, setSelectedHistoryId] = useState<number | "current">("current");
   const [historyTick, setHistoryTick] = useState(0);
@@ -1093,6 +1094,7 @@ function ConnectionModal({
     setResult(null);
     setRunning(false);
     setMinting(false);
+    setLastCheckMode(null);
     setSelectedHistoryId("current");
     setHistory([]);
   }, [open, account?.username]);
@@ -1118,9 +1120,42 @@ function ConnectionModal({
     if (!account) return;
     setRunning(true);
     setResult(null);
+    setLastCheckMode("cookies");
     setSelectedHistoryId("current");
     try {
-      const data = await api.accounts.testConnection(account.username);
+      const data = await api.accounts.testConnection(account.username, {
+        probeMobile: false,
+      });
+      setResult(data);
+      onResult?.(account, data);
+      if (!data.instagram_auth.ok && isSessionMissing(data.instagram_auth)) {
+        onOpenSessionSetup(account);
+        return;
+      }
+      push(
+        data.overall_ok
+          ? `@${account.username}: cookies установлены`
+          : `@${account.username}: обнаружены проблемы с подключением`,
+        data.overall_ok ? "success" : "error"
+      );
+    } catch (err) {
+      push((err as Error).message, "error");
+      setHistoryTick((n) => n + 1);
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  async function runMobileProbe() {
+    if (!account) return;
+    setRunning(true);
+    setResult(null);
+    setLastCheckMode("mobile");
+    setSelectedHistoryId("current");
+    try {
+      const data = await api.accounts.testConnection(account.username, {
+        probeMobile: true,
+      });
       setResult(data);
       onResult?.(account, data);
       if (!data.instagram_auth.ok && isSessionMissing(data.instagram_auth)) {
@@ -1130,7 +1165,7 @@ function ConnectionModal({
       push(
         data.overall_ok
           ? `@${account.username}: готов к автопостингу`
-          : `@${account.username}: обнаружены проблемы с подключением`,
+          : `@${account.username}: mobile API отклонил сессию`,
         data.overall_ok ? "success" : "error"
       );
     } catch (err) {
@@ -1157,14 +1192,17 @@ function ConnectionModal({
         setHistoryTick((n) => n + 1);
         return;
       }
-      push("Mobile-сессия создана — проверяем подключение…", "success");
-      const data = await api.accounts.testConnection(account.username);
+      push("Mobile-сессия создана — проверяем mobile API…", "success");
+      setLastCheckMode("mobile");
+      const data = await api.accounts.testConnection(account.username, {
+        probeMobile: true,
+      });
       setResult(data);
       onResult?.(account, data);
       push(
         data.overall_ok
           ? `@${account.username}: готов к автопостингу`
-          : `@${account.username}: сессия создана, но проверка ещё не прошла`,
+          : `@${account.username}: сессия создана, но mobile-проверка ещё не прошла`,
         data.overall_ok ? "success" : "error"
       );
     } catch (err) {
@@ -1255,16 +1293,32 @@ function ConnectionModal({
     result?.instagram_auth != null && isSessionMissing(result.instagram_auth);
 
   const sessionExpired =
+    lastCheckMode === "mobile" &&
     result?.instagram_auth != null &&
     !result.instagram_auth.ok &&
     isSessionExpired(result.instagram_auth);
+
+  const cookiesOnlyOk =
+    lastCheckMode === "cookies" && result != null && result.overall_ok;
+  const mobileOk =
+    lastCheckMode === "mobile" && result != null && result.overall_ok;
 
   const statusBanner =
     result != null && selectedHistoryId === "current"
       ? {
           ok: result.overall_ok,
-          title: result.overall_ok ? "Готов к автопостингу" : "Не готов к автопостингу",
-          detail: !result.overall_ok ? result.instagram_auth.error : null,
+          title: result.overall_ok
+            ? cookiesOnlyOk
+              ? "Cookies установлены"
+              : mobileOk
+                ? "Готов к автопостингу"
+                : "Подключение OK"
+            : "Не готов к автопостингу",
+          detail: !result.overall_ok
+            ? result.instagram_auth.error
+            : cookiesOnlyOk
+              ? "Mobile API не проверялась — для автопостинга нажмите «Проверить mobile API»"
+              : null,
           checkedAt: result.checked_at,
         }
       : viewingHistory
@@ -1293,12 +1347,22 @@ function ConnectionModal({
           </button>
           <button
             type="button"
+            className="btn-ghost"
+            disabled={running || minting || !account}
+            onClick={() => void runMobileProbe()}
+            title="Может инвалидировать web-cookie из Dolphin"
+          >
+            <ShieldOff size={16} className={running && lastCheckMode === "mobile" ? "animate-pulse" : ""} />
+            {running && lastCheckMode === "mobile" ? "Mobile…" : "Проверить mobile API"}
+          </button>
+          <button
+            type="button"
             className="btn-primary"
             disabled={running || minting || !account}
             onClick={runTest}
           >
-            <RefreshCw size={16} className={running ? "animate-spin" : ""} />
-            {running ? "Проверка…" : "Запустить проверку"}
+            <RefreshCw size={16} className={running && lastCheckMode === "cookies" ? "animate-spin" : ""} />
+            {running && lastCheckMode === "cookies" ? "Проверка…" : "Запустить проверку"}
           </button>
         </>
       }
@@ -1325,7 +1389,8 @@ function ConnectionModal({
             ) : null}
           </div>
           <p className="text-xs text-slate-500">
-            Проверка сессии Instagram может занять 1–2 минуты — не закрывайте окно.
+            «Запустить проверку» смотрит прокси и наличие cookies (без mobile API).
+            «Проверить mobile API» нужно только для автопостинга и может сжечь web-cookie.
           </p>
         </div>
 
@@ -1379,16 +1444,22 @@ function ConnectionModal({
           <ConnectionStepRow
             label={
               result?.instagram_auth.ok
-                ? "4. Сессия действительна"
+                ? lastCheckMode === "cookies"
+                  ? "4. Cookies установлены"
+                  : "4. Сессия действительна"
                 : result
-                  ? "4. Сессия недействительна"
-                  : "4. Проверка сессии"
+                  ? lastCheckMode === "mobile"
+                    ? "4. Сессия недействительна"
+                    : "4. Cookies не найдены"
+                  : "4. Cookies / сессия"
             }
             state={step4}
             detail={
               result?.instagram_auth.ok ? (
                 <span>
-                  Аутентификация через {result.instagram_auth.method}
+                  {lastCheckMode === "cookies"
+                    ? `Cookie в хранилище (${result.instagram_auth.method})`
+                    : `Аутентификация через ${result.instagram_auth.method}`}
                   {result.instagram_auth.ig_username
                     ? ` · @${result.instagram_auth.ig_username}`
                     : ""}
@@ -1396,14 +1467,15 @@ function ConnectionModal({
               ) : (
                 result?.instagram_auth.error ??
                 (running
-                  ? "Проверка сессии… (до 1–2 мин)"
+                  ? lastCheckMode === "mobile"
+                    ? "Проверка сессии… (до 1–2 мин)"
+                    : "Проверка хранилища…"
                   : viewingHistory
                     ? selectedHistory.summary ?? "См. лог истории"
                     : "Ещё не проверено")
               )
             }
-          />
-        </div>
+          />        </div>
 
         {statusBanner ? (
           <div
@@ -1473,7 +1545,9 @@ function ConnectionModal({
             lines={displayLogs}
             emptyLabel={
               running
-                ? "Выполняется проверка… (может занять 1–2 минуты)"
+                ? lastCheckMode === "mobile"
+                  ? "Выполняется mobile-проверка… (может занять 1–2 минуты)"
+                  : "Выполняется проверка cookies и прокси…"
                 : "Запустите проверку, чтобы увидеть пошаговые логи."
             }
             maxHeightClass="max-h-64"
@@ -1618,7 +1692,9 @@ function SessionModal({
     setVerifying(true);
     setVerifyResult(null);
     try {
-      const data = await api.accounts.testConnection(account.username);
+      const data = await api.accounts.testConnection(account.username, {
+        probeMobile: true,
+      });
       setVerifyResult(data);
       push(
         data.instagram_auth.ok ? "Сессия действительна" : "Проверка сессии не пройдена",

@@ -465,7 +465,7 @@ describe("Accounts page", () => {
     expect(within(modal).getByText(/доступен/i)).toBeInTheDocument();
   });
 
-  it("opens connection modal and runs full connection check", async () => {
+  it("opens connection modal and runs cookies-only connection check", async () => {
     apiMock.accounts.testConnection.mockResolvedValue({
       username: "alice",
       proxy_assigned: true,
@@ -486,7 +486,7 @@ describe("Accounts page", () => {
       instagram_auth: {
         ok: true,
         method: "session_file",
-        ig_username: "alice",
+        ig_username: null,
         challenge: false,
       },
       overall_ok: true,
@@ -508,7 +508,61 @@ describe("Accounts page", () => {
     fireEvent.click(within(modal).getByRole("button", { name: /запустить проверку/i }));
 
     await waitFor(() =>
-      expect(apiMock.accounts.testConnection).toHaveBeenCalledWith("alice")
+      expect(apiMock.accounts.testConnection).toHaveBeenCalledWith("alice", {
+        probeMobile: false,
+      })
+    );
+    await waitFor(() =>
+      expect(within(modal).getByText(/4\. cookies установлены/i)).toBeInTheDocument()
+    );
+    expect(within(modal).getAllByText(/cookies установлены/i).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("runs mobile API probe from connection modal", async () => {
+    apiMock.accounts.testConnection.mockResolvedValue({
+      username: "alice",
+      proxy_assigned: true,
+      proxy_label: "res-de-1",
+      proxy_health: {
+        ok: true,
+        ip: "203.0.113.1",
+        geo_country: "DE",
+        instagram_reachable: true,
+        geo_mismatch: false,
+      },
+      session_storage: {
+        has_session_id: true,
+        session_file_exists: false,
+        device_file_exists: true,
+        session_source: "database",
+      },
+      instagram_auth: {
+        ok: true,
+        method: "sessionid",
+        ig_username: "alice",
+        challenge: false,
+      },
+      overall_ok: true,
+      checked_at: "2026-06-29T10:00:00Z",
+      run_id: 2,
+      logs: [],
+    });
+
+    renderAccounts();
+    await screen.findByText("@alice");
+    fireEvent.click(
+      screen.getByRole("button", { name: /^подключение для alice$/i })
+    );
+    const heading = await screen.findByRole("heading", {
+      name: /подключение · @alice/i,
+    });
+    const modal = heading.closest("div.card") as HTMLElement;
+    fireEvent.click(within(modal).getByRole("button", { name: /проверить mobile api/i }));
+
+    await waitFor(() =>
+      expect(apiMock.accounts.testConnection).toHaveBeenCalledWith("alice", {
+        probeMobile: true,
+      })
     );
     await waitFor(() =>
       expect(within(modal).getByText(/готов к автопостингу/i)).toBeInTheDocument()
@@ -566,7 +620,7 @@ describe("Accounts page", () => {
       name: /подключение · @alice/i,
     });
     const modal = heading.closest("div.card") as HTMLElement;
-    fireEvent.click(within(modal).getByRole("button", { name: /запустить проверку/i }));
+    fireEvent.click(within(modal).getByRole("button", { name: /проверить mobile api/i }));
 
     await waitFor(() =>
       expect(within(modal).getByText(/не готов к автопостингу/i)).toBeInTheDocument()
@@ -665,7 +719,7 @@ describe("Accounts page", () => {
       name: /подключение · @alice/i,
     });
     const modal = heading.closest("div.card") as HTMLElement;
-    fireEvent.click(within(modal).getByRole("button", { name: /запустить проверку/i }));
+    fireEvent.click(within(modal).getByRole("button", { name: /проверить mobile api/i }));
 
     await waitFor(() =>
       expect(
@@ -682,7 +736,9 @@ describe("Accounts page", () => {
     await waitFor(() =>
       expect(within(modal).getByText(/готов к автопостингу/i)).toBeInTheDocument()
     );
-    expect(apiMock.accounts.testConnection).toHaveBeenCalledTimes(2);
+    expect(apiMock.accounts.testConnection).toHaveBeenCalledWith("alice", {
+      probeMobile: true,
+    });
   });
 
   it("opens session setup modal when connection test reports missing session", async () => {
@@ -728,7 +784,9 @@ describe("Accounts page", () => {
     fireEvent.click(within(connModal).getByRole("button", { name: /запустить проверку/i }));
 
     await waitFor(() =>
-      expect(apiMock.accounts.testConnection).toHaveBeenCalledWith("alice")
+      expect(apiMock.accounts.testConnection).toHaveBeenCalledWith("alice", {
+        probeMobile: false,
+      })
     );
     await waitFor(() =>
       expect(

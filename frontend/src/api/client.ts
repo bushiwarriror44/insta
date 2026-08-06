@@ -248,10 +248,21 @@ export const api = {
         `/api/accounts/${encodeURIComponent(username)}/resume`,
         { method: "POST" }
       ),
-    testConnection: (username: string) =>
+    testConnection: (
+      username: string,
+      opts?: { probeMobile?: boolean }
+    ) =>
       request<AccountConnectionTestOut>(
         `/api/accounts/${encodeURIComponent(username)}/test-connection`,
-        { method: "POST" }
+        {
+          method: "POST",
+          query:
+            opts?.probeMobile === true
+              ? { probe_mobile: "true" }
+              : opts?.probeMobile === false
+                ? { probe_mobile: "false" }
+                : undefined,
+        }
       ),
     firstLogin: (username: string, opts?: { loginSurface?: import("./types").LoginSurface }) =>
       request<FirstLoginOut>(

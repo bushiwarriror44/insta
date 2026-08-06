@@ -501,7 +501,9 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
                 if (!account) return;
                 setManualBusy(true);
                 try {
-                  const test = await api.accounts.testConnection(account.username);
+                  const test = await api.accounts.testConnection(account.username, {
+                    probeMobile: false,
+                  });
                   setConnectionResult(test);
                 } catch (err) {
                   push((err as Error).message, "error");

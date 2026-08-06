@@ -422,11 +422,15 @@ def resume_account(username: str, db: Session = Depends(get_db)) -> AccountOut:
 
 
 @router.post("/{username}/test-connection", response_model=AccountConnectionTestOut)
-def test_account_connection(username: str, db: Session = Depends(get_db)) -> AccountConnectionTestOut:
+def test_account_connection(
+    username: str,
+    probe_mobile: bool = Query(default=False),
+    db: Session = Depends(get_db),
+) -> AccountConnectionTestOut:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
         raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
-    return run_account_connection_test(account, db)
+    return run_account_connection_test(account, db, probe_mobile=probe_mobile)
 
 
 @router.post("/{username}/first-login", response_model=FirstLoginOut)

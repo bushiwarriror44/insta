@@ -62,14 +62,19 @@ def test_connection_test_404_via_api(api_client):
     assert res.status_code == 404
 
 
-def test_connection_test_happy_path(api_client, db_session, monkeypatch):
+def test_connection_test_happy_path_cookies_only(api_client, db_session, monkeypatch):
     api_client.post(
         "/api/proxies",
         json={"label": "px-conn", "url": "http://u:p@h:1", "skip_health_check": True},
     )
     api_client.post(
         "/api/accounts",
-        json={"username": "happy", "password": "secret", "proxy_label": "px-conn"},
+        json={
+            "username": "happy",
+            "password": "secret",
+            "proxy_label": "px-conn",
+            "session_id": "h" * 40,
+        },
     )
     snapshot = HealthSnapshot(
         ok=True,
@@ -84,6 +89,48 @@ def test_connection_test_happy_path(api_client, db_session, monkeypatch):
         "app.accounts.connection_test.health_check_record",
         lambda db, proxy: (True, snapshot, None),
     )
+    probe = MagicMock()
+    monkeypatch.setattr("app.accounts.connection_test.probe_session_auth", probe)
+
+    res = api_client.post("/api/accounts/happy/test-connection")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["overall_ok"] is True
+    assert body["proxy_health"]["ok"] is True
+    assert body["instagram_auth"]["ok"] is True
+    assert body["instagram_auth"]["method"] == "sessionid"
+    probe.assert_not_called()
+    assert any(
+        "Mobile API-проверка пропущена" in line["message"] for line in body["logs"]
+    )
+
+
+def test_connection_test_mobile_probe_path(api_client, monkeypatch):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-mob", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/accounts",
+        json={
+            "username": "mobprobe",
+            "password": "secret",
+            "proxy_label": "px-mob",
+            "session_id": "m" * 40,
+        },
+    )
+    snapshot = HealthSnapshot(
+        ok=True,
+        ip="1.2.3.4",
+        country="US",
+        instagram_reachable=True,
+        instagram_login_reachable=True,
+        checked_at=datetime.now(timezone.utc),
+    )
+    monkeypatch.setattr(
+        "app.accounts.connection_test.health_check_record",
+        lambda db, proxy: (True, snapshot, None),
+    )
     monkeypatch.setattr(
         "app.accounts.connection_test.ensure_fingerprint_and_proxy",
         lambda username, country="US", **kwargs: MagicMock(),
@@ -93,20 +140,18 @@ def test_connection_test_happy_path(api_client, db_session, monkeypatch):
         lambda **kwargs: ProbeSessionResult(
             ok=True,
             method="sessionid",
-            ig_username="happy",
+            ig_username="mobprobe",
         ),
     )
 
-    res = api_client.post("/api/accounts/happy/test-connection")
+    res = api_client.post(
+        "/api/accounts/mobprobe/test-connection",
+        params={"probe_mobile": "true"},
+    )
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["overall_ok"] is True
-    assert body["proxy_health"]["ok"] is True
-    assert body["proxy_health"]["instagram_reachable"] is True
-    assert body["instagram_auth"]["ok"] is True
-    assert body["instagram_auth"]["method"] == "sessionid"
-    assert body["run_id"] > 0
-    assert len(body["logs"]) >= 1
+    assert body["instagram_auth"]["ig_username"] == "mobprobe"
 
 
 def test_connection_test_proxy_unhealthy_skips_auth(api_client, monkeypatch):
@@ -165,13 +210,25 @@ def test_connection_test_session_auth_failure(api_client, monkeypatch):
             ok=False,
             method="none",
             error="No session_id in database and no session file on disk",
+            error_code="session_missing",
         ),
     )
 
+    # cookies-only: missing session without calling mobile probe
     res = api_client.post("/api/accounts/nosess/test-connection")
     body = res.json()
     assert body["overall_ok"] is False
     assert body["instagram_auth"]["ok"] is False
+    assert body["instagram_auth"]["error_code"] == "session_missing"
+
+    # mobile probe path still invokes probe_session_auth
+    res_m = api_client.post(
+        "/api/accounts/nosess/test-connection",
+        params={"probe_mobile": "true"},
+    )
+    body_m = res_m.json()
+    assert body_m["overall_ok"] is False
+    assert body_m["instagram_auth"]["ok"] is False
 
 
 def test_accounts_list_includes_session_file_metadata(api_client, app_env):

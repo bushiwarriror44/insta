@@ -80,8 +80,17 @@ def _finish(
     )
 
 
-def run_account_connection_test(account: Account, db: Session) -> AccountConnectionTestOut:
-    """Run proxy + Instagram session diagnostics for a single account."""
+def run_account_connection_test(
+    account: Account,
+    db: Session,
+    *,
+    probe_mobile: bool = False,
+) -> AccountConnectionTestOut:
+    """Run proxy + session diagnostics.
+
+    By default only checks that cookies exist in storage (no mobile
+    ``login_by_sessionid``). Pass ``probe_mobile=True`` for publish readiness.
+    """
     now = datetime.now(timezone.utc)
     username = account.username
     collector = DiagnosticCollector(
@@ -96,6 +105,7 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
     file_exists = session_path(username).exists()
     device_exists = device_path(username).exists()
     source = _session_source(username, account.session_id)
+    has_cookies = bool((account.session_id or "").strip()) or file_exists
 
     session_storage = SessionStorageStepOut(
         has_session_id=bool(account.session_id),
@@ -109,6 +119,10 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
         f"sessionid в БД={_yes_no(bool(account.session_id))}, "
         f"файл cookies={_yes_no(file_exists)}, "
         f"файл устройства={_yes_no(device_exists)}",
+    )
+    collector.info(
+        "session_probe",
+        f"Режим: {'mobile API probe' if probe_mobile else 'cookies-only (без mobile login_by_sessionid)'}",
     )
 
     proxy_assigned = account.proxy_id is not None
@@ -230,6 +244,56 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
             now=now,
         )
 
+    sid_raw = (account.session_id or "").strip()
+    sid_norm = normalize_sessionid(sid_raw) or ""
+    collector.info(
+        "session_probe",
+        f"Хранилище: sessionid в БД="
+        f"{'да (' + sessionid_diag_label(sid_norm) + ')' if sid_norm else 'нет'}, "
+        f"файл session_*.json={'да' if file_exists else 'нет'}",
+    )
+
+    if not probe_mobile:
+        if has_cookies:
+            method: Literal["sessionid", "session_file", "none"] = (
+                "sessionid" if sid_norm else "session_file"
+            )
+            collector.info(
+                "session_probe",
+                "Mobile API-проверка пропущена — cookie в хранилище достаточно для этого режима",
+            )
+            instagram_auth = InstagramAuthStepOut(ok=True, method=method)
+            overall_ok = True
+            summary = "Cookies установлены (mobile не проверялась)"
+        else:
+            collector.error(
+                "session_probe",
+                "Нет session_id в БД и нет файла сессии на диске",
+            )
+            instagram_auth = InstagramAuthStepOut(
+                ok=False,
+                method="none",
+                error=(
+                    "Нет session_id в БД и нет файла сессии на диске. "
+                    "Импортируйте sessionid через панель «Сессия»."
+                ),
+                error_code="session_missing",
+            )
+            overall_ok = False
+            summary = instagram_auth.error or "Сессия не найдена"
+        return _finish(
+            collector,
+            overall_ok=overall_ok,
+            summary=summary,
+            username=username,
+            proxy_assigned=True,
+            proxy_label=proxy_label,
+            proxy_health=proxy_health,
+            session_storage=session_storage,
+            instagram_auth=instagram_auth,
+            now=now,
+        )
+
     collector.info("fingerprint", "Загрузка отпечатка устройства")
     tz_id = timezone_from_proxy(proxy.timezone, proxy.country)
     if is_placeholder_timezone(account.timezone):
@@ -241,15 +305,7 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
         country=normalize_country_code(proxy.country) or proxy.country or "US",
         timezone_id=tz_id,
     )
-    sid_raw = (account.session_id or "").strip()
-    sid_norm = normalize_sessionid(sid_raw) or ""
-    collector.info(
-        "session_probe",
-        f"Перед проверкой: sessionid в БД="
-        f"{'да (' + sessionid_diag_label(sid_norm) + ')' if sid_norm else 'нет'}, "
-        f"файл session_*.json={'да' if file_exists else 'нет'}",
-    )
-    collector.info("session_probe", "Проверка сессии Instagram")
+    collector.info("session_probe", "Проверка сессии Instagram (mobile API)")
     try:
         probe = probe_session_auth(
             username=username,

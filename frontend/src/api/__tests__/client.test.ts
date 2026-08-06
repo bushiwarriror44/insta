@@ -240,6 +240,32 @@ describe("body serialization", () => {
     expect(out.overall_ok).toBe(true);
   });
 
+  it("passes probe_mobile query when requested", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      makeResponse({
+        json: {
+          username: "alice",
+          proxy_assigned: true,
+          proxy_health: { ok: true, instagram_reachable: true, geo_mismatch: false },
+          session_storage: {
+            has_session_id: true,
+            session_file_exists: false,
+            device_file_exists: true,
+            session_source: "database",
+          },
+          instagram_auth: { ok: true, method: "sessionid", challenge: false },
+          overall_ok: true,
+          checked_at: "2026-06-29T10:00:00Z",
+          run_id: 1,
+          logs: [],
+        },
+      })
+    );
+    await api.accounts.testConnection("alice", { probeMobile: true });
+    const { url } = getCall();
+    expect(url).toContain("probe_mobile=true");
+  });
+
   it("downloads cookies export as file", async () => {
     const createObjectURL = vi.fn(() => "blob:mock");
     const revokeObjectURL = vi.fn();
