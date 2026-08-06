@@ -391,6 +391,7 @@ async def import_account_cookies(
 
     return CookiesImportOut(
         format=result.format,
+        session_id=result.session_id,
         session_id_imported=True,
         playwright_state_saved=result.playwright_state_saved,
         session_file_cleared=result.session_file_cleared,

@@ -618,6 +618,7 @@ def test_accounts_import_cookies_dolphin(api_client, app_env):
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["format"] == "dolphin"
+    assert body["session_id"] == sid
     assert body["session_id_imported"] is True
     assert playwright_state_path("impuser").exists()
     listed = api_client.get("/api/accounts").json()

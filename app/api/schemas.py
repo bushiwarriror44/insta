@@ -148,6 +148,7 @@ class AccountSessionOut(BaseModel):
 
 class CookiesImportOut(BaseModel):
     format: Literal["dolphin", "playwright_state"]
+    session_id: str
     session_id_imported: bool
     playwright_state_saved: bool
     session_file_cleared: bool

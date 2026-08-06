@@ -277,6 +277,7 @@ describe("body serialization", () => {
       makeResponse({
         json: {
           format: "dolphin",
+          session_id: "a".repeat(40),
           session_id_imported: true,
           playwright_state_saved: true,
           session_file_cleared: false,
@@ -292,6 +293,7 @@ describe("body serialization", () => {
     expect(init.method).toBe("POST");
     expect(init.body).toBeInstanceOf(FormData);
     expect(out.format).toBe("dolphin");
+    expect(out.session_id).toBe("a".repeat(40));
   });
 
   it("uses manual redirect for POST requests", async () => {

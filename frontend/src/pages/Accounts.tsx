@@ -1330,7 +1330,13 @@ function ConnectionModal({
             }
           />
           <ConnectionStepRow
-            label="4. Сессия действительна"
+            label={
+              result?.instagram_auth.ok
+                ? "4. Сессия действительна"
+                : result
+                  ? "4. Сессия недействительна"
+                  : "4. Проверка сессии"
+            }
             state={step4}
             detail={
               result?.instagram_auth.ok ? (
@@ -1563,6 +1569,7 @@ function SessionModal({
     setFileImportBusy(true);
     try {
       const result = await api.accounts.importCookiesFile(account.username, importFile);
+      setSessionId(result.session_id);
       push(
         `Cookies импортированы (${result.format === "dolphin" ? "Dolphin" : "Playwright"})`,
         "success"
@@ -1745,6 +1752,8 @@ function SessionModal({
                 Импортируйте после подтверждения challenge в Dolphin на том же прокси.
                 Если в значении есть <span className="font-mono">%3A</span>, оно будет
                 декодировано в <span className="font-mono">:</span> автоматически.
+                После импорта файла sessionid появится здесь. Не жмите «Проверить» сразу —
+                mobile API часто отклоняет web-cookie из Dolphin.
               </p>
             </div>
           </form>

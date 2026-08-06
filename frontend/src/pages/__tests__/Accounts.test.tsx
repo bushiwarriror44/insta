@@ -379,8 +379,10 @@ describe("Accounts page", () => {
     apiMock.accounts.list
       .mockResolvedValueOnce([account])
       .mockResolvedValueOnce([updatedAccount]);
+    const importedSid = "d".repeat(40);
     apiMock.accounts.importCookiesFile.mockResolvedValue({
       format: "dolphin",
+      session_id: importedSid,
       session_id_imported: true,
       playwright_state_saved: true,
       session_file_cleared: true,
@@ -392,9 +394,11 @@ describe("Accounts page", () => {
     const heading = await screen.findByRole("heading", { name: /сессия · @alice/i });
     const modal = heading.closest("div.card") as HTMLElement;
 
-    const file = new File(['[{"name":"sessionid","value":"' + "d".repeat(40) + '"}]'], "cookies.json", {
-      type: "application/json",
-    });
+    const file = new File(
+      ['[{"name":"sessionid","value":"' + importedSid + '"}]'],
+      "cookies.json",
+      { type: "application/json" }
+    );
     const input = within(modal).getByLabelText(/импорт cookies из файла/i);
     fireEvent.change(input, { target: { files: [file] } });
 
@@ -405,6 +409,9 @@ describe("Accounts page", () => {
 
     await waitFor(() =>
       expect(apiMock.accounts.importCookiesFile).toHaveBeenCalledWith("alice", file)
+    );
+    await waitFor(() =>
+      expect(within(modal).getByLabelText(/sessionid/i)).toHaveValue(importedSid)
     );
     expect(apiMock.accounts.updateSession).not.toHaveBeenCalled();
     expect(apiMock.accounts.testConnection).not.toHaveBeenCalled();
@@ -505,6 +512,7 @@ describe("Accounts page", () => {
     await waitFor(() =>
       expect(within(modal).getByText(/готов к автопостингу/i)).toBeInTheDocument()
     );
+    expect(within(modal).getByText(/4\. сессия действительна/i)).toBeInTheDocument();
   });
 
   it("shows connection failure after test completes", async () => {
@@ -562,6 +570,7 @@ describe("Accounts page", () => {
     await waitFor(() =>
       expect(within(modal).getByText(/не готов к автопостингу/i)).toBeInTheDocument()
     );
+    expect(within(modal).getByText(/4\. сессия недействительна/i)).toBeInTheDocument();
     expect(
       within(modal).getAllByText(/session_id недействителен или истёк/i).length
     ).toBeGreaterThanOrEqual(1);

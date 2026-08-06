@@ -134,6 +134,7 @@ export interface AccountSessionOut {
 
 export interface CookiesImportOut {
   format: "dolphin" | "playwright_state";
+  session_id: string;
   session_id_imported: boolean;
   playwright_state_saved: boolean;
   session_file_cleared: boolean;
