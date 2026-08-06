@@ -501,9 +501,18 @@ def probe_session_auth(
         return ProbeSessionResult(ok=False, method="session_file", error=str(exc))
 
 
-def ensure_fingerprint_and_proxy(username: str, country: str = "US") -> DeviceFingerprint:
-    """Convenience: get-or-create a device fingerprint for a username."""
-    fp = get_or_create_fingerprint(username, country=country)
+def ensure_fingerprint_and_proxy(
+    username: str,
+    country: str = "US",
+    *,
+    timezone_id: str | None = None,
+) -> DeviceFingerprint:
+    """Convenience: get-or-create a device fingerprint for a username.
+
+    When *timezone_id* is set, new fingerprints use that IANA offset; existing
+    ones only update ``timezone_offset`` (device identity stays sticky).
+    """
+    fp = get_or_create_fingerprint(username, country=country, timezone_id=timezone_id)
     save_fingerprint(username, fp)
     return fp
 

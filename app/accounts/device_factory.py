@@ -204,8 +204,19 @@ def _new_uuids() -> dict[str, str]:
     }
 
 
-def generate_fingerprint(country: str = "US", rng: random.Random | None = None) -> DeviceFingerprint:
-    """Generate a brand-new fingerprint suitable for ``client.set_settings``."""
+def generate_fingerprint(
+    country: str = "US",
+    rng: random.Random | None = None,
+    *,
+    timezone_id: str | None = None,
+) -> DeviceFingerprint:
+    """Generate a brand-new fingerprint suitable for ``client.set_settings``.
+
+    When *timezone_id* is a valid IANA zone, ``timezone_offset`` is derived from
+    it so the API client matches Playwright / account scheduling.
+    """
+    from app.geo.timezone_normalize import iana_utc_offset_seconds
+
     rng = rng or random.Random()
     country = country.upper()
     geo = _GEO_PROFILES.get(country, _GEO_PROFILES["US"])
@@ -213,7 +224,13 @@ def generate_fingerprint(country: str = "US", rng: random.Random | None = None) 
     manufacturer, model, codename, android_version, android_release, dpi, resolution, chipset = rng.choice(_DEVICE_POOL)
     app_version, version_code = rng.choice(_APP_VERSIONS)
     locale: str = rng.choice(geo["locales"])
-    timezone_offset: int = rng.choice(geo["timezone_offsets"])
+    if timezone_id:
+        try:
+            timezone_offset = iana_utc_offset_seconds(timezone_id)
+        except Exception:
+            timezone_offset = int(rng.choice(geo["timezone_offsets"]))
+    else:
+        timezone_offset = int(rng.choice(geo["timezone_offsets"]))
 
     device_settings = {
         "app_version": app_version,
@@ -290,14 +307,37 @@ def save_fingerprint(username: str, fp: DeviceFingerprint) -> Path:
     return path
 
 
-def get_or_create_fingerprint(username: str, country: str = "US") -> DeviceFingerprint:
+def get_or_create_fingerprint(
+    username: str,
+    country: str = "US",
+    *,
+    timezone_id: str | None = None,
+) -> DeviceFingerprint:
     existing = load_fingerprint(username)
     if existing:
+        if timezone_id:
+            align_fingerprint_timezone(existing, timezone_id)
+            save_fingerprint(username, existing)
         return existing
-    fp = generate_fingerprint(country=country)
+    fp = generate_fingerprint(country=country, timezone_id=timezone_id)
     save_fingerprint(username, fp)
     logger.info("device.created", username=username, country=country, model=fp.settings["device_settings"]["model"])
     return fp
+
+
+def align_fingerprint_timezone(fp: DeviceFingerprint, timezone_id: str) -> bool:
+    """Update only ``timezone_offset`` to match *timezone_id*. Returns True if changed."""
+    from app.geo.timezone_normalize import iana_utc_offset_seconds
+
+    try:
+        offset = iana_utc_offset_seconds(timezone_id)
+    except Exception:
+        return False
+    if fp.timezone_offset == offset and fp.settings.get("timezone_offset") == offset:
+        return False
+    fp.timezone_offset = offset
+    fp.settings["timezone_offset"] = offset
+    return True
 
 
 def rotate_session_uuids(fp: DeviceFingerprint) -> DeviceFingerprint:

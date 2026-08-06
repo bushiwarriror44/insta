@@ -28,6 +28,7 @@ from app.accounts.session_manager import (
 from app.accounts.challenge import make_handler
 from app.behavior.humanizer import think
 from app.behavior.warmup_instagrapi import warmup
+from app.geo.timezone_normalize import timezone_from_proxy
 from app.db import Account, AccountStatus, Event, EventLevel, Proxy
 from app.logging_setup import get_logger
 from app.proxies.pool import HealthCheckScope, ProxyError, health_check_cached
@@ -94,6 +95,7 @@ def idle_warmup(username: str) -> bool:
             return False
         proxy_url = proxy.url
         proxy_country = proxy.country or "US"
+        proxy_timezone_id = timezone_from_proxy(proxy.timezone, proxy.country)
         totp_seed = account.totp_seed
         session_id = account.session_id
         password = account.password
@@ -107,7 +109,9 @@ def idle_warmup(username: str) -> bool:
         log.warning("idle.proxy_unhealthy", error=str(exc))
         return False
 
-    fingerprint = ensure_fingerprint_and_proxy(username, country=proxy_country)
+    fingerprint = ensure_fingerprint_and_proxy(
+        username, country=proxy_country, timezone_id=proxy_timezone_id
+    )
     handler = make_handler(username, email=email, email_password=email_password)
 
     try:

@@ -43,7 +43,7 @@ def worker_env(monkeypatch, app_env):
     """Patch out everything network-y inside the worker module."""
     monkeypatch.setattr(worker_module, "health_check_cached", lambda url, **kwargs: _ok_snapshot())
     monkeypatch.setattr(worker_module, "ensure_fingerprint_and_proxy",
-                        lambda username, country="US": _Fingerprint())
+                        lambda username, country="US", **kwargs: _Fingerprint())
     monkeypatch.setattr(
         worker_module, "maybe_rotate_session_uuids",
         lambda username, fp, last: (False, fp),

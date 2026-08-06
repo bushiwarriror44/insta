@@ -61,11 +61,29 @@ def test_load_fingerprint_returns_none_on_corrupt(app_env):
     assert load_fingerprint("broken") is None
 
 
+def test_generate_fingerprint_timezone_id_sets_offset(app_env):
+    fp = generate_fingerprint("PL", timezone_id="Europe/Warsaw")
+    assert fp.timezone_offset in (3600, 7200)
+    assert fp.settings["timezone_offset"] == fp.timezone_offset
+
+
 def test_get_or_create_idempotent(app_env):
     first = get_or_create_fingerprint("bob", country="GB")
     second = get_or_create_fingerprint("bob", country="GB")
     assert first.settings["uuids"]["uuid"] == second.settings["uuids"]["uuid"]
     assert second.country == "GB"
+
+
+def test_get_or_create_aligns_existing_offset(app_env):
+    fp = generate_fingerprint("US")
+    fp.timezone_offset = -28800
+    fp.settings["timezone_offset"] = -28800
+    save_fingerprint("alignme", fp)
+
+    second = get_or_create_fingerprint("alignme", country="PL", timezone_id="Europe/Warsaw")
+    assert second.timezone_offset in (3600, 7200)
+    assert second.settings["timezone_offset"] == second.timezone_offset
+    assert second.settings["uuids"]["uuid"] == fp.settings["uuids"]["uuid"]
 
 
 def test_fingerprint_to_dict_round_trip():

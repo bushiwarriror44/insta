@@ -771,9 +771,23 @@ function AddAccountModal({
 
   useEffect(() => {
     if (open && proxies.length > 0 && !form.proxy_label) {
-      setForm((f) => ({ ...f, proxy_label: proxies[0].label }));
+      const first = proxies[0];
+      setForm((f) => ({
+        ...f,
+        proxy_label: first.label,
+        timezone: first.timezone?.trim() ? first.timezone : f.timezone,
+      }));
     }
   }, [open, proxies, form.proxy_label]);
+
+  function selectProxy(label: string) {
+    const proxy = proxies.find((p) => p.label === label);
+    setForm((f) => ({
+      ...f,
+      proxy_label: label,
+      timezone: proxy?.timezone?.trim() ? proxy.timezone : f.timezone,
+    }));
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -800,7 +814,7 @@ function AddAccountModal({
         username: "",
         password: "",
         proxy_label: proxies[0]?.label ?? "",
-        timezone: "UTC",
+        timezone: proxies[0]?.timezone?.trim() || "UTC",
         daily_post_cap: 3,
         min_gap_hours: 4,
         active_hour_start: 10,
@@ -903,7 +917,7 @@ function AddAccountModal({
               <select
                 className="input"
                 value={form.proxy_label}
-                onChange={(e) => setForm({ ...form, proxy_label: e.target.value })}
+                onChange={(e) => selectProxy(e.target.value)}
               >
                 {proxies.map((p) => (
                   <option key={p.id} value={p.label}>
@@ -921,6 +935,9 @@ function AddAccountModal({
               onChange={(e) => setForm({ ...form, timezone: e.target.value })}
               placeholder="Europe/Berlin"
             />
+            <p className="text-xs text-slate-500 mt-1">
+              Как у прокси (подставляется при выборе)
+            </p>
           </div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -2144,6 +2161,9 @@ function EditProxyModal({
               value={form.country ?? ""}
               onChange={(e) => setForm({ ...form, country: e.target.value })}
             />
+            <p className="text-xs text-slate-500 mt-1">
+              Необязательно: заполнится при проверке по IP
+            </p>
           </div>
           <div>
             <label className="label">Часовой пояс</label>
@@ -2152,6 +2172,9 @@ function EditProxyModal({
               value={form.timezone ?? ""}
               onChange={(e) => setForm({ ...form, timezone: e.target.value })}
             />
+            <p className="text-xs text-slate-500 mt-1">
+              Необязательно: заполнится при проверке по IP
+            </p>
           </div>
         </div>
         <div>
@@ -2260,6 +2283,9 @@ function AddProxyModal({
               value={form.country ?? ""}
               onChange={(e) => setForm({ ...form, country: e.target.value })}
             />
+            <p className="text-xs text-slate-500 mt-1">
+              Необязательно: заполнится при проверке по IP
+            </p>
           </div>
           <div>
             <label className="label">Часовой пояс</label>
@@ -2268,6 +2294,9 @@ function AddProxyModal({
               value={form.timezone ?? ""}
               onChange={(e) => setForm({ ...form, timezone: e.target.value })}
             />
+            <p className="text-xs text-slate-500 mt-1">
+              Необязательно: заполнится при проверке по IP
+            </p>
           </div>
         </div>
         <div>

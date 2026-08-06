@@ -24,7 +24,7 @@ def api_client(app_env, monkeypatch):
     monkeypatch.setattr("app.proxies.pool.health_check", lambda *a, **kw: {"ip": "203.0.113.5"})
     monkeypatch.setattr(
         "app.api.routes.accounts.ensure_fingerprint_and_proxy",
-        lambda username, country="US": object(),
+        lambda username, country="US", **kwargs: object(),
     )
 
     app = create_app()
@@ -86,7 +86,7 @@ def test_connection_test_happy_path(api_client, db_session, monkeypatch):
     )
     monkeypatch.setattr(
         "app.accounts.connection_test.ensure_fingerprint_and_proxy",
-        lambda username, country="US": MagicMock(),
+        lambda username, country="US", **kwargs: MagicMock(),
     )
     monkeypatch.setattr(
         "app.accounts.connection_test.probe_session_auth",
@@ -157,7 +157,7 @@ def test_connection_test_session_auth_failure(api_client, monkeypatch):
     )
     monkeypatch.setattr(
         "app.accounts.connection_test.ensure_fingerprint_and_proxy",
-        lambda username, country="US": MagicMock(),
+        lambda username, country="US", **kwargs: MagicMock(),
     )
     monkeypatch.setattr(
         "app.accounts.connection_test.probe_session_auth",
@@ -253,7 +253,7 @@ def test_diagnostic_runs_list_after_connection_test(api_client, monkeypatch):
     )
     monkeypatch.setattr(
         "app.accounts.connection_test.ensure_fingerprint_and_proxy",
-        lambda username, country="US": MagicMock(),
+        lambda username, country="US", **kwargs: MagicMock(),
     )
     monkeypatch.setattr(
         "app.accounts.connection_test.probe_session_auth",

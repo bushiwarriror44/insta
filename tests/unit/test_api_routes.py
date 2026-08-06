@@ -19,7 +19,7 @@ def api_client(app_env, monkeypatch):
     monkeypatch.setattr("app.proxies.pool.health_check", lambda *a, **kw: {"ip": "203.0.113.5"})
     monkeypatch.setattr(
         "app.api.routes.accounts.ensure_fingerprint_and_proxy",
-        lambda username, country="US": object(),
+        lambda username, country="US", **kwargs: object(),
     )
 
     app = create_app()
@@ -46,7 +46,7 @@ def auth_client(app_env, monkeypatch):
     monkeypatch.setattr("app.proxies.pool.health_check", lambda *a, **kw: {"ip": "203.0.113.5"})
     monkeypatch.setattr(
         "app.api.routes.accounts.ensure_fingerprint_and_proxy",
-        lambda username, country="US": object(),
+        lambda username, country="US", **kwargs: object(),
     )
 
     app = create_app()
@@ -172,6 +172,89 @@ def test_proxies_delete_blocked_when_in_use(api_client):
     res = api_client.delete("/api/proxies/px-busy")
     assert res.status_code == 409
     assert "account" in res.json()["detail"].lower()
+
+
+def test_accounts_create_autofills_timezone_from_proxy(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={
+            "label": "px-pl",
+            "url": "http://u:p@h:1",
+            "country": "PL",
+            "timezone": "Europe/Warsaw",
+            "skip_health_check": True,
+        },
+    )
+    res = api_client.post(
+        "/api/accounts",
+        json={
+            "username": "tzfill",
+            "password": "secret",
+            "proxy_label": "px-pl",
+            "timezone": "UTC",
+        },
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["timezone"] == "Europe/Warsaw"
+
+
+def test_accounts_create_keeps_explicit_timezone(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={
+            "label": "px-de-tz",
+            "url": "http://u:p@h:1",
+            "country": "DE",
+            "timezone": "Europe/Berlin",
+            "skip_health_check": True,
+        },
+    )
+    res = api_client.post(
+        "/api/accounts",
+        json={
+            "username": "tzkeep",
+            "password": "secret",
+            "proxy_label": "px-de-tz",
+            "timezone": "Europe/Moscow",
+        },
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["timezone"] == "Europe/Moscow"
+
+
+def test_accounts_update_proxy_syncs_timezone(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={
+            "label": "px-a",
+            "url": "http://u:p@a:1",
+            "country": "US",
+            "timezone": "America/New_York",
+            "skip_health_check": True,
+        },
+    )
+    api_client.post(
+        "/api/proxies",
+        json={
+            "label": "px-b",
+            "url": "http://u:p@b:1",
+            "country": "PL",
+            "timezone": "Europe/Warsaw",
+            "skip_health_check": True,
+        },
+    )
+    api_client.post(
+        "/api/accounts",
+        json={
+            "username": "tzmove",
+            "password": "secret",
+            "proxy_label": "px-a",
+            "timezone": "America/New_York",
+        },
+    )
+    res = api_client.put("/api/accounts/tzmove/proxy", json={"proxy_label": "px-b"})
+    assert res.status_code == 200, res.text
+    assert res.json()["timezone"] == "Europe/Warsaw"
 
 
 def test_accounts_create_pause_resume(api_client):

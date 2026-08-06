@@ -56,6 +56,7 @@ from app.db import (
 from app.diagnostics.collector import DiagnosticCollector
 from app.logging_setup import configure_logging, get_logger
 from app.geo.country_codes import countries_mismatch
+from app.geo.timezone_normalize import timezone_from_proxy
 from app.proxies.pool import ProxyError, HealthCheckScope, health_check_cached, proxy_risk_score
 from app.publisher.reels_publisher import (
     ActionCooldownError,
@@ -318,7 +319,11 @@ def _process_job(db: Session, job: PostJob) -> None:
             f"Прокси исправен ip={snapshot.ip or '?'} instagram_ok={snapshot.instagram_reachable}",
         )
 
-    fingerprint = ensure_fingerprint_and_proxy(account.username, country=proxy.country or "US")
+    fingerprint = ensure_fingerprint_and_proxy(
+        account.username,
+        country=proxy.country or "US",
+        timezone_id=timezone_from_proxy(proxy.timezone, proxy.country),
+    )
     rotated, fingerprint = maybe_rotate_session_uuids(
         account.username, fingerprint, account.last_session_rotation_at
     )

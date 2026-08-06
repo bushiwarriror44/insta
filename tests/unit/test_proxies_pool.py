@@ -13,6 +13,7 @@ from app.proxies.pool import (
     HealthSnapshot,
     ProxyError,
     _mask,
+    geo_lookup,
     geo_verify,
     health_check,
     health_check_cached,
@@ -37,6 +38,15 @@ def _clear_cache():
 def _mock_login_page_route(status: int = 200) -> None:
     respx.get("https://www.instagram.com/accounts/login/").mock(
         return_value=httpx.Response(status, text="<html></html>")
+    )
+
+
+def _mock_geo_json(country: str = "US", tz: str = "America/New_York") -> None:
+    respx.get("https://ipapi.co/json/").mock(
+        return_value=httpx.Response(
+            200,
+            json={"country_code": country, "timezone": tz},
+        )
     )
 
 
@@ -75,9 +85,7 @@ def test_health_check_record_updates_proxy_on_success(db_session, make_proxy):
         return_value=httpx.Response(200, text="{}")
     )
     _mock_login_page_route()
-    respx.get("https://ipapi.co/country/").mock(
-        return_value=httpx.Response(200, text="US")
-    )
+    _mock_geo_json("US", "America/New_York")
     ok, snapshot, err = health_check_record(db_session, proxy)
     assert ok is True
     assert snapshot is not None
@@ -87,6 +95,68 @@ def test_health_check_record_updates_proxy_on_success(db_session, make_proxy):
     assert proxy.last_known_ip == "5.5.5.5"
     assert proxy.last_checked_at is not None
     assert proxy.last_geo_country == "US"
+
+
+@respx.mock
+def test_health_check_record_autofills_empty_country_and_timezone(db_session, make_proxy):
+    proxy = make_proxy(country=None, timezone=None)
+    respx.get(settings.proxy_health_url).mock(
+        return_value=httpx.Response(200, json={"ip": "1.2.3.4"})
+    )
+    respx.get("https://i.instagram.com/api/v1/zr/dual_tokens/").mock(
+        return_value=httpx.Response(200, text="{}")
+    )
+    _mock_login_page_route()
+    _mock_geo_json("PL", "Europe/Warsaw")
+    ok, snapshot, err = health_check_record(db_session, proxy)
+    assert ok is True
+    assert snapshot is not None
+    assert err is None
+    db_session.refresh(proxy)
+    assert proxy.country == "PL"
+    assert proxy.timezone == "Europe/Warsaw"
+    assert proxy.last_geo_country == "PL"
+
+
+@respx.mock
+def test_health_check_record_timezone_fallback_from_country(db_session, make_proxy):
+    proxy = make_proxy(country=None, timezone=None)
+    respx.get(settings.proxy_health_url).mock(
+        return_value=httpx.Response(200, json={"ip": "1.2.3.4"})
+    )
+    respx.get("https://i.instagram.com/api/v1/zr/dual_tokens/").mock(
+        return_value=httpx.Response(200, text="{}")
+    )
+    _mock_login_page_route()
+    respx.get("https://ipapi.co/json/").mock(
+        return_value=httpx.Response(200, json={"country_code": "PL", "timezone": "bogus"})
+    )
+    ok, _snapshot, err = health_check_record(db_session, proxy)
+    assert ok is True
+    assert err is None
+    db_session.refresh(proxy)
+    assert proxy.country == "PL"
+    assert proxy.timezone == "Europe/Warsaw"
+
+
+@respx.mock
+def test_health_check_record_does_not_overwrite_manual_country(db_session, make_proxy):
+    proxy = make_proxy(country="DE", timezone="Europe/Berlin")
+    respx.get(settings.proxy_health_url).mock(
+        return_value=httpx.Response(200, json={"ip": "1.2.3.4"})
+    )
+    respx.get("https://i.instagram.com/api/v1/zr/dual_tokens/").mock(
+        return_value=httpx.Response(200, text="{}")
+    )
+    _mock_login_page_route()
+    _mock_geo_json("PL", "Europe/Warsaw")
+    ok, _snapshot, err = health_check_record(db_session, proxy)
+    assert ok is True
+    assert err is None
+    db_session.refresh(proxy)
+    assert proxy.country == "DE"
+    assert proxy.timezone == "Europe/Berlin"
+    assert proxy.last_geo_country == "PL"
 
 
 @respx.mock
@@ -168,15 +238,19 @@ def test_reach_instagram_raises_when_probe_returns_5xx():
 
 @respx.mock
 def test_geo_verify_returns_country_code():
-    respx.get("https://ipapi.co/country/").mock(
-        return_value=httpx.Response(200, text="DE\n")
-    )
+    _mock_geo_json("DE", "Europe/Berlin")
     assert geo_verify("http://h:1") == "DE"
 
 
 @respx.mock
+def test_geo_lookup_returns_country_and_timezone():
+    _mock_geo_json("DE", "Europe/Berlin")
+    assert geo_lookup("http://h:1") == ("DE", "Europe/Berlin")
+
+
+@respx.mock
 def test_geo_verify_returns_none_on_error():
-    respx.get("https://ipapi.co/country/").mock(side_effect=httpx.ConnectError("x"))
+    respx.get("https://ipapi.co/json/").mock(side_effect=httpx.ConnectError("x"))
     assert geo_verify("http://h:1") is None
 
 
@@ -189,9 +263,7 @@ def test_health_check_cached_skips_network_within_ttl():
         return_value=httpx.Response(200, text="{}")
     )
     _mock_login_page_route()
-    respx.get("https://ipapi.co/country/").mock(
-        return_value=httpx.Response(200, text="US")
-    )
+    _mock_geo_json()
 
     snap1 = health_check_cached("http://h:1")
     snap2 = health_check_cached("http://h:1")
@@ -212,9 +284,7 @@ def test_health_check_cached_force_refresh_bypasses_cache():
         return_value=httpx.Response(200, text="{}")
     )
     _mock_login_page_route()
-    respx.get("https://ipapi.co/country/").mock(
-        return_value=httpx.Response(200, text="US")
-    )
+    _mock_geo_json()
     health_check_cached("http://h:1")
     health_check_cached("http://h:1", force=True)
     ipify_route = next(
@@ -235,15 +305,14 @@ def test_geo_mismatch_does_not_disable_proxy(db_session, make_proxy):
         return_value=httpx.Response(200, text="{}")
     )
     _mock_login_page_route()
-    respx.get("https://ipapi.co/country/").mock(
-        return_value=httpx.Response(200, text="NL")
-    )
+    _mock_geo_json("NL", "Europe/Amsterdam")
     ok, snapshot, err = health_check_record(db_session, proxy)
     assert ok is True
     assert snapshot is not None
     assert err is None
     db_session.refresh(proxy)
     assert proxy.last_geo_country == "NL"
+    assert proxy.country == "DE"
 
 
 @respx.mock
@@ -275,9 +344,7 @@ def test_note_proxy_login_http_status_updates_cache():
         return_value=httpx.Response(200, text="{}")
     )
     _mock_login_page_route(200)
-    respx.get("https://ipapi.co/country/").mock(
-        return_value=httpx.Response(200, text="US")
-    )
+    _mock_geo_json()
     health_check_cached("http://h:1", force=True, scope=HealthCheckScope.FULL)
     note_proxy_login_http_status("http://h:1", 429)
     snap = health_check_cached("http://h:1", force=False)
@@ -296,9 +363,7 @@ def test_health_check_cached_minimal_skips_instagram_probes():
     login_route = respx.get("https://www.instagram.com/accounts/login/").mock(
         return_value=httpx.Response(200, text="<html></html>")
     )
-    respx.get("https://ipapi.co/country/").mock(
-        return_value=httpx.Response(200, text="US")
-    )
+    _mock_geo_json()
 
     snap = health_check_cached("http://h:1", force=True, scope=HealthCheckScope.MINIMAL)
     assert snap.ip == "1.2.3.4"
@@ -315,13 +380,13 @@ def test_health_check_cached_sets_login_reachable_flag():
         return_value=httpx.Response(200, text="{}")
     )
     _mock_login_page_route(403)
-    respx.get("https://ipapi.co/country/").mock(
-        return_value=httpx.Response(200, text="US")
-    )
+    _mock_geo_json()
     snap = health_check_cached("http://h:1", force=True, scope=HealthCheckScope.FULL)
     assert snap.instagram_reachable is True
     assert snap.instagram_login_reachable is False
     assert snap.instagram_login_http_status == 403
+    assert snap.country == "US"
+    assert snap.timezone == "America/New_York"
 
 
 def test_proxy_risk_score_detects_geo_mismatch():

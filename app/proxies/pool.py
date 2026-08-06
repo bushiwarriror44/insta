@@ -11,10 +11,11 @@ Anti-detection extensions (in addition to the basic IP-echo health check):
   ``i.instagram.com``. Confirms the proxy isn't blocked at the egress for
   Instagram specifically (a proxy can return your IP via ipify just fine
   while being already SSL-blocked by IG).
-* :func:`geo_verify` — fetch the country code reported by an IP-geo
-  service for the proxy's egress IP and compare with the operator-provided
-  ``proxy.country``. We *warn* on mismatch (some providers route via
-  multiple countries) but do not auto-disable.
+* :func:`geo_lookup` / :func:`geo_verify` — fetch country + timezone from
+  an IP-geo service for the proxy's egress IP. Empty ``proxy.country`` /
+  ``proxy.timezone`` are auto-filled on full health check; operator-set
+  values are never overwritten. We *warn* on country mismatch but do not
+  auto-disable.
 * In-process cache (:func:`health_check_cached`) — routine paths use
   :attr:`HealthCheckScope.MINIMAL` (ipify only, Instagram flags from cache).
   Full Instagram probes run only on explicit proxy check / connection test.
@@ -33,6 +34,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db import Proxy
 from app.geo.country_codes import countries_mismatch, normalize_country_code
+from app.geo.timezone_normalize import normalize_playwright_timezone
 from app.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -58,6 +60,7 @@ class HealthSnapshot:
     instagram_login_reachable: bool
     checked_at: datetime
     instagram_login_http_status: int | None = None
+    timezone: str | None = None
 
 
 _CHROME_DESKTOP_UA = (
@@ -103,15 +106,16 @@ def _cache_ttl_for(snapshot: HealthSnapshot) -> timedelta:
 
 def _inherit_cached_instagram_fields(
     prev: HealthSnapshot | None,
-) -> tuple[bool, bool, int | None, str | None]:
+) -> tuple[bool, bool, int | None, str | None, str | None]:
     if prev is None:
         # Unknown login reachability — do not assume the page is open (avoids auto-goto into 429).
-        return True, False, None, None
+        return True, False, None, None, None
     return (
         prev.instagram_reachable,
         prev.instagram_login_reachable,
         prev.instagram_login_http_status,
         prev.country,
+        prev.timezone,
     )
 
 
@@ -206,8 +210,13 @@ def reach_instagram_login_page(proxy_url: str, timeout: int | None = None) -> tu
         return False, None
 
 
-def geo_verify(proxy_url: str, timeout: int | None = None) -> str | None:
-    """Return the country code (ISO-2) the proxy's egress IP resolves to."""
+def geo_lookup(proxy_url: str, timeout: int | None = None) -> tuple[str | None, str | None]:
+    """Return ``(country_code, iana_timezone)`` for the proxy's egress IP.
+
+    Uses ``ipapi.co/json/`` so country and timezone come from one request.
+    When timezone is missing or invalid, falls back to the country default
+    via :func:`normalize_playwright_timezone`.
+    """
     timeout = timeout or settings.proxy_health_timeout_sec
     try:
         with httpx.Client(
@@ -216,15 +225,37 @@ def geo_verify(proxy_url: str, timeout: int | None = None) -> str | None:
             transport=httpx.HTTPTransport(retries=0),
             follow_redirects=True,
         ) as client:
-            resp = client.get("https://ipapi.co/country/")
-            if resp.status_code == 200:
-                value = resp.text.strip().upper()
-                # ipapi returns 2-3 char codes; ignore obvious error bodies.
-                if value and len(value) <= 8 and value.isalpha():
-                    return value
+            resp = client.get("https://ipapi.co/json/")
+            if resp.status_code != 200:
+                return None, None
+            try:
+                data = resp.json()
+            except ValueError:
+                return None, None
+            if not isinstance(data, dict):
+                return None, None
+
+            raw_cc = data.get("country_code") or data.get("country")
+            country = normalize_country_code(str(raw_cc)) if raw_cc else None
+            if country and (len(country) > 8 or not country.isalpha()):
+                country = None
+
+            tz_raw = data.get("timezone")
+            tz_str = str(tz_raw).strip() if tz_raw else None
+            timezone_name = normalize_playwright_timezone(tz_str, country=country)
+            # Only keep a timezone when we have a country signal or a real IANA value.
+            if not country and not tz_str:
+                timezone_name = None
+            return country, timezone_name
     except (httpx.HTTPError, OSError) as exc:
-        logger.debug("proxy.geo_verify_failed", error=str(exc))
-    return None
+        logger.debug("proxy.geo_lookup_failed", error=str(exc))
+    return None, None
+
+
+def geo_verify(proxy_url: str, timeout: int | None = None) -> str | None:
+    """Return the country code (ISO-2) the proxy's egress IP resolves to."""
+    country, _timezone = geo_lookup(proxy_url, timeout=timeout)
+    return country
 
 
 def health_check_cached(
@@ -256,7 +287,7 @@ def health_check_cached(
 
     ip = None
     ok = True
-    ig_ok, ig_login_ok, login_status, country = _inherit_cached_instagram_fields(prev)
+    ig_ok, ig_login_ok, login_status, country, geo_timezone = _inherit_cached_instagram_fields(prev)
     try:
         data = health_check(proxy_url)
         ip = data.get("ip") or None
@@ -288,7 +319,7 @@ def health_check_cached(
                     )
 
         if ok:
-            country = geo_verify(proxy_url)
+            country, geo_timezone = geo_lookup(proxy_url)
 
     snapshot = HealthSnapshot(
         ok=ok,
@@ -298,6 +329,7 @@ def health_check_cached(
         instagram_login_reachable=ig_login_ok,
         checked_at=now,
         instagram_login_http_status=login_status,
+        timezone=geo_timezone,
     )
     with _CACHE_LOCK:
         _HEALTH_CACHE[proxy_url] = snapshot
@@ -326,12 +358,21 @@ def health_check_record(db: Session, proxy: Proxy) -> tuple[bool, HealthSnapshot
     proxy.last_known_ip = snapshot.ip or proxy.last_known_ip
     if snapshot.country:
         proxy.last_geo_country = snapshot.country
-        if countries_mismatch(proxy.country, snapshot.country):
+        if not (proxy.country or "").strip():
+            proxy.country = normalize_country_code(snapshot.country)
+        elif countries_mismatch(proxy.country, snapshot.country):
             logger.warning(
                 "proxy.geo_mismatch",
                 label=proxy.label,
                 advertised=proxy.country,
                 actual=snapshot.country,
+            )
+    if not (proxy.timezone or "").strip():
+        if snapshot.timezone:
+            proxy.timezone = snapshot.timezone
+        elif proxy.country or snapshot.country:
+            proxy.timezone = normalize_playwright_timezone(
+                None, country=proxy.country or snapshot.country
             )
     db.commit()
     logger.info(
@@ -339,6 +380,7 @@ def health_check_record(db: Session, proxy: Proxy) -> tuple[bool, HealthSnapshot
         label=proxy.label,
         ip=proxy.last_known_ip,
         country=snapshot.country,
+        timezone=proxy.timezone,
         instagram=snapshot.instagram_reachable,
         instagram_login=snapshot.instagram_login_reachable,
     )

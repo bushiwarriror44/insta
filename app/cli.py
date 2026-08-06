@@ -43,6 +43,11 @@ from sqlalchemy import select
 from app.accounts.challenge import write_code
 from app.accounts.session_manager import clear_session_file, ensure_fingerprint_and_proxy
 from app.config import settings
+from app.geo.timezone_normalize import (
+    is_placeholder_timezone,
+    normalize_playwright_timezone,
+    timezone_from_proxy,
+)
 from app.db import (
     Account,
     AccountStatus,
@@ -203,7 +208,10 @@ def cmd_add_account(
             if account.session_id:
                 clear_session_file(account.username)
         account.proxy_id = proxy.id
-        account.timezone = timezone_name
+        if is_placeholder_timezone(timezone_name):
+            account.timezone = timezone_from_proxy(proxy.timezone, proxy.country)
+        else:
+            account.timezone = normalize_playwright_timezone(timezone_name, country=proxy.country)
         account.daily_post_cap = daily_post_cap
         account.min_gap_hours = min_gap_hours
         account.active_hour_start = active_hour_start
@@ -213,7 +221,11 @@ def cmd_add_account(
         db.commit()
         db.refresh(account)
 
-        fp = ensure_fingerprint_and_proxy(account.username, country=proxy.country or "US")
+        fp = ensure_fingerprint_and_proxy(
+            account.username,
+            country=proxy.country or "US",
+            timezone_id=account.timezone,
+        )
         console.print(
             f"[green]Account {username} ready[/green] "
             f"device={fp.settings['device_settings']['model']} country={fp.country} locale={fp.locale}"
@@ -289,17 +301,20 @@ def cmd_first_login(username: str) -> None:
             console.print(f"[red]Account {username} has no proxy assigned. First-login is blocked.[/red]")
             raise typer.Exit(code=1)
 
-    fp = ensure_fingerprint_and_proxy(username, country=(proxy.country or "US"))
+    fp = ensure_fingerprint_and_proxy(
+        username,
+        country=(proxy.country or "US"),
+        timezone_id=timezone_from_proxy(proxy.timezone, proxy.country),
+    )
 
     from app.behavior.warmup_playwright import first_login
-    from app.geo.timezone_normalize import normalize_playwright_timezone
 
     success = first_login(
         username=username,
         password=account.password,
         proxy_url=proxy.url,
         locale=fp.locale,
-        timezone_id=normalize_playwright_timezone(proxy.timezone, country=proxy.country),
+        timezone_id=timezone_from_proxy(proxy.timezone, proxy.country),
         user_agent=None,
         fingerprint=fp,
         totp_seed=account.totp_seed,

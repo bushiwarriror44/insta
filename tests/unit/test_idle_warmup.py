@@ -49,7 +49,7 @@ def test_idle_warmup_happy_path_stamps_account(
     monkeypatch.setattr(idle_module, "health_check_cached", lambda url, **kwargs: None)
     monkeypatch.setattr(
         idle_module, "ensure_fingerprint_and_proxy",
-        lambda username, country="US": object(),
+        lambda username, country="US", **kwargs: object(),
     )
     monkeypatch.setattr(idle_module, "warmup", lambda *a, **k: {})
     monkeypatch.setattr(idle_module, "think", lambda *a, **k: 0.0)

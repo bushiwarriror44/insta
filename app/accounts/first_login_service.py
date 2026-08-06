@@ -27,7 +27,10 @@ from app.behavior.playwright_surface import resolve_playwright_surface, surface_
 from app.db import Account, DiagnosticRunKind, Proxy
 from app.diagnostics.collector import DiagnosticCollector
 from app.geo.country_codes import normalize_country_code
-from app.geo.timezone_normalize import normalize_playwright_timezone
+from app.geo.timezone_normalize import (
+    is_placeholder_timezone,
+    timezone_from_proxy,
+)
 
 
 def _format_auth_error(exc: AuthenticationError) -> str:
@@ -267,13 +270,19 @@ def run_account_first_login(
     collector.info("start", f"Автовход через браузер для @{account.username}")
     collector.info("proxy", f"Прокси {proxy.label}")
 
+    tz_id = timezone_from_proxy(proxy.timezone, proxy.country)
+    if is_placeholder_timezone(account.timezone):
+        account.timezone = tz_id
+        db.commit()
+        collector.info("timezone", f"Часовой пояс аккаунта выставлен по прокси: {tz_id}")
+
     fingerprint = ensure_fingerprint_and_proxy(
         account.username,
         country=normalize_country_code(proxy.country) or proxy.country or "US",
+        timezone_id=tz_id,
     )
     collector.info("browser", f"Запуск Playwright Chromium ({surface_label(resolved_surface)})")
 
-    tz_id = normalize_playwright_timezone(proxy.timezone, country=proxy.country)
     if tz_id != (proxy.timezone or "").strip():
         collector.info(
             "browser",

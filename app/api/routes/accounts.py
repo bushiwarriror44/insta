@@ -37,6 +37,12 @@ from app.api.schemas import (
     FirstLoginOut,
 )
 from app.db import Account, AccountStatus, DailyStat, Proxy
+from app.geo.country_codes import normalize_country_code
+from app.geo.timezone_normalize import (
+    is_placeholder_timezone,
+    normalize_playwright_timezone,
+    timezone_from_proxy,
+)
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"], dependencies=[AuthDep])
 
@@ -136,7 +142,10 @@ def create_account(payload: AccountIn, db: Session = Depends(get_db)) -> Account
 
     account.password = payload.password
     account.proxy_id = proxy.id
-    account.timezone = payload.timezone
+    if is_placeholder_timezone(payload.timezone):
+        account.timezone = timezone_from_proxy(proxy.timezone, proxy.country)
+    else:
+        account.timezone = normalize_playwright_timezone(payload.timezone, country=proxy.country)
     account.daily_post_cap = payload.daily_post_cap
     account.min_gap_hours = payload.min_gap_hours
     account.active_hour_start = payload.active_hour_start
@@ -179,7 +188,11 @@ def create_account(payload: AccountIn, db: Session = Depends(get_db)) -> Account
     db.commit()
     db.refresh(account)
 
-    ensure_fingerprint_and_proxy(account.username, country=proxy.country or "US")
+    ensure_fingerprint_and_proxy(
+        account.username,
+        country=normalize_country_code(proxy.country) or proxy.country or "US",
+        timezone_id=timezone_from_proxy(proxy.timezone, proxy.country),
+    )
 
     today = datetime.now(timezone.utc).date().isoformat()
     return _serialize(account, db=db, today=today)
@@ -200,10 +213,15 @@ def update_account_proxy(
         raise HTTPException(status_code=400, detail=f"Proxy '{payload.proxy_label}' not found")
 
     account.proxy_id = proxy.id
+    account.timezone = timezone_from_proxy(proxy.timezone, proxy.country)
     db.commit()
     db.refresh(account)
 
-    ensure_fingerprint_and_proxy(account.username, country=proxy.country or "US")
+    ensure_fingerprint_and_proxy(
+        account.username,
+        country=normalize_country_code(proxy.country) or proxy.country or "US",
+        timezone_id=account.timezone,
+    )
 
     today = datetime.now(timezone.utc).date().isoformat()
     return _serialize(account, db=db, today=today)

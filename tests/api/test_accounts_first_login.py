@@ -16,7 +16,7 @@ def api_client(app_env, monkeypatch):
     monkeypatch.setattr("app.proxies.pool.health_check", lambda *a, **kw: {"ip": "1.2.3.4"})
     monkeypatch.setattr(
         "app.api.routes.accounts.ensure_fingerprint_and_proxy",
-        lambda username, country="US": object(),
+        lambda username, country="US", **kwargs: object(),
     )
 
     app = create_app()

@@ -144,6 +144,37 @@ def test_first_login_service_normalizes_invalid_proxy_timezone(
     out = run_account_first_login(account, db_session)
     assert out.ok is True
     assert captured["timezone_id"] == "America/New_York"
+    db_session.refresh(account)
+    assert account.timezone == "America/New_York"
+
+
+def test_first_login_service_keeps_explicit_account_timezone(
+    db_session, make_account, make_proxy, monkeypatch
+):
+    proxy = make_proxy(label="px-tz2", country="DE", timezone="Europe/Berlin")
+    account = make_account(username="tzkeep", proxy=proxy, timezone="Europe/Moscow")
+
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.playwright_browsers_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.first_login",
+        lambda **kwargs: FirstLoginResult(ok=True, session_id="f" * 40),
+    )
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.import_playwright_session_to_account",
+        lambda db, acc, **kwargs: True,
+    )
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.run_account_connection_test",
+        lambda acc, db: _connection_ok(acc.username),
+    )
+
+    out = run_account_first_login(account, db_session)
+    assert out.ok is True
+    db_session.refresh(account)
+    assert account.timezone == "Europe/Moscow"
 
 
 def test_first_login_service_api_fallback_after_playwright_fail(

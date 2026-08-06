@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from app.geo.country_codes import normalize_country_code
@@ -108,3 +109,41 @@ def normalize_playwright_timezone(
         return _OFFSET_HOURS_TO_IANA.get(offset, "UTC")
 
     return "UTC"
+
+
+def is_placeholder_timezone(tz: str | None) -> bool:
+    """True when timezone is empty or the default ``UTC`` stub from forms/API."""
+    if tz is None:
+        return True
+    raw = str(tz).strip()
+    return not raw or raw.upper() == "UTC"
+
+
+def timezone_from_proxy(
+    proxy_tz: str | None,
+    country: str | None = None,
+) -> str:
+    """Resolve the IANA timezone that should be used for an account bound to a proxy.
+
+    Empty / ``UTC`` on the proxy is treated as unset so the country default applies.
+    """
+    if is_placeholder_timezone(proxy_tz):
+        return normalize_playwright_timezone(None, country=country)
+    return normalize_playwright_timezone(proxy_tz, country=country)
+
+
+def iana_utc_offset_seconds(
+    tz_id: str,
+    *,
+    at: datetime | None = None,
+) -> int:
+    """Return UTC offset in seconds for an IANA zone at *at* (default: now UTC)."""
+    when = at or datetime.now(timezone.utc)
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    zi = ZoneInfo(tz_id)
+    local = when.astimezone(zi)
+    offset = local.utcoffset()
+    if offset is None:
+        return 0
+    return int(offset.total_seconds())

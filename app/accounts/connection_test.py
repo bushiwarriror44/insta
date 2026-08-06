@@ -24,6 +24,7 @@ from app.api.schemas import (
 from app.db import Account, DiagnosticRunKind, Proxy
 from app.diagnostics.collector import DiagnosticCollector
 from app.geo.country_codes import countries_mismatch, normalize_country_code
+from app.geo.timezone_normalize import is_placeholder_timezone, timezone_from_proxy
 from app.proxies.pool import ProxyError, health_check_record
 
 _SESSION_SOURCE_LABEL: dict[str, str] = {
@@ -229,9 +230,15 @@ def run_account_connection_test(account: Account, db: Session) -> AccountConnect
         )
 
     collector.info("fingerprint", "Загрузка отпечатка устройства")
+    tz_id = timezone_from_proxy(proxy.timezone, proxy.country)
+    if is_placeholder_timezone(account.timezone):
+        account.timezone = tz_id
+        db.commit()
+        collector.info("timezone", f"Часовой пояс аккаунта выставлен по прокси: {tz_id}")
     fingerprint = ensure_fingerprint_and_proxy(
         username,
         country=normalize_country_code(proxy.country) or proxy.country or "US",
+        timezone_id=tz_id,
     )
     collector.info("session_probe", "Проверка сессии Instagram")
     try:

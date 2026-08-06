@@ -64,8 +64,13 @@ def test_add_proxy_with_health_check_ok(cli_app, db_session):
     respx.get("https://i.instagram.com/api/v1/zr/dual_tokens/").mock(
         return_value=httpx.Response(200, text="{}")
     )
-    respx.get("https://ipapi.co/country/").mock(
-        return_value=httpx.Response(200, text="US")
+    respx.get("https://www.instagram.com/accounts/login/").mock(
+        return_value=httpx.Response(200, text="<html></html>")
+    )
+    respx.get("https://ipapi.co/json/").mock(
+        return_value=httpx.Response(
+            200, json={"country_code": "US", "timezone": "America/New_York"}
+        )
     )
     result = runner.invoke(
         cli_app,
@@ -97,6 +102,23 @@ def test_add_proxy_skip_health_check(cli_app, db_session):
     )
     assert result.exit_code == 0
     assert db_session.scalar(select(Proxy).where(Proxy.label == "p2")) is not None
+
+
+def test_add_account_utc_default_uses_proxy_timezone(cli_app, db_session, make_proxy):
+    make_proxy(label="p-pl", url="http://h:pl", country="PL", timezone="Europe/Warsaw")
+    result = runner.invoke(
+        cli_app,
+        [
+            "add-account",
+            "--username", "pluser",
+            "--password", "pwd",
+            "--proxy", "p-pl",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    account = db_session.scalar(select(Account).where(Account.username == "pluser"))
+    assert account is not None
+    assert account.timezone == "Europe/Warsaw"
 
 
 def test_add_account_links_proxy(cli_app, db_session, make_proxy):

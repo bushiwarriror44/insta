@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.accounts.session_manager import ensure_fingerprint_and_proxy
 from app.db import Account, PostLog, Proxy
+from app.geo.timezone_normalize import timezone_from_proxy
 from app.logging_setup import get_logger
 from app.publisher.reels_publisher import MediaStats, fetch_media_stats
 
@@ -43,7 +44,11 @@ def refresh_post_log_stats(db: Session, post_log: PostLog) -> PostLog:
     if proxy is None:
         raise ValueError("Publication account has no proxy")
 
-    fingerprint = ensure_fingerprint_and_proxy(account.username, country=proxy.country or "US")
+    fingerprint = ensure_fingerprint_and_proxy(
+        account.username,
+        country=proxy.country or "US",
+        timezone_id=timezone_from_proxy(proxy.timezone, proxy.country),
+    )
     stats = fetch_media_stats(
         username=account.username,
         password=account.password,
