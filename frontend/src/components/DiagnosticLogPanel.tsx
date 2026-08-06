@@ -66,6 +66,34 @@ export function formatDiagnosticLogPlain(lines: DiagnosticLogLine[]): string {
     .join("\n");
 }
 
+/** Works on HTTP (non-secure) via textarea fallback when Clipboard API is blocked. */
+export async function copyTextToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* fall through to execCommand */
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try {
+    ok = typeof document.execCommand === "function" && document.execCommand("copy");
+  } catch {
+    ok = false;
+  } finally {
+    document.body.removeChild(ta);
+  }
+  return ok;
+}
+
 interface Props {
   lines: DiagnosticLogLine[];
   emptyLabel?: string;
@@ -80,7 +108,7 @@ export function DiagnosticLogPanel({
   autoScroll = true,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "ok" | "fail">("idle");
 
   useEffect(() => {
     if (!autoScroll) return;
@@ -88,19 +116,15 @@ export function DiagnosticLogPanel({
   }, [lines, autoScroll]);
 
   useEffect(() => {
-    if (!copied) return;
-    const t = window.setTimeout(() => setCopied(false), 2000);
+    if (copyStatus === "idle") return;
+    const t = window.setTimeout(() => setCopyStatus("idle"), 2000);
     return () => window.clearTimeout(t);
-  }, [copied]);
+  }, [copyStatus]);
 
   async function copyLog() {
     const text = formatDiagnosticLogPlain(lines);
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-    } catch {
-      setCopied(false);
-    }
+    const ok = await copyTextToClipboard(text);
+    setCopyStatus(ok ? "ok" : "fail");
   }
 
   if (lines.length === 0) {
@@ -111,17 +135,26 @@ export function DiagnosticLogPanel({
     );
   }
 
+  const copyLabel =
+    copyStatus === "ok"
+      ? "Скопировано"
+      : copyStatus === "fail"
+        ? "Не удалось скопировать"
+        : "Копировать";
+
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-950/60 overflow-hidden">
       <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-slate-800/80 bg-slate-950/80">
         <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Лог</span>
         <button
           type="button"
-          className="btn-ghost text-[11px] py-0.5 px-2 h-auto"
+          className={`btn-ghost text-[11px] py-0.5 px-2 h-auto ${
+            copyStatus === "fail" ? "text-rose-300" : ""
+          }`}
           onClick={() => void copyLog()}
         >
           <Copy size={12} />
-          {copied ? "Скопировано" : "Копировать"}
+          {copyLabel}
         </button>
       </div>
       <div className={`overflow-y-auto font-mono text-xs ${maxHeightClass}`}>
