@@ -257,6 +257,7 @@ describe("Accounts page", () => {
         session_id: sessionId,
       })
     );
+    expect(apiMock.accounts.importCookiesFile).not.toHaveBeenCalled();
     expect(apiMock.accounts.testConnection).not.toHaveBeenCalled();
     // Modal stays open after save.
     expect(screen.getByRole("heading", { name: /сессия · @alice/i })).toBeInTheDocument();
@@ -384,32 +385,6 @@ describe("Accounts page", () => {
       playwright_state_saved: true,
       session_file_cleared: true,
     });
-    apiMock.accounts.testConnection.mockResolvedValue({
-      username: "alice",
-      proxy_assigned: true,
-      proxy_label: "res-de-1",
-      proxy_health: {
-        ok: true,
-        ip: "1.2.3.4",
-        geo_country: "DE",
-        instagram_reachable: true,
-        geo_mismatch: false,
-      },
-      session_storage: {
-        has_session_id: true,
-        session_file_exists: false,
-        device_file_exists: true,
-        session_source: "database",
-      },
-      instagram_auth: {
-        ok: true,
-        method: "sessionid",
-        ig_username: "alice",
-        challenge: false,
-      },
-      overall_ok: true,
-      checked_at: "2026-06-29T10:00:00Z",
-    });
 
     renderAccounts();
     await screen.findByText("@alice");
@@ -422,14 +397,29 @@ describe("Accounts page", () => {
     });
     const input = within(modal).getByLabelText(/импорт cookies из файла/i);
     fireEvent.change(input, { target: { files: [file] } });
-    fireEvent.click(
-      within(modal).getByRole("button", { name: /импортировать из файла/i })
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /импортировать файл/i })).toBeInTheDocument()
     );
+    fireEvent.click(screen.getByRole("button", { name: /импортировать файл/i }));
 
     await waitFor(() =>
       expect(apiMock.accounts.importCookiesFile).toHaveBeenCalledWith("alice", file)
     );
+    expect(apiMock.accounts.updateSession).not.toHaveBeenCalled();
     expect(apiMock.accounts.testConnection).not.toHaveBeenCalled();
+  });
+
+  it("shows error when saving session with neither sessionid nor file", async () => {
+    renderAccounts();
+    await screen.findByText("@alice");
+    fireEvent.click(screen.getByRole("button", { name: /сессия для alice/i }));
+    await screen.findByRole("heading", { name: /сессия · @alice/i });
+    fireEvent.click(screen.getByRole("button", { name: /сохранить сессию/i }));
+
+    await screen.findByText(/вставьте sessionid.*или выберите json\/txt cookies/i);
+    expect(apiMock.accounts.updateSession).not.toHaveBeenCalled();
+    expect(apiMock.accounts.importCookiesFile).not.toHaveBeenCalled();
   });
 
   it("can test proxy from change-proxy modal and shows instagram reachability", async () => {

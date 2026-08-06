@@ -1501,10 +1501,18 @@ function SessionModal({
   async function submitImport(e: React.FormEvent) {
     e.preventDefault();
     if (!account) return;
+    // Prefer file import when a cookies file is selected (footer Save shared path).
+    if (importFile) {
+      await submitFileImport();
+      return;
+    }
     // Decode %3A → : (Dolphin / browser often export URL-encoded sessionid).
     const trimmed = decodeURIComponent(sessionId.trim().replace(/\+/g, " "));
     if (trimmed.length < 31) {
-      push("Вставьте корректную cookie sessionid (31+ символов)", "error");
+      push(
+        "Вставьте sessionid (31+ символов) или выберите JSON/TXT cookies из Dolphin",
+        "error"
+      );
       return;
     }
     setBusy(true);
@@ -1615,10 +1623,16 @@ function SessionModal({
               form="import-session-form"
               type="submit"
               className="btn-primary"
-              disabled={busy}
+              disabled={busy || fileImportBusy}
             >
               <CheckCircle2 size={16} />
-              {busy ? "Сохранение…" : "Сохранить сессию"}
+              {busy || fileImportBusy
+                ? importFile
+                  ? "Импорт…"
+                  : "Сохранение…"
+                : importFile
+                  ? "Импортировать файл"
+                  : "Сохранить сессию"}
             </button>
           </>
         ) : (
@@ -1700,43 +1714,46 @@ function SessionModal({
       </div>
 
       {tab === "import" ? (
-        <form id="import-session-form" onSubmit={submitImport} className="space-y-4">
-          <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-sm">
-            <div className="text-slate-400">Аккаунт Instagram</div>
-            <div className="font-medium">@{account?.username ?? "—"}</div>
-            <div className="mt-2 text-slate-400">Текущий статус</div>
-            <div className="text-xs">
-              {account?.has_session_id ? (
-                <span className="text-brand-300">Cookie сессии сохранена — вставьте новую для замены</span>
-              ) : (
-                <span className="text-slate-500">Сессия ещё не импортирована</span>
-              )}
+        <div className="space-y-4">
+          <form id="import-session-form" onSubmit={submitImport} className="space-y-4">
+            <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-sm">
+              <div className="text-slate-400">Аккаунт Instagram</div>
+              <div className="font-medium">@{account?.username ?? "—"}</div>
+              <div className="mt-2 text-slate-400">Текущий статус</div>
+              <div className="text-xs">
+                {account?.has_session_id ? (
+                  <span className="text-brand-300">Cookie сессии сохранена — вставьте новую для замены</span>
+                ) : (
+                  <span className="text-slate-500">Сессия ещё не импортирована</span>
+                )}
+              </div>
             </div>
-          </div>
-          <div>
-            <label className="label" htmlFor="import-session-id">
-              cookie sessionid
-            </label>
-            <textarea
-              id="import-session-id"
-              className="input min-h-[88px] font-mono text-xs"
-              value={sessionId}
-              onChange={(e) => setSessionId(e.target.value)}
-              placeholder="Вставьте sessionid из Dolphin / devtools браузера"
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <p className="text-xs text-slate-500 mt-1">
-              Импортируйте после подтверждения challenge в Dolphin на том же прокси.
-              Если в значении есть <span className="font-mono">%3A</span>, оно будет
-              декодировано в <span className="font-mono">:</span> автоматически.
-            </p>
-          </div>
+            <div>
+              <label className="label" htmlFor="import-session-id">
+                cookie sessionid
+              </label>
+              <textarea
+                id="import-session-id"
+                className="input min-h-[88px] font-mono text-xs"
+                value={sessionId}
+                onChange={(e) => setSessionId(e.target.value)}
+                placeholder="Вставьте sessionid из Dolphin / devtools браузера"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Импортируйте после подтверждения challenge в Dolphin на том же прокси.
+                Если в значении есть <span className="font-mono">%3A</span>, оно будет
+                декодировано в <span className="font-mono">:</span> автоматически.
+              </p>
+            </div>
+          </form>
           <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 space-y-3">
             <div className="text-sm text-slate-400">Импорт из файла</div>
             <p className="text-xs text-slate-500">
               JSON cookies Dolphin (.json / .txt) или Playwright state.json. Лишние
               cookies (Google, реклама) отфильтруются — нужен sessionid Instagram.
+              После выбора файла нажмите «Импортировать файл» внизу.
             </p>
             <input
               type="file"
@@ -1745,17 +1762,11 @@ function SessionModal({
               className="block w-full text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:bg-slate-800 file:text-slate-200"
               onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
             />
-            <button
-              type="button"
-              className="btn-primary text-sm"
-              disabled={!importFile || fileImportBusy || busy}
-              onClick={submitFileImport}
-            >
-              <Download size={14} />
-              {fileImportBusy ? "Импорт…" : "Импортировать из файла"}
-            </button>
+            {importFile ? (
+              <p className="text-xs text-brand-300">Выбран: {importFile.name}</p>
+            ) : null}
           </div>
-        </form>
+        </div>
       ) : (
         <div className="space-y-4">
           <p className="text-xs text-amber-300/90">
