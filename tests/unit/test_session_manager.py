@@ -27,6 +27,7 @@ from app.accounts.session_manager import (
     clear_session_file,
     login_or_resume,
     probe_session_auth,
+    session_id_for_mobile_login,
     session_path,
 )
 
@@ -34,6 +35,15 @@ from app.accounts.session_manager import (
 @pytest.fixture()
 def fingerprint(app_env):
     return generate_fingerprint("US")
+
+
+def test_session_id_for_mobile_login_none_without_file(app_env):
+    assert session_id_for_mobile_login("alice", "x" * 40) is None
+
+
+def test_session_id_for_mobile_login_uses_db_sid_when_file_exists(app_env):
+    _write_fake_session("alice", app_env)
+    assert session_id_for_mobile_login("alice", "x" * 40) == "x" * 40
 
 
 def _write_fake_session(username: str, app_env) -> None:

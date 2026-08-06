@@ -330,7 +330,38 @@ def test_totp_seed_forwarded_to_login(app_env, fingerprint, monkeypatch):
     assert captured["totp_seed"] == "JBSWY3DPEHPK3PXP"
 
 
-def test_session_id_forwarded_to_login(app_env, fingerprint, monkeypatch):
+def test_session_id_forwarded_to_login_when_session_file_exists(
+    app_env, fingerprint, monkeypatch
+):
+    captured = {}
+
+    def _factory(*args, **kwargs):
+        captured.update(kwargs)
+        return FakeInstagrapiClient()
+
+    monkeypatch.setattr(rp, "login_or_resume", _factory)
+    monkeypatch.setattr(rp, "warmup", lambda *a, **k: {})
+    monkeypatch.setattr(rp, "think", lambda *a, **k: 0.0)
+
+    (app_env.sessions_dir / "session_a.json").write_text("{}", encoding="utf-8")
+    video = app_env.video_out_dir / "x.mp4"
+    video.write_bytes(b"x")
+    publish_reel(
+        username="a",
+        password="p",
+        fingerprint=fingerprint,
+        proxy_url="http://p:1",
+        video_path=video,
+        caption="c",
+        session_id="x" * 40,
+    )
+    assert captured["session_id"] == "x" * 40
+
+
+def test_session_id_skipped_when_session_file_missing(
+    app_env, fingerprint, monkeypatch
+):
+    """Web cookie in DB without mobile dump must not go to login_by_sessionid."""
     captured = {}
 
     def _factory(*args, **kwargs):
@@ -352,7 +383,7 @@ def test_session_id_forwarded_to_login(app_env, fingerprint, monkeypatch):
         caption="c",
         session_id="x" * 40,
     )
-    assert captured["session_id"] == "x" * 40
+    assert captured["session_id"] is None
 
 
 def test_fetch_media_stats_falls_back_to_media_info_v2(app_env, fingerprint, monkeypatch):

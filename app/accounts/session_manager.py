@@ -67,6 +67,18 @@ def session_path(username: str) -> Path:
     return settings.sessions_dir / f"session_{username}.json"
 
 
+def session_id_for_mobile_login(username: str, db_session_id: str | None) -> str | None:
+    """DB sessionid for mobile login only when a mobile dump exists.
+
+    Dolphin/browser web cookies often live in the DB without ``session_*.json``.
+    Passing those to ``login_by_sessionid`` wastes ~2 minutes and still fails;
+    callers should fall through to password login instead.
+    """
+    if not session_path(username).exists():
+        return None
+    return normalize_sessionid(db_session_id)
+
+
 def clear_session_file(username: str) -> bool:
     """Remove persisted instagrapi session for *username* (e.g. after sessionid import)."""
     path = session_path(username)

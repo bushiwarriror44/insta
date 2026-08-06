@@ -1512,7 +1512,7 @@ function ConnectionModal({
         {sessionExpired && !missingSession ? (
           <div className="rounded-xl border border-amber-500/50 bg-amber-950/40 p-4 text-sm text-amber-100">
             <div className="font-semibold text-amber-200">
-              Mobile API отклонил sessionid
+              Автопостинг: пароль или mobile-сессия
             </div>
             <p className="mt-1 text-xs text-amber-100/90">{SESSION_EXPIRED_MOBILE_HINT}</p>
           </div>

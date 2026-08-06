@@ -18,6 +18,7 @@ from app.accounts.session_manager import (
     AuthenticationError,
     HardCheckpoint,
     login_or_resume,
+    session_id_for_mobile_login,
 )
 from app.behavior.humanizer import think
 from app.behavior.warmup_instagrapi import warmup
@@ -123,7 +124,8 @@ def _login_media_client(
             proxy_url=proxy_url,
             challenge_handler=handler,
             totp_seed=totp_seed,
-            session_id=session_id,
+            session_id=session_id_for_mobile_login(username, session_id),
+            login_identifier=None,
         )
     except HardCheckpoint as exc:
         raise HardPublishError(f"hard checkpoint: {exc}") from exc

@@ -62,7 +62,7 @@ export function isSessionExpired(auth: Pick<InstagramAuthStepOut, "error" | "err
 }
 
 export const SESSION_EXPIRED_MOBILE_HINT =
-  "Проверка и автопостинг идут через mobile API — web-cookie из Dolphin часто отклоняется, даже если sessionid есть в БД. Нажмите «Подготовить к автопостингу», чтобы войти по паролю через mobile API (нужны пароль и при 2FA — TOTP). Для экспорта в Dolphin не жмите «Проверить».";
+  "Mobile API отклонил web-cookie из Dolphin. Автопостинг возможен через пароль аккаунта (очередь сама войдёт без мёртвого sessionid) или — рекомендуется — один раз нажмите «Подготовить к автопостингу», чтобы создать стабильную mobile-сессию (нужны пароль и при 2FA — TOTP). Cookies-only проверка и экспорт в Dolphin не требуют mobile API.";
 
 export function SessionSetupModal({ account, open, onClose, onCompleted }: Props) {
   const { push } = useToast();

@@ -24,6 +24,7 @@ from app.accounts.session_manager import (
     HardCheckpoint,
     ensure_fingerprint_and_proxy,
     login_or_resume,
+    session_id_for_mobile_login,
 )
 from app.accounts.challenge import make_handler
 from app.behavior.humanizer import think
@@ -122,7 +123,7 @@ def idle_warmup(username: str) -> bool:
             proxy_url=proxy_url,
             challenge_handler=handler,
             totp_seed=totp_seed,
-            session_id=session_id,
+            session_id=session_id_for_mobile_login(username, session_id),
         )
     except (HardCheckpoint, AuthenticationError) as exc:
         log.warning("idle.auth_failed", error=str(exc))
