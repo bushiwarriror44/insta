@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.accounts.connection_test import run_account_connection_test
 from app.accounts.login_identifier import resolve_login_identifier
 from app.api.deps import AuthDep, get_db, verify_ws_token
 from app.api.schemas import BrowserCodeIn, BrowserSaveOut, BrowserSessionOut, DiagnosticLogLineOut
@@ -138,6 +138,11 @@ async def save_browser_session(
     db: Session = Depends(get_db),
     stop_after_save: bool = Query(default=False),
 ) -> BrowserSaveOut:
+    """Persist web sessionid from the live browser.
+
+    Does **not** run mobile ``login_by_sessionid`` probe — that often invalidates
+    the freshly saved web cookie. Use ``POST .../test-connection`` explicitly.
+    """
     account = _get_account(username, db)
     try:
         result = await browser_session_manager.save_session(db, account)
@@ -145,8 +150,26 @@ async def save_browser_session(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     db.refresh(account)
-    connection_test = run_account_connection_test(account, db)
-    overall_ok = connection_test.overall_ok
+    overall_ok = bool(result.get("session_imported")) and bool((account.session_id or "").strip())
+    now_ts = datetime.now(timezone.utc).isoformat()
+    logs = [
+        DiagnosticLogLineOut(
+            ts=now_ts,
+            level="info",
+            step="save",
+            message="Сессия сохранена (web cookies → БД)",
+        ),
+        DiagnosticLogLineOut(
+            ts=now_ts,
+            level="info",
+            step="verify",
+            message=(
+                "Mobile API-проверка пропущена — login_by_sessionid часто "
+                "инвалидирует только что сохранённый sessionid. "
+                "При необходимости нажмите «Проверить подключение» отдельно."
+            ),
+        ),
+    ]
 
     if stop_after_save and overall_ok:
         await browser_session_manager.stop_session(username)
@@ -155,8 +178,8 @@ async def save_browser_session(
         **result,
         **_browser_session_response(username, db).model_dump(),
         overall_ok=overall_ok,
-        connection_test=connection_test,
-        logs=[DiagnosticLogLineOut(**line.__dict__) for line in connection_test.logs],
+        connection_test=None,
+        logs=logs,
     )
 
 

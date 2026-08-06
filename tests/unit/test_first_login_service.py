@@ -32,6 +32,47 @@ def _connection_ok(username: str) -> AccountConnectionTestOut:
     )
 
 
+def test_first_login_service_skips_mobile_connection_probe(
+    db_session, make_account, make_proxy, monkeypatch
+):
+    proxy = make_proxy(label="px-noprobe")
+    account = make_account(username="noprobe", proxy=proxy)
+    called = {"n": 0}
+
+    def _probe(acc, db):
+        called["n"] += 1
+        return _connection_ok(acc.username)
+
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.playwright_browsers_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.first_login",
+        lambda **kwargs: FirstLoginResult(ok=True, session_id="c" * 40),
+    )
+
+    def _import(db, acc, **kwargs):
+        acc.session_id = kwargs.get("session_id") or "c" * 40
+        db.commit()
+        return True
+
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.import_playwright_session_to_account",
+        _import,
+    )
+    monkeypatch.setattr(
+        "app.accounts.connection_test.run_account_connection_test",
+        _probe,
+    )
+
+    out = run_account_first_login(account, db_session)
+    assert out.ok is True
+    assert out.connection_test is None
+    assert called["n"] == 0
+    assert any("mobile api-проверка пропущена" in line.message.lower() for line in out.logs)
+
+
 def test_first_login_service_success(db_session, make_account, make_proxy, monkeypatch):
     proxy = make_proxy(label="px-fl")
     account = make_account(username="fluser", proxy=proxy)
@@ -53,10 +94,6 @@ def test_first_login_service_success(db_session, make_account, make_proxy, monke
     monkeypatch.setattr(
         "app.accounts.first_login_service.import_playwright_session_to_account",
         _import,
-    )
-    monkeypatch.setattr(
-        "app.accounts.first_login_service.run_account_connection_test",
-        lambda acc, db: _connection_ok(acc.username),
     )
 
     out = run_account_first_login(account, db_session)
@@ -105,11 +142,6 @@ def test_first_login_skips_playwright_when_session_exists(
         raise AssertionError("first_login should not run when session already exists")
 
     monkeypatch.setattr("app.accounts.first_login_service.first_login", _fail_first_login)
-    monkeypatch.setattr(
-        "app.accounts.first_login_service.run_account_connection_test",
-        lambda acc, db: _connection_ok(acc.username),
-    )
-
     out = run_account_first_login(account, db_session)
     assert out.ok is True
     assert out.session_imported is True
@@ -136,11 +168,6 @@ def test_first_login_service_normalizes_invalid_proxy_timezone(
         "app.accounts.first_login_service.import_playwright_session_to_account",
         lambda db, acc, **kwargs: True,
     )
-    monkeypatch.setattr(
-        "app.accounts.first_login_service.run_account_connection_test",
-        lambda acc, db: _connection_ok(acc.username),
-    )
-
     out = run_account_first_login(account, db_session)
     assert out.ok is True
     assert captured["timezone_id"] == "America/New_York"
@@ -166,11 +193,6 @@ def test_first_login_service_keeps_explicit_account_timezone(
         "app.accounts.first_login_service.import_playwright_session_to_account",
         lambda db, acc, **kwargs: True,
     )
-    monkeypatch.setattr(
-        "app.accounts.first_login_service.run_account_connection_test",
-        lambda acc, db: _connection_ok(acc.username),
-    )
-
     out = run_account_first_login(account, db_session)
     assert out.ok is True
     db_session.refresh(account)
@@ -199,11 +221,6 @@ def test_first_login_service_api_fallback_after_playwright_fail(
         "app.accounts.first_login_service.login_and_export_sessionid",
         lambda *args, **kwargs: "f" * 40,
     )
-    monkeypatch.setattr(
-        "app.accounts.first_login_service.run_account_connection_test",
-        lambda acc, db: _connection_ok(acc.username),
-    )
-
     out = run_account_first_login(account, db_session)
     assert out.ok is True
     assert out.session_imported is True
@@ -325,11 +342,6 @@ def test_first_login_service_account_not_found_retries_email(
         "app.accounts.first_login_service.login_and_export_sessionid",
         _fake_api_login,
     )
-    monkeypatch.setattr(
-        "app.accounts.first_login_service.run_account_connection_test",
-        lambda acc, db: _connection_ok(acc.username),
-    )
-
     out = run_account_first_login(account, db_session)
     assert out.ok is True
     assert calls == ["geuser", "real@example.com"]
@@ -360,11 +372,6 @@ def test_first_login_service_passes_login_identifier_to_playwright(
         "app.accounts.first_login_service.import_playwright_session_to_account",
         lambda db, acc, **kwargs: True,
     )
-    monkeypatch.setattr(
-        "app.accounts.first_login_service.run_account_connection_test",
-        lambda acc, db: _connection_ok(acc.username),
-    )
-
     out = run_account_first_login(account, db_session)
     assert out.ok is True
     assert captured.get("login_identifier") == "login@example.com"
@@ -392,11 +399,6 @@ def test_first_login_service_passes_surface_to_playwright(
         "app.accounts.first_login_service.import_playwright_session_to_account",
         lambda db, acc, **kwargs: True,
     )
-    monkeypatch.setattr(
-        "app.accounts.first_login_service.run_account_connection_test",
-        lambda acc, db: _connection_ok(acc.username),
-    )
-
     out = run_account_first_login(account, db_session, surface="desktop")
     assert out.ok is True
     assert captured.get("surface") == "desktop"

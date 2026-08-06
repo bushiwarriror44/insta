@@ -161,7 +161,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
         setConnectionResult(data.connection_test);
       }
       if (data.ok) {
-        push(`@${account.username}: сессия создана и проверена`, "success");
+        push(`@${account.username}: сессия создана`, "success");
       } else if (data.challenge) {
         push("Требуется подтверждение — переключитесь на вход через браузер", "error");
         setConnectionMode("browser");
@@ -477,26 +477,33 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
         ) : null}
 
         {!success && !autoBusy && connectionMode === "manual" && (
-          <button
-            type="button"
-            className="btn-ghost text-xs"
-            disabled={manualBusy}
-            onClick={async () => {
-              if (!account) return;
-              setManualBusy(true);
-              try {
-                const test = await api.accounts.testConnection(account.username);
-                setConnectionResult(test);
-              } catch (err) {
-                push((err as Error).message, "error");
-              } finally {
-                setManualBusy(false);
-              }
-            }}
-          >
-            <RefreshCw size={14} className={manualBusy ? "animate-spin" : ""} />
-            Только проверить подключение
-          </button>
+          <div className="space-y-2">
+            <p className="text-xs text-amber-200/90">
+              «Проверить подключение» гоняет sessionid через мобильный API Instagram и
+              иногда инвалидирует web-cookie. Для экспорта в Dolphin лучше не проверять
+              сразу после сохранения.
+            </p>
+            <button
+              type="button"
+              className="btn-ghost text-xs"
+              disabled={manualBusy}
+              onClick={async () => {
+                if (!account) return;
+                setManualBusy(true);
+                try {
+                  const test = await api.accounts.testConnection(account.username);
+                  setConnectionResult(test);
+                } catch (err) {
+                  push((err as Error).message, "error");
+                } finally {
+                  setManualBusy(false);
+                }
+              }}
+            >
+              <RefreshCw size={14} className={manualBusy ? "animate-spin" : ""} />
+              Только проверить подключение
+            </button>
+          </div>
         )}
       </div>
     </Modal>

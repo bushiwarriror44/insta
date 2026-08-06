@@ -4,7 +4,6 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from app.accounts.account_diagnostics import log_account_credentials
-from app.accounts.connection_test import run_account_connection_test
 from app.accounts.login_identifier import (
     is_account_not_found_error,
     resolve_login_identifier,
@@ -21,7 +20,7 @@ from app.accounts.session_manager import (
     ensure_fingerprint_and_proxy,
     login_and_export_sessionid,
 )
-from app.api.schemas import AccountConnectionTestOut, DiagnosticLogLineOut, FirstLoginOut
+from app.api.schemas import DiagnosticLogLineOut, FirstLoginOut
 from app.behavior.warmup_playwright import FirstLoginResult, first_login, playwright_browsers_available
 from app.behavior.playwright_surface import resolve_playwright_surface, surface_label
 from app.db import Account, DiagnosticRunKind, Proxy
@@ -65,20 +64,19 @@ def _finish_success(
     collector.info("login", login_message)
     collector.info("import", "sessionid сохранён в БД")
     db.refresh(account)
-    collector.info("verify", "Повторная проверка подключения")
-    connection_test: AccountConnectionTestOut = run_account_connection_test(account, db)
-    overall_ok = connection_test.overall_ok
-    if overall_ok:
-        collector.finish("ok", "Сессия создана и проверена")
-    else:
-        err = connection_test.instagram_auth.error or "Проверка подключения не пройдена"
-        collector.finish("fail", err)
+    # Do not run mobile login_by_sessionid here — it often burns the web cookie.
+    collector.info(
+        "verify",
+        "Web-сессия сохранена; mobile API-проверка пропущена "
+        "(чтобы не инвалидировать sessionid). При необходимости проверьте подключение отдельно.",
+    )
+    collector.finish("ok", "Сессия создана")
     return FirstLoginOut(
         run_id=collector.run_id,
-        ok=overall_ok,
+        ok=True,
         session_imported=True,
-        connection_test=connection_test,
-        error=None if overall_ok else (connection_test.instagram_auth.error or "Проверка не пройдена"),
+        connection_test=None,
+        error=None,
         logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
     )
 

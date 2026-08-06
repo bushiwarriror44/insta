@@ -57,6 +57,26 @@ def test_sessionid_from_cookies_array():
     assert sessionid_from_cookies_array(cookies) == "b" * 40
 
 
+def test_sessionid_from_cookies_array_prefers_instagram_domain():
+    stale = "s" * 40
+    fresh = "f" * 40
+    cookies = [
+        {"name": "sessionid", "value": stale, "domain": ".facebook.com", "expires": 9999999999},
+        {"name": "sessionid", "value": fresh, "domain": ".instagram.com", "expires": 100},
+    ]
+    assert sessionid_from_cookies_array(cookies) == fresh
+
+
+def test_sessionid_from_cookies_array_prefers_later_expires():
+    older = "o" * 40
+    newer = "n" * 40
+    cookies = [
+        {"name": "sessionid", "value": older, "domain": ".instagram.com", "expires": 1000},
+        {"name": "sessionid", "value": newer, "domain": ".instagram.com", "expires": 9000},
+    ]
+    assert sessionid_from_cookies_array(cookies) == newer
+
+
 def test_sessionid_from_cookies_array_decodes_url():
     cookies = [
         {

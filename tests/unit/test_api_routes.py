@@ -1005,14 +1005,19 @@ def test_browser_routes_start_status_code_save_stop(api_client, app_env, monkeyp
         },
     )
     monkeypatch.setattr(browser_session_manager, "submit_code", AsyncMock(return_value=True))
-    monkeypatch.setattr(
-        browser_session_manager,
-        "save_session",
-        AsyncMock(return_value={"session_imported": True, "session_id_saved": True}),
-    )
+
+    async def _fake_save(db, account):
+        account.session_id = "s" * 40
+        db.commit()
+        return {"session_imported": True, "session_id_saved": True}
+
+    monkeypatch.setattr(browser_session_manager, "save_session", _fake_save)
     monkeypatch.setattr(browser_session_manager, "stop_session", AsyncMock())
 
+    called = {"n": 0}
+
     def _connection_ok(acc, db):
+        called["n"] += 1
         from datetime import datetime, timezone
 
         from app.api.schemas import (
@@ -1042,7 +1047,7 @@ def test_browser_routes_start_status_code_save_stop(api_client, app_env, monkeyp
         )
 
     monkeypatch.setattr(
-        "app.api.routes.browser.run_account_connection_test",
+        "app.accounts.connection_test.run_account_connection_test",
         _connection_ok,
     )
 
@@ -1075,7 +1080,9 @@ def test_browser_routes_start_status_code_save_stop(api_client, app_env, monkeyp
     body = save.json()
     assert body["session_imported"] is True
     assert body["overall_ok"] is True
-    assert body["connection_test"]["overall_ok"] is True
+    assert body["connection_test"] is None
+    assert called["n"] == 0
+    assert any("Mobile API-проверка пропущена" in line["message"] for line in body["logs"])
 
     stop = api_client.delete("/api/accounts/browser_user/browser/stop")
     assert stop.status_code == 200

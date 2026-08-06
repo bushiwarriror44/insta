@@ -130,11 +130,12 @@ export function InstagramBrowserPanel({
       if (data.overall_ok) {
         setSavedOk(true);
         onSessionSaved?.(data);
-        push("Сессия сохранена и проверена", "success");
+        push("Сессия сохранена", "success");
       } else {
         setSavedOk(false);
         const err =
-          data.connection_test?.instagram_auth.error ?? "Проверка подключения не пройдена";
+          data.logs?.find((l) => l.level === "error")?.message ??
+          "Не удалось сохранить sessionid из браузера";
         push(err, "error");
         onSessionSaved?.(data);
       }
