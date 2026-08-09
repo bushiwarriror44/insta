@@ -81,7 +81,7 @@ class VncStack:
             env=env,
         )
         self._procs.append(xvfb)
-        await asyncio.sleep(0.35)
+        await asyncio.sleep(0.12)
         _require_running(xvfb, "Xvfb", cmd=xvfb_cmd)
         await self._wait_display_ready(env, timeout_sec=8.0)
 
@@ -107,7 +107,7 @@ class VncStack:
             env=env,
         )
         self._procs.append(x11vnc)
-        await asyncio.sleep(0.4)
+        await asyncio.sleep(0.15)
         _require_running(x11vnc, "x11vnc", cmd=x11vnc_cmd)
 
         websockify_cmd = [
@@ -123,7 +123,7 @@ class VncStack:
             stderr=subprocess.DEVNULL,
         )
         self._procs.append(websockify)
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.12)
         _require_running(websockify, "websockify", cmd=websockify_cmd)
 
         logger.info(
@@ -152,7 +152,7 @@ class VncStack:
 
     async def _wait_display_ready(self, env: dict[str, str], *, timeout_sec: float) -> None:
         # Xvfb needs a short warm-up before Chromium can attach.
-        await asyncio.sleep(min(timeout_sec, 1.2))
+        await asyncio.sleep(min(timeout_sec, 0.45))
 
     def stop(self) -> None:
         for proc in reversed(self._procs):

@@ -9,12 +9,218 @@ import pytest
 from app.browser.session_manager import BrowserSessionManager, BrowserSessionStatus
 
 
+def test_proxy_login_blocked_ignores_unknown_cache():
+    import app.browser.session_manager as sm
+
+    # Fresh MINIMAL cache: reachable=False, status=None → must NOT block auto-open
+    assert sm._proxy_login_blocked(login_reachable=False, login_http_status=None) is False
+    assert sm._proxy_login_blocked(login_reachable=None, login_http_status=None) is False
+    assert sm._proxy_login_blocked(login_reachable=False, login_http_status=429) is True
+    assert sm._proxy_login_blocked(login_reachable=False, login_http_status=403) is True
+    assert sm._proxy_login_blocked(login_reachable=True, login_http_status=200) is False
+
+
 @pytest.mark.asyncio
 async def test_status_dict_stopped_by_default():
     mgr = BrowserSessionManager()
     data = mgr.status_dict("alice")
     assert data["status"] == BrowserSessionStatus.stopped.value
     assert data["awaiting_code"] is False
+    assert data["logs"] == []
+
+
+@pytest.mark.asyncio
+async def test_status_dict_includes_action_logs():
+    from app.browser.session_manager import BrowserSessionState
+
+    mgr = BrowserSessionManager()
+    session = BrowserSessionState(username="alice")
+    session.log("info", "start", "hello")
+    mgr._sessions["alice"] = session
+    data = mgr.status_dict("alice")
+    assert data["logs"]
+    assert data["logs"][0]["message"] == "hello"
+    assert data["logs"][0]["step"] == "start"
+
+
+@pytest.mark.asyncio
+async def test_nav_urls_for_quick_targets():
+    import app.browser.session_manager as sm
+
+    assert sm._nav_urls_for_target("reels", username="alice", need_login=False) == [
+        "https://www.instagram.com/reels/"
+    ]
+    assert sm._nav_urls_for_target("direct", username="alice", need_login=False) == [
+        "https://www.instagram.com/direct/inbox/"
+    ]
+    assert sm._nav_urls_for_target("profile", username="alice", need_login=False) == [
+        "https://www.instagram.com/alice/"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_open_instagram_reels_target(monkeypatch):
+    import app.browser.session_manager as sm
+    from app.browser.session_manager import BrowserSessionManager, BrowserSessionState, BrowserSessionStatus
+
+    mgr = BrowserSessionManager()
+    page = AsyncMock()
+    page.url = "https://www.instagram.com/"
+    session = BrowserSessionState(
+        username="alice",
+        page=page,
+        context=AsyncMock(),
+        status=BrowserSessionStatus.running,
+    )
+    mgr._sessions["alice"] = session
+
+    captured: dict = {}
+
+    async def fake_open(page, *, username, need_login, target="auto"):
+        captured["target"] = target
+        page.url = "https://www.instagram.com/reels/"
+        return None, 200
+
+    monkeypatch.setattr(sm, "playwright_state_path", lambda _u: __import__("pathlib").Path("/tmp/none"))
+    monkeypatch.setattr(sm, "storage_state_has_session", lambda _u: True)
+    monkeypatch.setattr(sm, "_open_instagram_browser", fake_open)
+    monkeypatch.setattr(sm, "_human_wait", AsyncMock())
+    monkeypatch.setattr(sm, "_accept_cookie_banner", AsyncMock())
+    monkeypatch.setattr(sm, "_is_logged_in", AsyncMock(return_value=True))
+    mgr._refresh_code_state = AsyncMock()  # type: ignore[method-assign]
+
+    await mgr.open_instagram(
+        MagicMock(username="alice"),
+        MagicMock(url="http://p:1"),
+        target="reels",
+    )
+    assert captured["target"] == "reels"
+    assert session.page_url == "https://www.instagram.com/reels/"
+
+
+@pytest.mark.asyncio
+async def test_open_instagram_honors_explicit_autofill_without_global_flag(monkeypatch):
+    from app.config import settings
+    import app.browser.session_manager as sm
+    from app.browser.session_manager import BrowserSessionManager, BrowserSessionState, BrowserSessionStatus
+
+    monkeypatch.setattr(settings, "browser_autofill_on_start", False)
+
+    mgr = BrowserSessionManager()
+    page = AsyncMock()
+    page.url = "https://www.instagram.com/accounts/login/"
+    context = AsyncMock()
+    session = BrowserSessionState(
+        username="alice",
+        page=page,
+        context=context,
+        status=BrowserSessionStatus.running,
+    )
+    mgr._sessions["alice"] = session
+
+    monkeypatch.setattr(sm, "playwright_state_path", lambda _u: __import__("pathlib").Path("/tmp/none"))
+    monkeypatch.setattr(sm, "storage_state_has_session", lambda _u: False)
+    monkeypatch.setattr(sm, "_open_instagram_browser", AsyncMock(return_value=(None, 200)))
+    monkeypatch.setattr(sm, "_human_wait", AsyncMock())
+    monkeypatch.setattr(sm, "_accept_cookie_banner", AsyncMock())
+    monkeypatch.setattr(sm, "_is_logged_in", AsyncMock(return_value=False))
+    monkeypatch.setattr(sm, "_ensure_login_page", AsyncMock())
+    fill = AsyncMock()
+    monkeypatch.setattr(sm, "_fill_login_field", fill)
+    monkeypatch.setattr(sm, "_submit_login_form", AsyncMock())
+    monkeypatch.setattr(sm, "_try_submit_totp", AsyncMock())
+    monkeypatch.setattr(sm, "_dismiss_post_login_modals", AsyncMock())
+    monkeypatch.setattr(sm, "resolve_login_identifier", lambda a: a.username)
+    mgr._refresh_code_state = AsyncMock()  # type: ignore[method-assign]
+
+    account = MagicMock(username="alice", password="secret", totp_seed=None)
+    proxy = MagicMock(url="http://u:p@1.2.3.4:8080")
+
+    await mgr.open_instagram(account, proxy, autofill_login=True, target="login")
+
+    assert fill.await_count >= 2
+    assert any("автозаполнен" in line["message"].lower() or "Автозаполнение" in line["message"] for line in session.action_logs)
+
+
+@pytest.mark.asyncio
+async def test_start_session_auto_opens_instagram_by_default(monkeypatch):
+    from app.config import settings
+    import app.browser.session_manager as sm
+
+    monkeypatch.setattr(settings, "browser_vnc_enabled", True)
+    monkeypatch.setattr(settings, "browser_auto_open_instagram", True)
+    monkeypatch.setattr(settings, "browser_autofill_on_start", False)
+    monkeypatch.setattr(sm, "vnc_stack_available", lambda: True)
+    monkeypatch.setattr(sm, "playwright_browsers_available", lambda: True)
+    monkeypatch.setattr(
+        sm,
+        "health_check_cached",
+        lambda *a, **k: None,
+    )
+
+    class FakeVnc:
+        async def start(self):
+            return None
+
+        def stop(self):
+            return None
+
+    monkeypatch.setattr(sm, "VncStack", lambda **kwargs: FakeVnc())
+    monkeypatch.setattr(sm, "allocate_ports", lambda _d: (5900, 6080))
+
+    page = AsyncMock()
+    page.url = "about:blank"
+    page.main_frame = MagicMock()
+
+    async def goto(url, **kwargs):
+        page.url = url
+        return None
+
+    page.goto = goto
+    page.on = MagicMock()
+    page.remove_listener = MagicMock()
+
+    context = AsyncMock()
+    context.new_page = AsyncMock(return_value=page)
+    browser = AsyncMock()
+    browser.new_context = AsyncMock(return_value=context)
+    pw = AsyncMock()
+    pw.chromium.launch = AsyncMock(return_value=browser)
+    pw.stop = AsyncMock()
+    playwright_manager = MagicMock()
+    playwright_manager.start = AsyncMock(return_value=pw)
+
+    monkeypatch.setattr(sm, "load_fingerprint", lambda _u: None)
+    monkeypatch.setattr(sm, "playwright_state_path", lambda _u: __import__("pathlib").Path("/tmp/none"))
+    monkeypatch.setattr(sm, "storage_state_has_session", lambda _u: False)
+    monkeypatch.setattr(sm, "_apply_stealth_context", AsyncMock())
+    monkeypatch.setattr(sm, "_human_wait", AsyncMock())
+    monkeypatch.setattr(sm, "_accept_cookie_banner", AsyncMock())
+    monkeypatch.setattr(sm, "_is_logged_in", AsyncMock(return_value=False))
+    monkeypatch.setattr(sm, "_login_form_visible", AsyncMock(return_value=True))
+
+    fake_module = __import__("types").ModuleType("playwright.async_api")
+    fake_module.async_playwright = lambda: playwright_manager
+    monkeypatch.setitem(__import__("sys").modules, "playwright.async_api", fake_module)
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "playwright_stealth",
+        __import__("types").ModuleType("playwright_stealth"),
+    )
+
+    mgr = BrowserSessionManager()
+    mgr._cleanup_session = AsyncMock()  # type: ignore[method-assign]
+    mgr._refresh_code_state = AsyncMock()  # type: ignore[method-assign]
+    mgr._poll_session = AsyncMock()  # type: ignore[method-assign]
+    mgr._auto_stop = AsyncMock()  # type: ignore[method-assign]
+    account = MagicMock(username="alice", password="secret", totp_seed=None)
+    proxy = MagicMock(url="http://u:p@1.2.3.4:8080", timezone="UTC", country="US")
+
+    session = await mgr.start_session(account, proxy, surface="mobile")
+
+    assert session.status == BrowserSessionStatus.running
+    assert "instagram.com" in (session.page_url or "")
+    assert any(line["step"] == "goto" for line in session.action_logs)
 
 
 @pytest.mark.asyncio
@@ -139,6 +345,7 @@ async def test_start_session_uses_mobile_surface(monkeypatch):
     monkeypatch.setattr(settings, "browser_lightweight", True)
     monkeypatch.setattr(sm, "vnc_stack_available", lambda: True)
     monkeypatch.setattr(sm, "playwright_browsers_available", lambda: True)
+    monkeypatch.setattr(sm, "health_check_cached", lambda *a, **k: None)
 
     captured: dict = {}
 
@@ -357,6 +564,7 @@ async def test_start_session_autofill_uses_fast_path(monkeypatch):
     monkeypatch.setattr(settings, "browser_autofill_on_start", True)
     monkeypatch.setattr(sm, "vnc_stack_available", lambda: True)
     monkeypatch.setattr(sm, "playwright_browsers_available", lambda: True)
+    monkeypatch.setattr(sm, "health_check_cached", lambda *a, **k: None)
 
     class FakeVnc:
         async def start(self):
@@ -445,6 +653,7 @@ async def test_start_session_skips_instagram_goto_by_default(monkeypatch):
     monkeypatch.setattr(settings, "browser_auto_open_instagram", False)
     monkeypatch.setattr(sm, "vnc_stack_available", lambda: True)
     monkeypatch.setattr(sm, "playwright_browsers_available", lambda: True)
+    monkeypatch.setattr(sm, "health_check_cached", lambda *a, **k: None)
 
     goto_calls: list[str] = []
 

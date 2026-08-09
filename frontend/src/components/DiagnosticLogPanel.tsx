@@ -41,6 +41,13 @@ const STEP_LABELS: Record<string, string> = {
   timezone: "Часовой пояс",
   fallback: "Fallback",
   mint: "Mint",
+  vnc: "VNC",
+  goto: "Переход",
+  autofill: "Автозаполнение",
+  code: "Код",
+  save: "Сохранение",
+  stop: "Стоп",
+  poll: "Опрос",
 };
 
 function formatTime(iso: string) {

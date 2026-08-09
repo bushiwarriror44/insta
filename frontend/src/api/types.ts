@@ -175,7 +175,7 @@ export interface DiagnosticLogLine {
 
 export interface DiagnosticRunOut {
   id: number;
-  kind: "connection_test" | "publish_job" | "first_login" | "mint_mobile_session";
+  kind: "connection_test" | "publish_job" | "first_login" | "mint_mobile_session" | "browser_session";
   account_id: number;
   account_username: string | null;
   job_id: number | null;
@@ -249,6 +249,7 @@ export interface BrowserSessionOut {
   account_login?: string | null;
   account_password?: string | null;
   account_notes?: string | null;
+  logs?: DiagnosticLogLine[];
 }
 
 export interface BrowserSaveOut extends BrowserSessionOut {

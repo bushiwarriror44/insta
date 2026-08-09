@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     browser_display_base: int = Field(default=100, ge=10, le=200)
     browser_lightweight: bool = Field(default=True)
     browser_goto_timeout_sec: int = Field(default=25, ge=10, le=90)
-    browser_auto_open_instagram: bool = Field(default=False)
+    browser_auto_open_instagram: bool = Field(default=True)
     browser_autofill_on_start: bool = Field(default=False)
 
     scheduler_tz: str = Field(default="UTC")

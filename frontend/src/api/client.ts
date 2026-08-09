@@ -299,12 +299,30 @@ export const api = {
           query: opts?.loginSurface ? { login_surface: opts.loginSurface } : undefined,
         }
       ),
-    browserOpenInstagram: (username: string, opts?: { autofill?: boolean }) =>
+    browserOpenInstagram: (
+      username: string,
+      opts?: {
+        autofill?: boolean;
+        target?:
+          | "auto"
+          | "login"
+          | "home"
+          | "reels"
+          | "explore"
+          | "direct"
+          | "activity"
+          | "profile"
+          | "edit_profile";
+      }
+    ) =>
       request<BrowserSessionOut>(
         `/api/accounts/${encodeURIComponent(username)}/browser/open-instagram`,
         {
           method: "POST",
-          query: opts?.autofill ? { autofill: true } : undefined,
+          query: {
+            ...(opts?.autofill ? { autofill: true } : {}),
+            ...(opts?.target && opts.target !== "auto" ? { target: opts.target } : {}),
+          },
         }
       ),
     browserStatus: (username: string) =>

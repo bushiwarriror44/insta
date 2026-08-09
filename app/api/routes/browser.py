@@ -12,10 +12,9 @@ from app.accounts.login_identifier import resolve_login_identifier
 from app.api.deps import AuthDep, get_db, verify_ws_token
 from app.api.schemas import BrowserCodeIn, BrowserSaveOut, BrowserSessionOut, DiagnosticLogLineOut
 from app.behavior.playwright_surface import resolve_playwright_surface
-from app.browser.session_manager import browser_session_manager
+from app.browser.session_manager import NavTarget, browser_session_manager
 from app.db import Account, Proxy
 from app.logging_setup import get_logger
-from app.proxies.pool import HealthCheckScope, ProxyError, health_check_cached
 
 logger = get_logger(__name__)
 
@@ -36,18 +35,6 @@ def _get_proxy(account: Account, db: Session) -> Proxy:
     if proxy is None:
         raise HTTPException(status_code=400, detail="Запись прокси отсутствует")
     return proxy
-
-
-async def _load_proxy_snapshot(proxy_url: str):
-    try:
-        return await asyncio.to_thread(
-            health_check_cached,
-            proxy_url,
-            force=False,
-            scope=HealthCheckScope.MINIMAL,
-        )
-    except ProxyError:
-        return None
 
 
 def _account_credentials(account: Account) -> dict[str, str | None]:
@@ -81,18 +68,16 @@ async def start_browser_session(
     resolved_surface = resolve_playwright_surface(login_surface or account.login_surface)
     account.login_surface = resolved_surface
     db.commit()
-    snapshot = await _load_proxy_snapshot(proxy.url)
     try:
+        # Proxy preflight runs in parallel with VNC inside start_session.
         await browser_session_manager.start_session(
             account,
             proxy,
             surface=resolved_surface,
-            proxy_snapshot=snapshot,
+            proxy_snapshot=None,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    if snapshot is not None:
-        browser_session_manager.apply_proxy_snapshot(username, snapshot)
     return _browser_session_response(username, db)
 
 
@@ -100,12 +85,18 @@ async def start_browser_session(
 async def open_instagram_in_browser(
     username: str,
     autofill: bool = Query(default=False),
+    target: NavTarget = Query(default="auto"),
     db: Session = Depends(get_db),
 ) -> BrowserSessionOut:
     account = _get_account(username, db)
     proxy = _get_proxy(account, db)
     try:
-        await browser_session_manager.open_instagram(account, proxy, autofill_login=autofill)
+        await browser_session_manager.open_instagram(
+            account,
+            proxy,
+            autofill_login=autofill,
+            target=target,
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _browser_session_response(username, db)
@@ -151,8 +142,20 @@ async def save_browser_session(
 
     db.refresh(account)
     overall_ok = bool(result.get("session_imported")) and bool((account.session_id or "").strip())
+
+    if stop_after_save and overall_ok:
+        await browser_session_manager.stop_session(username)
+
+    browser_session_manager.persist_action_logs(
+        db,
+        account,
+        status="ok" if overall_ok else "warn",
+        summary="browser save: web sessionid" if overall_ok else "browser save incomplete",
+    )
+
+    base = _browser_session_response(username, db)
     now_ts = datetime.now(timezone.utc).isoformat()
-    logs = [
+    extra = [
         DiagnosticLogLineOut(
             ts=now_ts,
             level="info",
@@ -164,27 +167,31 @@ async def save_browser_session(
             level="info",
             step="verify",
             message=(
-                "Mobile API-проверка пропущена — login_by_sessionid часто "
-                "инвалидирует только что сохранённый sessionid. "
-                "При необходимости нажмите «Проверить подключение» отдельно."
+                "Mobile API-проверка пропущена. Для автопостинга: "
+                "«Подготовить к автопостингу» или пост в очередь по паролю."
             ),
         ),
     ]
-
-    if stop_after_save and overall_ok:
-        await browser_session_manager.stop_session(username)
+    merged_logs = list(base.logs) + extra
 
     return BrowserSaveOut(
         **result,
-        **_browser_session_response(username, db).model_dump(),
+        **base.model_dump(exclude={"logs"}),
         overall_ok=overall_ok,
         connection_test=None,
-        logs=logs,
+        logs=merged_logs,
     )
 
 
 @router.delete("/{username}/browser/stop", response_model=BrowserSessionOut, dependencies=[AuthDep])
 async def stop_browser_session(username: str, db: Session = Depends(get_db)) -> BrowserSessionOut:
+    account = _get_account(username, db)
+    browser_session_manager.persist_action_logs(
+        db,
+        account,
+        status="ok",
+        summary="browser session stopped",
+    )
     await browser_session_manager.stop_session(username)
     return _browser_session_response(username, db)
 

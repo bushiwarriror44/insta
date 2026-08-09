@@ -264,6 +264,7 @@ class BrowserSessionOut(BaseModel):
     account_login: Optional[str] = None
     account_password: Optional[str] = None
     account_notes: Optional[str] = None
+    logs: list[DiagnosticLogLineOut] = Field(default_factory=list)
 
 
 class BrowserCodeIn(BaseModel):

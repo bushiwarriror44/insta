@@ -6,8 +6,9 @@ import json
 import os
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
@@ -20,6 +21,7 @@ from app.accounts.playwright_session import (
     sessionid_from_playwright_state_data,
     storage_state_has_session,
 )
+from app.accounts.session_cookie import sessionid_diag_label
 from app.behavior.warmup_playwright import (
     _INSTAGRAM_LOGIN_URL,
     _INSTAGRAM_URL,
@@ -30,7 +32,6 @@ from app.behavior.warmup_playwright import (
     _dismiss_post_login_modals,
     _ensure_login_page,
     _fill_login_field,
-    _has_auth_cookies,
     _human_wait,
     _is_logged_in,
     _login_form_visible,
@@ -48,12 +49,53 @@ from app.behavior.playwright_surface import (
     vnc_screen_size,
 )
 from app.browser.vnc_stack import VncStack, allocate_ports, vnc_stack_available
-from app.proxies.pool import note_proxy_login_http_status
+from app.diagnostics.collector import DiagnosticCollector
+from app.db.models import DiagnosticRunKind
+from app.proxies.pool import HealthCheckScope, ProxyError, health_check_cached, note_proxy_login_http_status
 from app.config import settings
 from app.geo.timezone_normalize import normalize_playwright_timezone
 from app.logging_setup import get_logger
 
 logger = get_logger(__name__)
+
+_MAX_ACTION_LOGS = 200
+LogLevel = Literal["info", "warn", "error"]
+NavTarget = Literal[
+    "auto",
+    "login",
+    "home",
+    "reels",
+    "explore",
+    "direct",
+    "activity",
+    "profile",
+    "edit_profile",
+]
+
+_INSTAGRAM_BASE = "https://www.instagram.com"
+
+
+def _nav_urls_for_target(
+    target: NavTarget,
+    *,
+    username: str,
+    need_login: bool,
+) -> list[str]:
+    """Whitelist of Instagram URLs for interactive navigation."""
+    handle = (username or "").strip().lstrip("@")
+    mapping: dict[str, list[str]] = {
+        "login": [_INSTAGRAM_LOGIN_URL],
+        "home": [_INSTAGRAM_URL],
+        "reels": [f"{_INSTAGRAM_BASE}/reels/"],
+        "explore": [f"{_INSTAGRAM_BASE}/explore/"],
+        "direct": [f"{_INSTAGRAM_BASE}/direct/inbox/"],
+        "activity": [f"{_INSTAGRAM_BASE}/accounts/activity/"],
+        "edit_profile": [f"{_INSTAGRAM_BASE}/accounts/edit/"],
+        "profile": [f"{_INSTAGRAM_BASE}/{handle}/"] if handle else [_INSTAGRAM_URL],
+    }
+    if target == "auto":
+        return [_INSTAGRAM_LOGIN_URL] if need_login else [_INSTAGRAM_URL]
+    return mapping.get(target, [_INSTAGRAM_URL] if not need_login else [_INSTAGRAM_LOGIN_URL])
 
 _GOTO_WARNING_MESSAGE = (
     "Instagram не открылся через прокси (HTTP-ошибка). "
@@ -110,11 +152,19 @@ def _proxy_login_blocked(
     login_reachable: bool | None,
     login_http_status: int | None,
 ) -> bool:
+    """True only when we have evidence the login page is blocked.
+
+    Empty MINIMAL cache sets ``login_reachable=False`` with ``http_status=None``
+    (unknown). That must not skip auto-open — otherwise Instagram never opens
+    on a fresh proxy.
+    """
     if login_http_status in _RATE_LIMIT_STATUSES:
         return True
     if login_http_status in (403, 451):
         return True
-    return login_reachable is False
+    if login_reachable is False and login_http_status is not None:
+        return True
+    return False
 
 
 def _warning_from_proxy_preflight(
@@ -205,9 +255,15 @@ async def _try_goto_url(
             pass
 
 
-async def _open_instagram_browser(page, *, username: str, need_login: bool) -> tuple[str | None, int | None]:
+async def _open_instagram_browser(
+    page,
+    *,
+    username: str,
+    need_login: bool,
+    target: NavTarget = "auto",
+) -> tuple[str | None, int | None]:
     """Open Instagram via a URL ladder; never fall back to about:blank."""
-    urls = [_INSTAGRAM_LOGIN_URL] if need_login else [_INSTAGRAM_URL]
+    urls = _nav_urls_for_target(target, username=username, need_login=need_login)
 
     nav_status: dict[str, Any] = {}
     last_http_status: int | None = None
@@ -221,6 +277,9 @@ async def _open_instagram_browser(page, *, username: str, need_login: bool) -> t
             break
         if landed or _is_on_instagram(page.url):
             on_ig = True
+            # Explicit page targets: land and return. Login/auto may wait for form.
+            if target not in ("auto", "login"):
+                return None, last_http_status
             if not need_login or url == _INSTAGRAM_LOGIN_URL:
                 return None, last_http_status
             if await _login_form_visible(page):
@@ -263,6 +322,8 @@ class BrowserSessionState:
     page_url: str | None = None
     login_surface: LoginSurface = "mobile"
     started_at: float = field(default_factory=time.monotonic)
+    action_logs: list[dict[str, str]] = field(default_factory=list)
+    last_logged_url: str | None = None
     vnc_stack: VncStack | None = None
     pw: Any = None
     browser: Any = None
@@ -270,6 +331,19 @@ class BrowserSessionState:
     page: Any = None
     poll_task: asyncio.Task | None = None
     auto_stop_task: asyncio.Task | None = None
+
+    def log(self, level: LogLevel, step: str, message: str) -> None:
+        line = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "level": level,
+            "step": step,
+            "message": message,
+        }
+        self.action_logs.append(line)
+        if len(self.action_logs) > _MAX_ACTION_LOGS:
+            del self.action_logs[: len(self.action_logs) - _MAX_ACTION_LOGS]
+        log_fn = logger.info if level == "info" else logger.warning if level == "warn" else logger.error
+        log_fn("browser_session.action", username=self.username, step=step, level=level, message=message)
 
 
 class BrowserSessionManager:
@@ -323,6 +397,7 @@ class BrowserSessionManager:
                 "proxy_instagram_reachable": None,
                 "proxy_instagram_login_reachable": None,
                 "proxy_instagram_login_http_status": None,
+                "logs": [],
             }
         return {
             "username": username,
@@ -341,7 +416,32 @@ class BrowserSessionManager:
             "proxy_instagram_reachable": session.proxy_instagram_reachable,
             "proxy_instagram_login_reachable": session.proxy_instagram_login_reachable,
             "proxy_instagram_login_http_status": session.proxy_instagram_login_http_status,
+            "logs": list(session.action_logs),
         }
+
+    def persist_action_logs(
+        self,
+        db: Session,
+        account,
+        *,
+        status: Literal["ok", "warn", "fail"] = "ok",
+        summary: str,
+    ) -> int | None:
+        session = self._sessions.get(account.username)
+        if session is None or not session.action_logs:
+            return None
+        collector = DiagnosticCollector(
+            db,
+            kind=DiagnosticRunKind.browser_session,
+            account_id=account.id,
+        )
+        for item in session.action_logs:
+            level = item.get("level", "info")
+            if level not in ("info", "warn", "error"):
+                level = "info"
+            collector.log(level, str(item.get("step") or "browser"), str(item.get("message") or ""))
+        collector.finish(status, summary)
+        return collector.run_id
 
     async def start_session(
         self,
@@ -412,10 +512,45 @@ class BrowserSessionManager:
                     proxy_snapshot, "instagram_login_http_status", None
                 ),
             )
+            session.log(
+                "info",
+                "start",
+                f"Запуск браузера (surface={resolved_surface}, display=:{display}, lightweight={lightweight})",
+            )
             self._sessions[username] = session
 
         try:
-            await vnc.start()
+            async def _fetch_snapshot():
+                if proxy_snapshot is not None:
+                    return proxy_snapshot
+                try:
+                    return await asyncio.to_thread(
+                        health_check_cached,
+                        proxy.url,
+                        force=False,
+                        scope=HealthCheckScope.MINIMAL,
+                    )
+                except ProxyError as exc:
+                    session.log("warn", "proxy", f"Preflight прокси не удался: {exc}")
+                    return None
+                except Exception as exc:  # noqa: BLE001
+                    session.log("warn", "proxy", f"Preflight прокси: {exc}")
+                    return None
+
+            session.log("info", "vnc", "Старт VNC + preflight прокси…")
+            snap, _ = await asyncio.gather(_fetch_snapshot(), vnc.start())
+            if snap is not None:
+                self.apply_proxy_snapshot(username, snap)
+                session.log(
+                    "info",
+                    "proxy",
+                    (
+                        f"Прокси OK ip={session.proxy_ip or '—'}; "
+                        f"login_reachable={session.proxy_instagram_login_reachable}; "
+                        f"login_http={session.proxy_instagram_login_http_status}"
+                    ),
+                )
+            session.log("info", "vnc", f"VNC готов (ws_port={ws_port})")
             await self._launch_browser(
                 session,
                 account,
@@ -424,6 +559,11 @@ class BrowserSessionManager:
                 surface=resolved_surface,
             )
             session.status = BrowserSessionStatus.running
+            session.log(
+                "info",
+                "browser",
+                f"Chromium запущен; URL={session.page_url or '—'}",
+            )
             session.poll_task = asyncio.create_task(self._poll_session(session, account))
             timeout_sec = settings.browser_session_timeout_min * 60
             session.auto_stop_task = asyncio.create_task(self._auto_stop(username, timeout_sec))
@@ -431,8 +571,9 @@ class BrowserSessionManager:
         except Exception as exc:
             session.status = BrowserSessionStatus.error
             session.error = str(exc)
+            session.log("error", "start", f"Ошибка запуска: {exc}")
             logger.error("browser_session.start_failed", username=username, error=str(exc))
-            await self._cleanup_session(session)
+            await self._cleanup_session(session, remove=False)
             raise
 
     async def _launch_browser(
@@ -512,6 +653,11 @@ class BrowserSessionManager:
         page = session.page
         has_saved_session = state_file.exists() and storage_state_has_session(account.username)
         need_login = not has_saved_session
+        session.log(
+            "info",
+            "browser",
+            f"Контекст готов; storage_state={'да' if has_saved_session else 'нет'}; need_login={need_login}",
+        )
         await self._maybe_open_instagram(
             session,
             account,
@@ -522,6 +668,7 @@ class BrowserSessionManager:
         )
 
         session.page_url = page.url
+        session.last_logged_url = page.url
         await self._refresh_code_state(session)
 
     async def _maybe_open_instagram(
@@ -543,12 +690,27 @@ class BrowserSessionManager:
                 login_reachable=session.proxy_instagram_login_reachable,
                 login_http_status=session.proxy_instagram_login_http_status,
             )
+            session.log(
+                "error",
+                "goto",
+                (
+                    f"Автопереход пропущен: login blocked "
+                    f"(reachable={session.proxy_instagram_login_reachable}, "
+                    f"http={session.proxy_instagram_login_http_status}). {session.launch_warning}"
+                ),
+            )
             return
 
         if not settings.browser_auto_open_instagram:
             session.launch_warning = _MANUAL_OPEN_HINT
+            session.log("warn", "goto", _MANUAL_OPEN_HINT)
             return
 
+        session.log(
+            "info",
+            "goto",
+            f"Автопереход на Instagram ({'login' if need_login else 'home'})…",
+        )
         await self._navigate_instagram_and_maybe_autofill(
             session,
             account,
@@ -556,6 +718,7 @@ class BrowserSessionManager:
             page=page,
             need_login=need_login,
             autofill_login=autofill_login and settings.browser_autofill_on_start,
+            target="auto",
         )
 
     async def _navigate_instagram_and_maybe_autofill(
@@ -567,53 +730,82 @@ class BrowserSessionManager:
         page,
         need_login: bool,
         autofill_login: bool,
+        target: NavTarget = "auto",
     ) -> None:
         warning, login_http_status = await _open_instagram_browser(
             page,
             username=account.username,
             need_login=need_login,
+            target=target,
         )
         if warning:
             session.launch_warning = warning
+            session.log("warn", "goto", warning)
         if login_http_status is not None:
             session.proxy_instagram_login_http_status = login_http_status
             if login_http_status >= 400:
                 session.proxy_instagram_login_reachable = False
                 note_proxy_login_http_status(proxy.url, int(login_http_status))
+            session.log(
+                "info",
+                "goto",
+                f"HTTP status навигации: {login_http_status}; URL={page.url}",
+            )
 
-        await _human_wait(0.2, 0.5)
+        await _human_wait(0.05, 0.15)
         on_ig = _is_on_instagram(page.url)
         if on_ig or not session.launch_warning:
             await _accept_cookie_banner(page)
+            if on_ig:
+                session.log("info", "goto", f"На Instagram: {page.url}")
+        elif not on_ig:
+            session.log(
+                "warn",
+                "goto",
+                f"Instagram не загрузился, текущий URL={page.url or '—'}",
+            )
         session.page_url = page.url
+        session.last_logged_url = page.url
 
         if (
             autofill_login
+            and target in ("auto", "login")
             and not await _is_logged_in(session.context, page)
             and (on_ig or not session.launch_warning)
         ):
             login_id = resolve_login_identifier(account)
+            session.log("info", "autofill", f"Автозаполнение логина ({login_id})…")
             try:
                 await _ensure_login_page(page, fast=True)
                 await _fill_login_field(page, password=False, text=login_id)
-                await _human_wait(0.2, 0.5)
+                await _human_wait(0.1, 0.25)
                 await _fill_login_field(page, password=True, text=account.password)
                 await _submit_login_form(page)
-                await _human_wait(0.5, 1.0)
+                await _human_wait(0.3, 0.6)
                 await _try_submit_totp(page, account.totp_seed)
                 await _dismiss_post_login_modals(page)
+                session.log("info", "autofill", "Форма логина отправлена")
             except Exception as exc:
+                session.log("warn", "autofill", f"Автозаполнение не удалось: {exc}")
                 logger.warning("browser_session.autofill_failed", username=account.username, error=str(exc))
 
         session.page_url = page.url
 
-    async def open_instagram(self, account, proxy, *, autofill_login: bool = False) -> None:
+    async def open_instagram(
+        self,
+        account,
+        proxy,
+        *,
+        autofill_login: bool = False,
+        target: NavTarget = "auto",
+    ) -> None:
         session = self._sessions.get(account.username)
         if session is None or session.page is None or session.context is None:
             raise RuntimeError("No active browser session for this account")
         if session.status not in (
             BrowserSessionStatus.running,
             BrowserSessionStatus.awaiting_code,
+            BrowserSessionStatus.saved,
         ):
             raise RuntimeError("Browser session is not running")
 
@@ -622,13 +814,20 @@ class BrowserSessionManager:
             state_file.exists() and storage_state_has_session(account.username)
         )
         session.launch_warning = None
+        # Explicit operator click: honor autofill_login without BROWSER_AUTOFILL_ON_START.
+        session.log(
+            "info",
+            "goto",
+            f"Ручной переход target={target}, autofill={autofill_login}, need_login={need_login}",
+        )
         await self._navigate_instagram_and_maybe_autofill(
             session,
             account,
             proxy,
             page=session.page,
             need_login=need_login,
-            autofill_login=autofill_login and settings.browser_autofill_on_start,
+            autofill_login=autofill_login,
+            target=target,
         )
         await self._refresh_code_state(session)
 
@@ -644,7 +843,25 @@ class BrowserSessionManager:
                 else:
                     await self._refresh_code_state(session)
                 session.page_url = session.page.url
+                if session.page_url != session.last_logged_url:
+                    prev = session.last_logged_url or "—"
+                    session.last_logged_url = session.page_url
+                    session.log(
+                        "info",
+                        "poll",
+                        f"URL: {prev} → {session.page_url}",
+                    )
+                    if session.page_url and (
+                        session.page_url.startswith("chrome-error://")
+                        or session.page_url == "about:blank"
+                    ):
+                        session.log(
+                            "warn",
+                            "poll",
+                            f"Подозрительный URL страницы: {session.page_url}",
+                        )
             except Exception as exc:
+                session.log("warn", "poll", f"Ошибка опроса: {exc}")
                 logger.warning("browser_session.poll_error", username=session.username, error=str(exc))
             await asyncio.sleep(2.0)
 
@@ -652,9 +869,12 @@ class BrowserSessionManager:
         if session.page is None:
             return
         needs_code = await _detect_2fa_required(session.page) or await _detect_challenge(session.page)
+        was_awaiting = session.awaiting_code
         session.awaiting_code = needs_code
         if needs_code and session.status == BrowserSessionStatus.running:
             session.status = BrowserSessionStatus.awaiting_code
+        if needs_code and not was_awaiting:
+            session.log("warn", "code", "Обнаружен 2FA/challenge — нужен код подтверждения")
 
     async def submit_code(self, db: Session, account, code: str | None) -> bool:
         session = self._sessions.get(account.username)
@@ -667,17 +887,22 @@ class BrowserSessionManager:
         if not resolved:
             raise ValueError("Verification code is required")
 
+        session.log("info", "code", "Отправка кода подтверждения…")
         ok = await submit_verification_code(session.page, resolved)
         if not ok:
+            session.log("error", "code", "Поле для кода на странице не найдено")
             raise RuntimeError("Could not find a verification code field on the page")
 
-        await _human_wait(2.0, 4.0)
+        await _human_wait(0.5, 1.0)
         await _dismiss_post_login_modals(session.page)
         await self._refresh_code_state(session)
         session.page_url = session.page.url
         if await _is_logged_in(session.context, session.page):
             session.status = BrowserSessionStatus.running
             session.awaiting_code = False
+            session.log("info", "code", "Вход подтверждён после кода")
+        else:
+            session.log("warn", "code", f"Код отправлен; URL={session.page_url}")
         return ok
 
     async def save_session(self, db: Session, account) -> dict[str, Any]:
@@ -686,6 +911,7 @@ class BrowserSessionManager:
             raise RuntimeError("No active browser session for this account")
 
         if session.page is None or not await _is_logged_in(session.context, session.page):
+            session.log("error", "save", "Нет sessionid — сначала войдите в Instagram")
             raise RuntimeError(
                 "Сначала войдите в Instagram в браузере — sessionid не найден в cookies"
             )
@@ -697,10 +923,19 @@ class BrowserSessionManager:
         session_id = sessionid_from_playwright_state_data(data)
         imported = import_playwright_session_to_account(db, account, session_id=session_id)
         if not imported:
+            session.log("error", "save", "Не удалось извлечь sessionid из browser state")
             raise RuntimeError("Could not extract sessionid from browser state")
 
         session.status = BrowserSessionStatus.saved
         session.awaiting_code = False
+        session.log(
+            "info",
+            "save",
+            (
+                f"Web sessionid сохранён в БД ({sessionid_diag_label(session_id)}). "
+                "Для автопостинга нужен mint mobile или вход по паролю в очереди."
+            ),
+        )
         return {
             "session_imported": True,
             "session_id_saved": bool(session_id),
@@ -711,7 +946,8 @@ class BrowserSessionManager:
             session = self._sessions.get(username)
             if session is None:
                 return
-            await self._cleanup_session(session)
+            session.log("info", "stop", "Остановка браузера")
+            await self._cleanup_session(session, remove=False)
             session.status = BrowserSessionStatus.stopped
 
     async def _auto_stop(self, username: str, timeout_sec: float) -> None:
@@ -761,6 +997,10 @@ class BrowserSessionManager:
         session.browser = None
         session.pw = None
         session.vnc_stack = None
+        session.ws_port = 0
+        session.vnc_path = ""
+        session.poll_task = None
+        session.auto_stop_task = None
 
         if remove:
             self._sessions.pop(session.username, None)

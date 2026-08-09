@@ -59,6 +59,7 @@ class DiagnosticRunKind(str, enum.Enum):
     publish_job = "publish_job"
     first_login = "first_login"
     mint_mobile_session = "mint_mobile_session"
+    browser_session = "browser_session"
 
 
 class DiagnosticRunStatus(str, enum.Enum):

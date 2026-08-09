@@ -53,19 +53,39 @@ describe("InstagramBrowserPanel", () => {
     });
   });
 
-  it("renders start button and code field", async () => {
+  it("shows diagnostic logs from browser status", async () => {
+    apiMock.browserStatus.mockResolvedValue({
+      username: "alice",
+      status: "running",
+      awaiting_code: false,
+      vnc_path: "api/accounts/alice/browser/vnc/ws",
+      page_url: "https://www.instagram.com/accounts/login/",
+      account_username: "alice",
+      account_login: "alice@mail.com",
+      account_password: "secret123",
+      account_notes: "test note",
+      logs: [
+        {
+          ts: "2026-08-09T12:00:00Z",
+          level: "info",
+          step: "goto",
+          message: "Автопереход на Instagram",
+        },
+      ],
+    });
+
     render(
       <ToastProvider>
         <InstagramBrowserPanel username="alice" adminToken="tok" />
       </ToastProvider>
     );
-    expect(await screen.findByRole("button", { name: /Запустить браузер/i })).toBeInTheDocument();
-    expect(screen.getByLabelText(/Код подтверждения/i)).toBeInTheDocument();
-    expect(screen.getByText(/Аккаунт/i)).toBeInTheDocument();
-    expect(screen.getByText(/alice@mail.com/)).toBeInTheDocument();
-    await waitFor(() => {
-      expect(screen.getByLabelText(/Заметки/i)).toHaveValue("test note");
-    });
+
+    expect(await screen.findByText(/Автопереход на Instagram/i)).toBeInTheDocument();
+    expect(screen.getByText(/instagram.com\/accounts\/login/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Копировать лог/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Reels$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Лента$/i })).toBeInTheDocument();
+    expect(screen.getByText(/Быстрый переход в Instagram/i)).toBeInTheDocument();
   });
 
   it("saves account notes", async () => {
