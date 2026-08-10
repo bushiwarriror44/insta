@@ -835,6 +835,8 @@ def test_video_upload_list_and_enqueue(api_client, app_env):
 
 
 def test_image_upload_and_feed_photo_enqueue(api_client):
+    from PIL import Image
+
     api_client.post(
         "/api/proxies",
         json={"label": "res-img", "url": "http://u:p@h:2", "skip_health_check": True},
@@ -843,13 +845,17 @@ def test_image_upload_and_feed_photo_enqueue(api_client):
         "/api/accounts",
         json={"username": "imguser", "password": "secret", "proxy_label": "res-img"},
     )
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 48), color=(10, 20, 30)).save(buf, format="JPEG", quality=95)
+    buf.seek(0)
     res = api_client.post(
         "/api/videos",
-        files={"file": ("photo.jpg", io.BytesIO(b"jpg"), "image/jpeg")},
+        files={"file": ("photo.jpg", buf, "image/jpeg")},
     )
     assert res.status_code == 201, res.text
     upload = res.json()
     assert upload["media_type"] == "image"
+    assert upload["filename"].endswith(".jpg")
 
     res = api_client.post(
         "/api/jobs",
@@ -863,7 +869,100 @@ def test_image_upload_and_feed_photo_enqueue(api_client):
     assert res.json()["post_type"] == "feed_photo"
 
 
+def test_image_upload_compresses_by_default(api_client, app_env):
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (3200, 1800), color=(50, 60, 70)).save(buf, format="PNG")
+    raw_size = buf.tell()
+    buf.seek(0)
+    res = api_client.post(
+        "/api/videos",
+        files={"file": ("huge.png", buf, "image/png")},
+    )
+    assert res.status_code == 201, res.text
+    upload = res.json()
+    assert upload["filename"].endswith(".jpg")
+    assert upload["media_type"] == "image"
+    assert upload["size_bytes"] < raw_size
+    saved = app_env.video_source_dir / upload["filename"]
+    assert saved.exists()
+    with Image.open(saved) as img:
+        assert max(img.size) == 1920
+        assert img.format == "JPEG"
+
+
+def test_image_upload_skip_compress(api_client, app_env):
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (120, 80), color=(1, 2, 3)).save(buf, format="PNG")
+    payload = buf.getvalue()
+    res = api_client.post(
+        "/api/videos",
+        data={"compress": "false"},
+        files={"file": ("keep.png", io.BytesIO(payload), "image/png")},
+    )
+    assert res.status_code == 201, res.text
+    upload = res.json()
+    assert upload["filename"] == "keep.png"
+    assert upload["size_bytes"] == len(payload)
+    saved = app_env.video_source_dir / "keep.png"
+    assert saved.exists()
+    assert saved.read_bytes() == payload
+
+
+def test_media_archive_zip(api_client, app_env):
+    import zipfile
+
+    a = app_env.video_source_dir / "a.jpg"
+    b = app_env.video_source_dir / "b.mp4"
+    a.write_bytes(b"jpeg-bytes")
+    b.write_bytes(b"mp4-bytes")
+    res = api_client.post(
+        "/api/videos/archive",
+        json={"filenames": ["a.jpg", "b.mp4", "a.jpg"]},
+    )
+    assert res.status_code == 200, res.text
+    assert res.headers["content-type"].startswith("application/zip")
+    assert "media-" in res.headers.get("content-disposition", "")
+    with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
+        names = set(zf.namelist())
+        assert names == {"a.jpg", "b.mp4"}
+        assert zf.read("a.jpg") == b"jpeg-bytes"
+        assert zf.read("b.mp4") == b"mp4-bytes"
+
+
+def test_media_archive_missing_file(api_client, app_env):
+    (app_env.video_source_dir / "ok.mp4").write_bytes(b"x")
+    res = api_client.post(
+        "/api/videos/archive",
+        json={"filenames": ["ok.mp4", "missing.mp4"]},
+    )
+    assert res.status_code == 404
+
+
+def test_media_archive_empty_rejected(api_client):
+    res = api_client.post("/api/videos/archive", json={"filenames": []})
+    assert res.status_code == 422
+
+
+def test_media_archive_size_limit(api_client, app_env, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "upload_max_mb", 1, raising=True)
+    big = app_env.video_source_dir / "big.mp4"
+    big.write_bytes(b"x" * (2 * 1024 * 1024))
+    res = api_client.post(
+        "/api/videos/archive",
+        json={"filenames": ["big.mp4"]},
+    )
+    assert res.status_code == 413
+
+
 def test_enqueue_rejects_wrong_media_type(api_client):
+    from PIL import Image
+
     api_client.post(
         "/api/proxies",
         json={"label": "res-wrong", "url": "http://u:p@h:2", "skip_health_check": True},
@@ -872,9 +971,13 @@ def test_enqueue_rejects_wrong_media_type(api_client):
         "/api/accounts",
         json={"username": "wronguser", "password": "secret", "proxy_label": "res-wrong"},
     )
+    buf = io.BytesIO()
+    Image.new("RGB", (32, 32), color=(9, 9, 9)).save(buf, format="PNG")
+    buf.seek(0)
     res = api_client.post(
         "/api/videos",
-        files={"file": ("photo.png", io.BytesIO(b"png"), "image/png")},
+        data={"compress": "false"},
+        files={"file": ("photo.png", buf, "image/png")},
     )
     upload = res.json()
     res = api_client.post(
@@ -987,6 +1090,25 @@ def test_video_list_includes_duration_when_probe_available(api_client, monkeypat
     res = api_client.get("/api/videos")
     row = next(v for v in res.json() if v["filename"] == "dur.mp4")
     assert row["duration_sec"] == 12.5
+
+
+def test_video_upload_rejects_when_over_upload_max_mb(api_client, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "upload_max_mb", 1, raising=True)
+    payload = b"\x00" * (2 * 1024 * 1024)
+    res = api_client.post(
+        "/api/videos",
+        files={"file": ("big.mp4", io.BytesIO(payload), "video/mp4")},
+    )
+    assert res.status_code == 413
+    assert "1 MB" in res.json()["detail"]
+
+
+def test_upload_max_mb_default_is_512():
+    from app.config import Settings
+
+    assert Settings.model_fields["upload_max_mb"].default == 512
 
 
 def test_jobs_filter_by_status(api_client):

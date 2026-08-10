@@ -46,6 +46,16 @@ vi.mock("../../api/client", async () => {
   };
 });
 
+vi.mock("../../components/DiagnosticLogPanel", async () => {
+  const actual = await vi.importActual<typeof import("../../components/DiagnosticLogPanel")>(
+    "../../components/DiagnosticLogPanel"
+  );
+  return {
+    ...actual,
+    copyTextToClipboard: vi.fn().mockResolvedValue(true),
+  };
+});
+
 vi.mock("../../context/AuthContext", () => ({
   useAuth: () => ({
     state: { state: "open" as const },
@@ -629,9 +639,9 @@ describe("Accounts page", () => {
     expect(
       within(modal).getAllByText(/session_id недействителен или истёк/i).length
     ).toBeGreaterThanOrEqual(1);
-    expect(within(modal).getByText(/mobile api отклонил sessionid/i)).toBeInTheDocument();
+    expect(within(modal).getByText(/автопостинг: пароль или mobile-сессия/i)).toBeInTheDocument();
     expect(
-      within(modal).getByText(/web-cookie из dolphin часто отклоняется/i)
+      within(modal).getByText(/mobile api отклонил web-cookie из dolphin/i)
     ).toBeInTheDocument();
     expect(
       within(modal).getByRole("button", { name: /подготовить к автопостингу/i })
@@ -1047,6 +1057,35 @@ describe("Accounts page", () => {
         })
       )
     );
+  });
+
+  it("copies TOTP secret via copy button", async () => {
+    const { copyTextToClipboard } = await import("../../components/DiagnosticLogPanel");
+    const copySpy = vi.mocked(copyTextToClipboard);
+    copySpy.mockResolvedValue(true);
+
+    renderAccounts();
+    await screen.findByText("@alice");
+
+    fireEvent.click(screen.getByRole("button", { name: /добавить аккаунт/i }));
+    const heading = await screen.findByRole("heading", { name: /добавить аккаунт/i });
+    const modal = heading.closest("div.card") as HTMLElement;
+
+    const copyBtn = within(modal).getByRole("button", {
+      name: /Копировать секретный ключ TOTP/i,
+    });
+    expect(copyBtn).toBeDisabled();
+
+    fireEvent.change(byLabel(/totp seed/i, modal), {
+      target: { value: "  JBSWY3DPEHPK3PXP  " },
+    });
+    expect(copyBtn).not.toBeDisabled();
+
+    fireEvent.click(copyBtn);
+    await waitFor(() => {
+      expect(copySpy).toHaveBeenCalledWith("JBSWY3DPEHPK3PXP");
+    });
+    expect(await screen.findByText(/Секретный ключ TOTP скопирован/i)).toBeInTheDocument();
   });
 
   it("submits full add-account payload including optional fields", async () => {

@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Film, ImageIcon } from "lucide-react";
+import { Download, Film, ImageIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { fetchMediaObjectUrl, formatBytes, formatDuration, revokeMediaObjectUrl } from "../api/media";
@@ -59,11 +59,16 @@ function MediaThumb({ item }: { item: VideoOut }) {
 interface Props {
   items: VideoOut[];
   selectedFilename: string | null;
+  checkedFilenames: Set<string>;
   tab: "video" | "image";
   search: string;
+  archiveBusy?: boolean;
   onTabChange: (tab: "video" | "image") => void;
   onSearchChange: (value: string) => void;
   onSelect: (item: VideoOut) => void;
+  onToggleChecked: (filename: string) => void;
+  onClearChecked: () => void;
+  onDownloadArchive: () => void;
   onQuickPublish: (item: VideoOut) => void;
   quickPublishDisabled?: boolean;
 }
@@ -71,11 +76,16 @@ interface Props {
 export function MediaLibraryGrid({
   items,
   selectedFilename,
+  checkedFilenames,
   tab,
   search,
+  archiveBusy,
   onTabChange,
   onSearchChange,
   onSelect,
+  onToggleChecked,
+  onClearChecked,
+  onDownloadArchive,
   onQuickPublish,
   quickPublishDisabled,
 }: Props) {
@@ -84,6 +94,8 @@ export function MediaLibraryGrid({
     if (!search.trim()) return true;
     return item.filename.toLowerCase().includes(search.trim().toLowerCase());
   });
+
+  const checkedCount = checkedFilenames.size;
 
   return (
     <div className="space-y-3">
@@ -122,6 +134,24 @@ export function MediaLibraryGrid({
         />
       </div>
 
+      {checkedCount > 0 ? (
+        <div className="flex flex-wrap items-center gap-2 text-sm text-slate-300">
+          <span>Выбрано: {checkedCount}</span>
+          <button type="button" className="btn-ghost text-xs py-1" onClick={onClearChecked}>
+            Снять выбор
+          </button>
+          <button
+            type="button"
+            className="btn-primary text-xs py-1"
+            disabled={archiveBusy}
+            onClick={onDownloadArchive}
+          >
+            <Download size={14} className={archiveBusy ? "animate-pulse" : ""} />
+            {archiveBusy ? "Скачивание…" : "Скачать ZIP"}
+          </button>
+        </div>
+      ) : null}
+
       {filtered.length === 0 ? (
         <div className="text-sm text-slate-500 py-8 text-center rounded-xl border border-dashed border-slate-800">
           {tab === "video"
@@ -132,6 +162,7 @@ export function MediaLibraryGrid({
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 gap-3 max-h-[32rem] overflow-y-auto pr-1">
           {filtered.map((item) => {
             const selected = item.filename === selectedFilename;
+            const checked = checkedFilenames.has(item.filename);
             return (
               <div
                 key={item.filename}
@@ -152,6 +183,19 @@ export function MediaLibraryGrid({
               >
                 <div className="relative aspect-[9/16] bg-slate-900">
                   <MediaThumb item={item} />
+                  <label
+                    className="absolute top-1.5 right-1.5 z-10 flex h-6 w-6 items-center justify-center rounded bg-black/60"
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    <input
+                      type="checkbox"
+                      className="rounded border-slate-500 bg-slate-900"
+                      checked={checked}
+                      aria-label={`Выбрать ${item.filename}`}
+                      onChange={() => onToggleChecked(item.filename)}
+                    />
+                  </label>
                   <span className="absolute top-1.5 left-1.5 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-black/60 text-slate-200">
                     {item.media_type === "video" ? "видео" : "фото"}
                   </span>

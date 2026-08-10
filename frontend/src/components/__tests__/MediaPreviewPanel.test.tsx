@@ -65,6 +65,7 @@ describe("MediaPreviewPanel", () => {
         onCaptionChange={() => {}}
         onPublish={() => {}}
         onDelete={() => {}}
+        onDownload={() => {}}
       />
     );
     expect(screen.getByText(/выберите видео или фото/i)).toBeInTheDocument();
@@ -72,6 +73,7 @@ describe("MediaPreviewPanel", () => {
 
   it("renders video preview and publish button", async () => {
     const onPublish = vi.fn();
+    const onDownload = vi.fn();
     render(
       <MediaPreviewPanel
         item={video}
@@ -87,11 +89,14 @@ describe("MediaPreviewPanel", () => {
         onCaptionChange={() => {}}
         onPublish={onPublish}
         onDelete={() => {}}
+        onDownload={onDownload}
       />
     );
     expect(screen.getByText("clip.mp4")).toBeInTheDocument();
     await waitFor(() => expect(document.querySelector("video")).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: /опубликовать сейчас/i }));
     expect(onPublish).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /^скачать$/i }));
+    expect(onDownload).toHaveBeenCalled();
   });
 });

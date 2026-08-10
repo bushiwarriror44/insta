@@ -297,6 +297,10 @@ class UploadOut(BaseModel):
     duration_sec: Optional[float] = None
 
 
+class MediaArchiveIn(BaseModel):
+    filenames: list[str] = Field(..., min_length=1, max_length=100)
+
+
 # --- Jobs ------------------------------------------------------------------
 
 

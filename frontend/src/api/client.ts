@@ -155,10 +155,21 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   return undefined as T;
 }
 
-async function downloadFile(path: string, filename: string): Promise<void> {
+async function downloadFile(
+  path: string,
+  filename: string,
+  opts?: { method?: string; body?: unknown }
+): Promise<void> {
+  const headers: Record<string, string> = { ...getAuthHeaders() };
+  let body: BodyInit | undefined;
+  if (opts?.body !== undefined) {
+    headers["Content-Type"] = "application/json";
+    body = JSON.stringify(opts.body);
+  }
   const res = await fetch(buildUrl(path), {
-    method: "GET",
-    headers: getAuthHeaders(),
+    method: opts?.method ?? "GET",
+    headers,
+    body,
   });
   if (!res.ok) {
     let detail: unknown = null;
@@ -175,11 +186,16 @@ async function downloadFile(path: string, filename: string): Promise<void> {
           : `HTTP ${res.status}`) || `HTTP ${res.status}`;
     throw new ApiError(res.status, message, detail);
   }
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const match = /filename\*?=(?:UTF-8''|")?([^\";]+)/i.exec(disposition);
+  const downloadName = match
+    ? decodeURIComponent(match[1].replace(/"/g, "").trim())
+    : filename;
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = filename;
+  anchor.download = downloadName;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
@@ -386,11 +402,20 @@ export const api = {
     list: () => request<VideoOut[]>("/api/videos"),
     mediaPath: (filename: string) =>
       `${BASE}/api/videos/${encodeURIComponent(filename)}`,
-    upload: (file: File) => {
+    upload: (file: File, opts?: { compress?: boolean }) => {
       const fd = new FormData();
       fd.append("file", file);
+      const compress = opts?.compress ?? true;
+      fd.append("compress", compress ? "true" : "false");
       return request<UploadOut>("/api/videos", { method: "POST", formData: fd });
     },
+    download: (filename: string) =>
+      downloadFile(`/api/videos/${encodeURIComponent(filename)}`, filename),
+    downloadArchive: (filenames: string[]) =>
+      downloadFile("/api/videos/archive", "media.zip", {
+        method: "POST",
+        body: { filenames },
+      }),
     remove: (filename: string) =>
       request<{ ok: boolean }>(`/api/videos/${encodeURIComponent(filename)}`, {
         method: "DELETE",

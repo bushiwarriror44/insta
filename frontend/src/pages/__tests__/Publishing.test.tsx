@@ -9,7 +9,13 @@ import { Publishing } from "../Publishing";
 
 const apiMock = vi.hoisted(() => ({
   accounts: { list: vi.fn() },
-  videos: { list: vi.fn(), upload: vi.fn(), remove: vi.fn() },
+  videos: {
+    list: vi.fn(),
+    upload: vi.fn(),
+    remove: vi.fn(),
+    download: vi.fn(),
+    downloadArchive: vi.fn(),
+  },
   jobs: { enqueue: vi.fn() },
   publications: { list: vi.fn(), refreshStats: vi.fn() },
 }));
@@ -151,8 +157,54 @@ describe("Publishing page", () => {
     });
     await userEvent.upload(input, file);
     fireEvent.click(screen.getByRole("button", { name: /^загрузить$/i }));
-    await waitFor(() => expect(apiMock.videos.upload).toHaveBeenCalledWith(file));
+    await waitFor(() =>
+      expect(apiMock.videos.upload).toHaveBeenCalledWith(file, { compress: true })
+    );
     await screen.findByText(/загружено: new\.mp4/i);
+  });
+
+  it("uploads with compress=false when «Не сжимать» is checked", async () => {
+    apiMock.videos.upload.mockResolvedValue({
+      filename: "photo.jpg",
+      size_bytes: 10,
+      media_type: "image",
+    });
+    apiMock.videos.list
+      .mockResolvedValueOnce([video, image])
+      .mockResolvedValueOnce([video, image]);
+    renderPublishing();
+    await screen.findAllByText("clip.mp4");
+    fireEvent.click(screen.getByLabelText(/не сжимать/i));
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File([new Uint8Array([1, 2, 3])], "photo.jpg", {
+      type: "image/jpeg",
+    });
+    await userEvent.upload(input, file);
+    fireEvent.click(screen.getByRole("button", { name: /^загрузить$/i }));
+    await waitFor(() =>
+      expect(apiMock.videos.upload).toHaveBeenCalledWith(file, { compress: false })
+    );
+  });
+
+  it("downloads ZIP for checked media files", async () => {
+    apiMock.videos.downloadArchive.mockResolvedValue(undefined);
+    renderPublishing();
+    await screen.findAllByText("clip.mp4");
+    fireEvent.click(screen.getByLabelText(/выбрать clip\.mp4/i));
+    fireEvent.click(screen.getByRole("button", { name: /скачать zip/i }));
+    await waitFor(() =>
+      expect(apiMock.videos.downloadArchive).toHaveBeenCalledWith(["clip.mp4"])
+    );
+  });
+
+  it("downloads the selected preview file", async () => {
+    apiMock.videos.download.mockResolvedValue(undefined);
+    renderPublishing();
+    await screen.findAllByText("clip.mp4");
+    fireEvent.click(screen.getByRole("button", { name: /^скачать$/i }));
+    await waitFor(() =>
+      expect(apiMock.videos.download).toHaveBeenCalledWith("clip.mp4")
+    );
   });
 
   it("enqueues a feed photo publication from preview panel", async () => {

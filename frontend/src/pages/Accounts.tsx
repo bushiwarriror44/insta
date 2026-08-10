@@ -22,7 +22,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
 import { Card } from "../components/Card";
 import { CountryFlag, countryCodeToFlag } from "../components/CountryFlag";
-import { DiagnosticLogPanel } from "../components/DiagnosticLogPanel";
+import { DiagnosticLogPanel, copyTextToClipboard } from "../components/DiagnosticLogPanel";
 import { Loader } from "../components/Loader";
 import { Modal } from "../components/Modal";
 import {
@@ -1021,6 +1021,24 @@ function AddAccountModal({
               placeholder="JBSWY3DPEHPK3PXP"
               autoComplete="off"
             />
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="btn-ghost text-xs"
+                disabled={!(form.totp_seed ?? "").trim()}
+                onClick={async () => {
+                  const seed = (form.totp_seed ?? "").trim();
+                  if (!seed) return;
+                  const ok = await copyTextToClipboard(seed);
+                  push(
+                    ok ? "Секретный ключ TOTP скопирован" : "Не удалось скопировать ключ TOTP",
+                    ok ? "success" : "error"
+                  );
+                }}
+              >
+                <Copy size={14} /> Копировать секретный ключ TOTP
+              </button>
+            </div>
             <p className="text-xs text-slate-500 mt-1">
               Base32-секрет для авто 2FA. Хранится локально.
             </p>
@@ -1679,12 +1697,8 @@ function SessionModal({
 
   async function copyExport() {
     if (!exportData?.session_id) return;
-    try {
-      await navigator.clipboard.writeText(exportData.session_id);
-      push("Сессия скопирована", "success");
-    } catch {
-      push("Не удалось скопировать", "error");
-    }
+    const ok = await copyTextToClipboard(exportData.session_id);
+    push(ok ? "Сессия скопирована" : "Не удалось скопировать", ok ? "success" : "error");
   }
 
   async function verifySession() {

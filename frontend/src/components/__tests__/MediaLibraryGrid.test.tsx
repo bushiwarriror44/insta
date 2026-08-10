@@ -27,21 +27,25 @@ const items: VideoOut[] = [
   },
 ];
 
+const baseProps = {
+  items,
+  selectedFilename: "reel.mp4" as string | null,
+  checkedFilenames: new Set<string>(),
+  tab: "video" as const,
+  search: "",
+  onTabChange: () => {},
+  onSearchChange: () => {},
+  onSelect: () => {},
+  onToggleChecked: () => {},
+  onClearChecked: () => {},
+  onDownloadArchive: () => {},
+  onQuickPublish: () => {},
+};
+
 describe("MediaLibraryGrid", () => {
   it("renders video cards and calls onSelect", () => {
     const onSelect = vi.fn();
-    render(
-      <MediaLibraryGrid
-        items={items}
-        selectedFilename="reel.mp4"
-        tab="video"
-        search=""
-        onTabChange={() => {}}
-        onSearchChange={() => {}}
-        onSelect={onSelect}
-        onQuickPublish={() => {}}
-      />
-    );
+    render(<MediaLibraryGrid {...baseProps} onSelect={onSelect} />);
     expect(screen.getByText("reel.mp4")).toBeInTheDocument();
     fireEvent.click(screen.getByText("reel.mp4"));
     expect(onSelect).toHaveBeenCalledWith(items[0]);
@@ -51,17 +55,33 @@ describe("MediaLibraryGrid", () => {
     const onQuickPublish = vi.fn();
     render(
       <MediaLibraryGrid
-        items={items}
+        {...baseProps}
         selectedFilename={null}
-        tab="video"
-        search=""
-        onTabChange={() => {}}
-        onSearchChange={() => {}}
-        onSelect={() => {}}
         onQuickPublish={onQuickPublish}
       />
     );
     fireEvent.click(screen.getByRole("button", { name: /быстрая публикация reel\.mp4/i }));
     expect(onQuickPublish).toHaveBeenCalledWith(items[0]);
+  });
+
+  it("toggles checkbox without selecting preview and downloads ZIP", () => {
+    const onSelect = vi.fn();
+    const onToggleChecked = vi.fn();
+    const onDownloadArchive = vi.fn();
+    render(
+      <MediaLibraryGrid
+        {...baseProps}
+        checkedFilenames={new Set(["reel.mp4"])}
+        onSelect={onSelect}
+        onToggleChecked={onToggleChecked}
+        onDownloadArchive={onDownloadArchive}
+      />
+    );
+    fireEvent.click(screen.getByLabelText(/выбрать reel\.mp4/i));
+    expect(onToggleChecked).toHaveBeenCalledWith("reel.mp4");
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(screen.getByText(/выбрано: 1/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /скачать zip/i }));
+    expect(onDownloadArchive).toHaveBeenCalled();
   });
 });

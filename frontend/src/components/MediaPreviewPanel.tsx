@@ -1,4 +1,4 @@
-import { Calendar, Send, Trash2 } from "lucide-react";
+import { Calendar, Download, Send, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { fetchMediaObjectUrl, formatBytes, formatDuration, revokeMediaObjectUrl } from "../api/media";
@@ -25,12 +25,14 @@ interface Props {
   whenLocal: string;
   caption: string;
   saving: boolean;
+  downloadBusy?: boolean;
   onUsernameChange: (value: string) => void;
   onPostTypeChange: (value: PostType) => void;
   onWhenChange: (value: string) => void;
   onCaptionChange: (value: string) => void;
   onPublish: () => void;
   onDelete: () => void;
+  onDownload: () => void;
 }
 
 export function MediaPreviewPanel({
@@ -41,12 +43,14 @@ export function MediaPreviewPanel({
   whenLocal,
   caption,
   saving,
+  downloadBusy,
   onUsernameChange,
   onPostTypeChange,
   onWhenChange,
   onCaptionChange,
   onPublish,
   onDelete,
+  onDownload,
 }: Props) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
 
@@ -173,7 +177,7 @@ export function MediaPreviewPanel({
             placeholder="Подпись (необязательно). Для Reels поддерживаются {hashtags}, {emoji}."
           />
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
             type="button"
             className="btn-ghost text-rose-300 shrink-0"
@@ -182,8 +186,17 @@ export function MediaPreviewPanel({
             <Trash2 size={16} /> Удалить
           </button>
           <button
+            type="button"
+            className="btn-ghost shrink-0"
+            disabled={downloadBusy}
+            onClick={onDownload}
+          >
+            <Download size={16} className={downloadBusy ? "animate-pulse" : ""} />
+            {downloadBusy ? "Скачивание…" : "Скачать"}
+          </button>
+          <button
             type="submit"
-            className="btn-primary flex-1"
+            className="btn-primary flex-1 min-w-[8rem]"
             disabled={saving || accounts.length === 0}
           >
             <Send size={16} />

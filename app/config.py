@@ -66,7 +66,9 @@ class Settings(BaseSettings):
     )
     api_host: str = Field(default="0.0.0.0")
     api_port: int = Field(default=8000, ge=1, le=65535)
-    upload_max_mb: int = Field(default=200, ge=1, le=2048)
+    upload_max_mb: int = Field(default=512, ge=1, le=2048)
+    image_compress_max_edge: int = Field(default=1920, ge=256, le=8192)
+    image_compress_quality: int = Field(default=85, ge=1, le=95)
 
     @property
     def cors_allowed_origins(self) -> list[str]:

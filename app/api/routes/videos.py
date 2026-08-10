@@ -2,16 +2,20 @@
 from __future__ import annotations
 
 import re
+import tempfile
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 from app.api.deps import AuthDep
-from app.api.schemas import UploadOut, VideoOut
+from app.api.schemas import MediaArchiveIn, UploadOut, VideoOut
 from app.config import settings
+from app.video.image_compress import compress_image_file
 
 router = APIRouter(prefix="/api/videos", tags=["videos"], dependencies=[AuthDep])
 
@@ -20,6 +24,7 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 ALLOWED_EXTENSIONS = VIDEO_EXTENSIONS | IMAGE_EXTENSIONS
 SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+ARCHIVE_MAX_FILES = 100
 
 CONTENT_TYPES = {
     ".mp4": "video/mp4",
@@ -83,6 +88,10 @@ def _video_out_from_path(path: Path) -> VideoOut:
     )
 
 
+def _unlink_quiet(path: str) -> None:
+    Path(path).unlink(missing_ok=True)
+
+
 @router.get("", response_model=List[VideoOut])
 def list_videos() -> List[VideoOut]:
     src: Path = settings.video_source_dir
@@ -98,6 +107,52 @@ def list_videos() -> List[VideoOut]:
     return sorted(out, key=lambda v: v.modified_at, reverse=True)
 
 
+@router.post("/archive")
+def archive_videos(payload: MediaArchiveIn) -> FileResponse:
+    names: list[str] = []
+    seen: set[str] = set()
+    for name in payload.filenames:
+        if name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    if not names:
+        raise HTTPException(status_code=400, detail="No filenames provided")
+    if len(names) > ARCHIVE_MAX_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many files (max {ARCHIVE_MAX_FILES})",
+        )
+
+    paths = [_resolve_source_file(name) for name in names]
+    total = sum(p.stat().st_size for p in paths)
+    max_bytes = settings.upload_max_mb * 1024 * 1024
+    if total > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Archive exceeds {settings.upload_max_mb} MB limit",
+        )
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    tmp_path = Path(tmp.name)
+    tmp.close()
+    try:
+        with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_STORED) as zf:
+            for path in paths:
+                zf.write(path, arcname=path.name)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return FileResponse(
+        path=tmp_path,
+        media_type="application/zip",
+        filename=f"media-{stamp}.zip",
+        background=BackgroundTask(_unlink_quiet, str(tmp_path)),
+    )
+
+
 @router.get("/{filename}")
 def get_video(filename: str) -> FileResponse:
     target = _resolve_source_file(filename)
@@ -110,7 +165,10 @@ def get_video(filename: str) -> FileResponse:
 
 
 @router.post("", response_model=UploadOut, status_code=status.HTTP_201_CREATED)
-def upload_video(file: UploadFile = File(...)) -> UploadOut:
+def upload_video(
+    file: UploadFile = File(...),
+    compress: bool = Form(True),
+) -> UploadOut:
     filename = _safe_name(file.filename or "upload.mp4")
     suffix = Path(filename).suffix.lower()
     if suffix not in ALLOWED_EXTENSIONS:
@@ -146,6 +204,21 @@ def upload_video(file: UploadFile = File(...)) -> UploadOut:
             file.file.close()
         except Exception:
             pass
+
+    if media_type == "image" and compress:
+        try:
+            dst = compress_image_file(
+                dst,
+                max_edge=settings.image_compress_max_edge,
+                quality=settings.image_compress_quality,
+            )
+            written = dst.stat().st_size
+        except Exception as exc:
+            dst.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Image compression failed: {exc}",
+            ) from exc
 
     return UploadOut(
         filename=dst.name,

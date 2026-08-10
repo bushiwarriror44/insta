@@ -46,6 +46,10 @@ export function Publishing() {
   const [search, setSearch] = useState("");
   const [whenLocal, setWhenLocal] = useState("");
   const [caption, setCaption] = useState("");
+  const [skipImageCompress, setSkipImageCompress] = useState(false);
+  const [checkedFilenames, setCheckedFilenames] = useState<Set<string>>(() => new Set());
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [downloadBusy, setDownloadBusy] = useState(false);
 
   const selectedItem = useMemo(
     () => media.find((m) => m.filename === selectedFilename) ?? null,
@@ -95,10 +99,59 @@ export function Publishing() {
     }
   }, [media, selectedFilename]);
 
+  useEffect(() => {
+    const known = new Set(media.map((m) => m.filename));
+    setCheckedFilenames((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const name of prev) {
+        if (known.has(name)) next.add(name);
+        else changed = true;
+      }
+      return changed || next.size !== prev.size ? next : prev;
+    });
+  }, [media]);
+
   function selectItem(item: VideoOut) {
     setSelectedFilename(item.filename);
     setLibraryTab(item.media_type);
     setPostType(defaultPostTypeForItem(item));
+  }
+
+  function toggleChecked(filename: string) {
+    setCheckedFilenames((prev) => {
+      const next = new Set(prev);
+      if (next.has(filename)) next.delete(filename);
+      else next.add(filename);
+      return next;
+    });
+  }
+
+  async function downloadSelectedArchive() {
+    const filenames = Array.from(checkedFilenames);
+    if (filenames.length === 0) return;
+    setArchiveBusy(true);
+    try {
+      await api.videos.downloadArchive(filenames);
+      push(`Скачан ZIP (${filenames.length})`, "success");
+    } catch (err) {
+      push((err as Error).message, "error");
+    } finally {
+      setArchiveBusy(false);
+    }
+  }
+
+  async function downloadSelectedFile() {
+    if (!selectedFilename) return;
+    setDownloadBusy(true);
+    try {
+      await api.videos.download(selectedFilename);
+      push("Файл скачан", "success");
+    } catch (err) {
+      push((err as Error).message, "error");
+    } finally {
+      setDownloadBusy(false);
+    }
   }
 
   async function uploadFiles(files: File[]) {
@@ -107,7 +160,9 @@ export function Publishing() {
     try {
       let last: VideoOut | null = null;
       for (const file of files) {
-        const out = await api.videos.upload(file);
+        const out = await api.videos.upload(file, {
+          compress: !skipImageCompress,
+        });
         last = {
           filename: out.filename,
           size_bytes: out.size_bytes,
@@ -241,10 +296,20 @@ export function Publishing() {
           staging
           multiple
           title="Перетащите готовые Reels (.mp4)"
-          hint=".mp4 / .mov — или фото .jpg / .png / .webp"
+          hint=".mp4 / .mov / фото — до 512 МБ"
           onFile={(file) => uploadFiles([file])}
           onFiles={uploadFiles}
         />
+        <label className="mt-3 flex items-center gap-2 text-sm text-slate-400 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            className="rounded border-slate-600 bg-slate-900"
+            checked={skipImageCompress}
+            disabled={uploading}
+            onChange={(e) => setSkipImageCompress(e.target.checked)}
+          />
+          Не сжимать
+        </label>
         {uploading ? <div className="text-xs text-slate-400 mt-2">Загрузка…</div> : null}
       </Card>
 
@@ -257,11 +322,16 @@ export function Publishing() {
           <MediaLibraryGrid
             items={media}
             selectedFilename={selectedFilename}
+            checkedFilenames={checkedFilenames}
             tab={libraryTab}
             search={search}
+            archiveBusy={archiveBusy}
             onTabChange={setLibraryTab}
             onSearchChange={setSearch}
             onSelect={selectItem}
+            onToggleChecked={toggleChecked}
+            onClearChecked={() => setCheckedFilenames(new Set())}
+            onDownloadArchive={downloadSelectedArchive}
             onQuickPublish={quickPublish}
             quickPublishDisabled={saving || accounts.length === 0}
           />
@@ -276,12 +346,14 @@ export function Publishing() {
             whenLocal={whenLocal}
             caption={caption}
             saving={saving}
+            downloadBusy={downloadBusy}
             onUsernameChange={setUsername}
             onPostTypeChange={setPostType}
             onWhenChange={setWhenLocal}
             onCaptionChange={setCaption}
             onPublish={() => enqueuePublication()}
             onDelete={deleteSelected}
+            onDownload={downloadSelectedFile}
           />
         </Card>
       </div>

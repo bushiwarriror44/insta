@@ -121,8 +121,56 @@ describe("body serialization", () => {
     await api.videos.upload(file);
     const { init } = getCall();
     expect(init.body).toBeInstanceOf(FormData);
+    const fd = init.body as FormData;
+    expect(fd.get("compress")).toBe("true");
     const headers = init.headers as Record<string, string>;
     expect(headers["Content-Type"]).toBeUndefined();
+  });
+
+  it("sends compress=false when upload opts disable compression", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      makeResponse({ json: { filename: "p.jpg", size_bytes: 10, media_type: "image" } })
+    );
+    const file = new File([new Uint8Array([1, 2, 3])], "p.jpg", {
+      type: "image/jpeg",
+    });
+    await api.videos.upload(file, { compress: false });
+    const { init } = getCall();
+    const fd = init.body as FormData;
+    expect(fd.get("compress")).toBe("false");
+  });
+
+  it("downloads media archive via POST /api/videos/archive", async () => {
+    const createObjectURL = vi.fn(() => "blob:zip");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL,
+      revokeObjectURL,
+    });
+    const clickSpy = vi.fn();
+    const anchor = document.createElement("a");
+    anchor.click = clickSpy;
+    vi.spyOn(document, "createElement").mockReturnValue(anchor);
+    vi.spyOn(document.body, "appendChild").mockImplementation(() => anchor);
+
+    fetchSpy.mockResolvedValueOnce(
+      new Response(new Uint8Array([0x50, 0x4b]), {
+        status: 200,
+        headers: {
+          "content-type": "application/zip",
+          "content-disposition": 'attachment; filename="media-test.zip"',
+        },
+      })
+    );
+
+    await api.videos.downloadArchive(["a.jpg", "b.mp4"]);
+    const { url, init } = getCall();
+    expect(url).toBe("/api/videos/archive");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ filenames: ["a.jpg", "b.mp4"] }));
+    expect(clickSpy).toHaveBeenCalled();
+    expect(anchor.download).toBe("media-test.zip");
   });
 
   it("serializes full accounts.create payload as JSON", async () => {
