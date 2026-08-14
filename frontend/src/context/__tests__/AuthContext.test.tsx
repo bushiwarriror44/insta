@@ -54,9 +54,7 @@ describe("AuthContext", () => {
     healthMock.mockResolvedValue({ ok: true, version: "x", auth_required: true });
     dashboardMock.mockResolvedValue({});
     const { result } = renderHook(() => useAuth(), { wrapper });
-    await waitFor(() =>
-      expect(result.current.state.state).toBe("authed")
-    );
+    await waitFor(() => expect(result.current.state.state).toBe("authed"));
     if (result.current.state.state === "authed") {
       expect(result.current.state.token).toBe("stored-token");
     }
@@ -67,18 +65,29 @@ describe("AuthContext", () => {
     healthMock.mockResolvedValue({ ok: true, version: "x", auth_required: true });
     dashboardMock.mockRejectedValue(new ApiError(401, "unauthorized"));
     const { result } = renderHook(() => useAuth(), { wrapper });
-    await waitFor(() =>
-      expect(result.current.state.state).toBe("needs-login")
-    );
+    await waitFor(() => expect(result.current.state.state).toBe("needs-login"));
     expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
   });
 
-  it("falls back to 'needs-login' when health probe throws", async () => {
+  it("resolves to 'error' when health probe throws", async () => {
     healthMock.mockRejectedValue(new Error("network down"));
     const { result } = renderHook(() => useAuth(), { wrapper });
-    await waitFor(() =>
-      expect(result.current.state.state).toBe("needs-login")
-    );
+    await waitFor(() => expect(result.current.state.state).toBe("error"));
+    if (result.current.state.state === "error") {
+      expect(result.current.state.message).toBeTruthy();
+    }
+  });
+
+  it("retryBootstrap re-runs health and can recover from error", async () => {
+    healthMock.mockRejectedValueOnce(new Error("network down"));
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.state.state).toBe("error"));
+
+    healthMock.mockResolvedValue({ ok: true, version: "x", auth_required: false });
+    act(() => {
+      result.current.retryBootstrap();
+    });
+    await waitFor(() => expect(result.current.state.state).toBe("open"));
   });
 
   it("login() succeeds and stores token in localStorage", async () => {
@@ -88,28 +97,49 @@ describe("AuthContext", () => {
     await waitFor(() => expect(result.current.state.state).toBe("needs-login"));
 
     dashboardMock.mockResolvedValueOnce({});
-    let ok: boolean | undefined;
+    let out: Awaited<ReturnType<typeof result.current.login>> | undefined;
     await act(async () => {
-      ok = await result.current.login("new-token");
+      out = await result.current.login("new-token");
     });
-    expect(ok).toBe(true);
+    expect(out).toEqual({ ok: true });
     expect(window.localStorage.getItem(STORAGE_KEY)).toBe("new-token");
     expect(result.current.state.state).toBe("authed");
   });
 
-  it("login() returns false when probe rejects", async () => {
+  it("login() returns invalid when probe rejects with 401", async () => {
     healthMock.mockResolvedValue({ ok: true, version: "x", auth_required: true });
     const { result } = renderHook(() => useAuth(), { wrapper });
     await waitFor(() => expect(result.current.state.state).toBe("needs-login"));
 
     dashboardMock.mockRejectedValueOnce(new ApiError(401, "nope"));
-    let ok: boolean | undefined;
+    let out: Awaited<ReturnType<typeof result.current.login>> | undefined;
     await act(async () => {
-      ok = await result.current.login("wrong");
+      out = await result.current.login("wrong");
     });
-    expect(ok).toBe(false);
+    expect(out).toEqual({
+      ok: false,
+      reason: "invalid",
+      message: "Неверный токен",
+    });
     expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
     expect(result.current.state.state).toBe("needs-login");
+  });
+
+  it("login() returns network when probe rejects with non-401", async () => {
+    healthMock.mockResolvedValue({ ok: true, version: "x", auth_required: true });
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.state.state).toBe("needs-login"));
+
+    dashboardMock.mockRejectedValueOnce(new ApiError(503, "upstream down"));
+    let out: Awaited<ReturnType<typeof result.current.login>> | undefined;
+    await act(async () => {
+      out = await result.current.login("tok");
+    });
+    expect(out?.ok).toBe(false);
+    if (out && !out.ok) {
+      expect(out.reason).toBe("network");
+      expect(out.message).toContain("upstream down");
+    }
   });
 
   it("logout() clears token and switches to 'needs-login'", async () => {

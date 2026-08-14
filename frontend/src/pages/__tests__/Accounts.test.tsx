@@ -13,6 +13,7 @@ const apiMock = vi.hoisted(() => ({
     updateProxy: vi.fn(),
     updateSession: vi.fn(),
     getSession: vi.fn(),
+    getTotp: vi.fn(),
     testConnection: vi.fn(),
     firstLogin: vi.fn(),
     mintMobileSession: vi.fn(),
@@ -22,6 +23,12 @@ const apiMock = vi.hoisted(() => ({
     importCookiesFile: vi.fn(),
     pause: vi.fn(),
     resume: vi.fn(),
+    browserStatus: vi.fn(),
+    browserStart: vi.fn(),
+    browserSave: vi.fn(),
+    browserStop: vi.fn(),
+    browserSubmitCode: vi.fn(),
+    browserOpenInstagram: vi.fn(),
   },
   proxies: {
     list: vi.fn(),
@@ -61,6 +68,7 @@ vi.mock("../../context/AuthContext", () => ({
     state: { state: "open" as const },
     login: vi.fn(),
     logout: vi.fn(),
+    retryBootstrap: vi.fn(),
     authRequired: false,
   }),
   AuthProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -211,6 +219,17 @@ describe("Accounts page", () => {
     expect(within(modal).getByText(/нет прокси\. сначала добавьте/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /сохранить прокси/i })).toBeDisabled();
     expect(apiMock.accounts.updateProxy).not.toHaveBeenCalled();
+  });
+
+  it("disables browser and connection actions when account has no proxy", async () => {
+    apiMock.accounts.list.mockResolvedValue([{ ...account, proxy_id: null, proxy_label: null }]);
+    renderAccounts();
+    await screen.findByText("@alice");
+
+    expect(screen.getByRole("button", { name: /Браузер Instagram/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Подключение для alice/i })).toBeDisabled();
+    expect(apiMock.accounts.browserStart).not.toHaveBeenCalled();
+    expect(apiMock.accounts.testConnection).not.toHaveBeenCalled();
   });
 
   it("can import a browser session for an existing account", async () => {
@@ -523,8 +542,9 @@ describe("Accounts page", () => {
       })
     );
     await waitFor(() =>
-      expect(within(modal).getByText(/4\. cookies установлены/i)).toBeInTheDocument()
+      expect(within(modal).getByText(/4\. instagram auth \(cookies\)/i)).toBeInTheDocument()
     );
+    expect(within(modal).getByText(/3\. хранилище сессии/i)).toBeInTheDocument();
     expect(within(modal).getAllByText(/cookies установлены/i).length).toBeGreaterThanOrEqual(1);
   });
 
@@ -577,7 +597,7 @@ describe("Accounts page", () => {
     await waitFor(() =>
       expect(within(modal).getByText(/готов к автопостингу/i)).toBeInTheDocument()
     );
-    expect(within(modal).getByText(/4\. сессия действительна/i)).toBeInTheDocument();
+    expect(within(modal).getByText(/4\. instagram auth ok/i)).toBeInTheDocument();
   });
 
   it("shows connection failure after test completes", async () => {
@@ -635,7 +655,7 @@ describe("Accounts page", () => {
     await waitFor(() =>
       expect(within(modal).getByText(/не готов к автопостингу/i)).toBeInTheDocument()
     );
-    expect(within(modal).getByText(/4\. сессия недействительна/i)).toBeInTheDocument();
+    expect(within(modal).getByText(/4\. instagram auth недействительна/i)).toBeInTheDocument();
     expect(
       within(modal).getAllByText(/session_id недействителен или истёк/i).length
     ).toBeGreaterThanOrEqual(1);
@@ -809,6 +829,62 @@ describe("Accounts page", () => {
     renderAccounts();
     await screen.findByText("@alice");
     expect(screen.getByText("Cookies")).toBeInTheDocument();
+  });
+
+  it("refreshes session badge after saving from browser modal", async () => {
+    const withSession = {
+      ...account,
+      has_session_id: true,
+      session_source: "database" as const,
+    };
+    apiMock.accounts.list
+      .mockResolvedValueOnce([account])
+      .mockResolvedValue([withSession]);
+    apiMock.proxies.list.mockResolvedValue([proxy]);
+    apiMock.accounts.browserStatus.mockResolvedValue({
+      username: "alice",
+      status: "running",
+      awaiting_code: false,
+      vnc_path: "api/accounts/alice/browser/vnc/ws",
+      account_username: "alice",
+      account_login: "alice",
+      account_password: "secret",
+      account_notes: null,
+    });
+    apiMock.accounts.browserSave.mockResolvedValue({
+      username: "alice",
+      status: "saved",
+      awaiting_code: false,
+      session_imported: true,
+      session_id_saved: true,
+      overall_ok: true,
+      connection_test: { overall_ok: true, logs: [] },
+    });
+
+    renderAccounts();
+    await screen.findByText("@alice");
+    expect(
+      screen.queryByTitle("Сессия сохранена — используется для автопостинга")
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /браузер instagram/i }));
+    await screen.findByRole("heading", { name: /браузер · @alice/i });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /сохранить сессию/i })).not.toBeDisabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /сохранить сессию/i }));
+
+    await waitFor(() => {
+      expect(apiMock.accounts.browserSave).toHaveBeenCalledWith("alice", {
+        stopAfterSave: false,
+      });
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByTitle("Сессия сохранена — используется для автопостинга")
+      ).toBeInTheDocument();
+    });
   });
 
   it("can quick-test connection from account proxy cell", async () => {
@@ -1013,13 +1089,39 @@ describe("Accounts page", () => {
 
   it("highlights geo mismatch in proxies table", async () => {
     apiMock.proxies.list.mockResolvedValue([
-      { ...proxy, country: "DE", last_geo_country: "US" },
+      {
+        ...proxy,
+        country: "DE",
+        last_geo_country: "US",
+        geo_mismatch_warning: true,
+      },
     ]);
     renderAccounts();
     await screen.findByText("@alice");
     const proxiesTable = screen.getAllByRole("table")[0];
     const cell = within(proxiesTable).getByText("US");
     expect(cell.className).toMatch(/amber/);
+    expect(cell.closest("td")).toHaveAttribute(
+      "title",
+      expect.stringMatching(/не совпадает/i)
+    );
+  });
+
+  it("does not highlight geo when aliases match (USA vs US)", async () => {
+    apiMock.proxies.list.mockResolvedValue([
+      {
+        ...proxy,
+        country: "USA",
+        last_geo_country: "US",
+        geo_mismatch_warning: false,
+      },
+    ]);
+    renderAccounts();
+    await screen.findByText("@alice");
+    const proxiesTable = screen.getAllByRole("table")[0];
+    const cell = within(proxiesTable).getByText("US");
+    expect(cell.className).not.toMatch(/amber/);
+    expect(cell.closest("td")).not.toHaveAttribute("title");
   });
 
   it("submits caption_profile and TOTP seed when filled", async () => {
@@ -1083,6 +1185,29 @@ describe("Accounts page", () => {
 
     fireEvent.click(copyBtn);
     await waitFor(() => {
+      expect(copySpy).toHaveBeenCalledWith("JBSWY3DPEHPK3PXP");
+    });
+    expect(await screen.findByText(/Секретный ключ TOTP скопирован/i)).toBeInTheDocument();
+    expect(within(modal).getByRole("button", { name: /Скопировано/i })).toBeInTheDocument();
+  });
+
+  it("copies saved TOTP secret from accounts table", async () => {
+    const { copyTextToClipboard } = await import("../../components/DiagnosticLogPanel");
+    const copySpy = vi.mocked(copyTextToClipboard);
+    copySpy.mockResolvedValue(true);
+    apiMock.accounts.list.mockResolvedValue([{ ...account, has_totp: true }]);
+    apiMock.accounts.getTotp.mockResolvedValue({
+      totp_seed: "JBSWY3DPEHPK3PXP",
+      code: "123456",
+      seconds_remaining: 20,
+    });
+
+    renderAccounts();
+    await screen.findByText("@alice");
+
+    fireEvent.click(screen.getByRole("button", { name: /Копировать TOTP для alice/i }));
+    await waitFor(() => {
+      expect(apiMock.accounts.getTotp).toHaveBeenCalledWith("alice");
       expect(copySpy).toHaveBeenCalledWith("JBSWY3DPEHPK3PXP");
     });
     expect(await screen.findByText(/Секретный ключ TOTP скопирован/i)).toBeInTheDocument();

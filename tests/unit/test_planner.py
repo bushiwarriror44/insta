@@ -104,6 +104,48 @@ def test_can_post_today_at_cap(db_session, make_account):
     assert can_post_today(db_session, account) is False
 
 
+def test_can_post_today_respects_risk_profile_cap(db_session, make_account):
+    """New-account profile caps at 2 even when account.daily_post_cap is higher."""
+    account = make_account(daily_post_cap=10, timezone="UTC")
+    today = datetime.now(timezone.utc).date().isoformat()
+    db_session.add(DailyStat(account_id=account.id, date_key=today, posts_count=2))
+    db_session.commit()
+    assert can_post_today(db_session, account) is False
+
+
+def test_too_close_respects_risk_profile_min_gap(db_session, make_account):
+    """New-account profile enforces ≥6h gap even when account.min_gap_hours is 1."""
+    from app.risk.profiles import profile_min_gap_for_account
+
+    account = make_account(daily_post_cap=10, min_gap_hours=1.0)
+    existing_when = datetime.now(timezone.utc) + timedelta(days=1, hours=12)
+    db_session.add(
+        PostJob(
+            account_id=account.id,
+            source_video_path="/v.mp4",
+            scheduled_for=existing_when,
+            status=PostJobStatus.queued,
+        )
+    )
+    db_session.commit()
+
+    # 3h away: within profile gap (6h), outside raw account gap (1h)
+    candidate = existing_when + timedelta(hours=3)
+    assert profile_min_gap_for_account(account) >= 6.0
+    assert planner_module._too_close_to_existing(
+        db_session, account.id, candidate, profile_min_gap_for_account(account)
+    )
+    assert not planner_module._too_close_to_existing(
+        db_session, account.id, candidate, account.min_gap_hours
+    )
+
+    # schedule_jobs must also respect the profile gap
+    rng = random.Random(0)
+    created = schedule_jobs(db_session, account, ["/x.mp4"], days_ahead=2, rng=rng)
+    for job in created:
+        assert abs((job.scheduled_for - existing_when).total_seconds()) >= 6 * 3600
+
+
 def test_increment_daily_stat_creates_and_updates(db_session, make_account):
     account = make_account()
     increment_daily_stat(db_session, account, success=True)

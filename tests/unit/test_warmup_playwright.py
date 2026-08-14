@@ -461,6 +461,32 @@ def test_first_login_detects_challenge(monkeypatch, app_env):
     assert ok.challenge is True
 
 
+def test_first_login_challenge_during_sessionid_poll(monkeypatch, app_env):
+    """Challenge found while polling for sessionid must set challenge=True
+    (detected before the Playwright page is closed)."""
+    page = FakePage(has_login_form=True, already_logged_in=False)
+    _patch_async_playwright(monkeypatch, page, session_id=None)
+    monkeypatch.setattr(wp, "asyncio", _SyncAsyncio())
+    monkeypatch.setattr(wp, "_SESSIONID_POLL_TIMEOUT_SEC", 0.5)
+
+    async def _challenge_poll(*_a, **_kw):
+        return None, ("csrftoken",), True
+
+    monkeypatch.setattr(wp, "_resolve_instagram_sessionid", _challenge_poll)
+
+    ok = wp.first_login(
+        username="challenge-poll",
+        password="pwd",
+        proxy_url="http://u:p@host:1",
+        locale="en_US",
+        timezone_id="UTC",
+        headless=True,
+    )
+    assert ok.ok is False
+    assert ok.challenge is True
+    assert ok.error == "challenge required"
+
+
 def test_first_login_requires_proxy_before_browser(monkeypatch, app_env):
     page = FakePage(has_login_form=False, already_logged_in=True)
     pw = _patch_async_playwright(monkeypatch, page)

@@ -59,6 +59,7 @@ export function MediaPreviewPanel({
       setBlobUrl(null);
       return;
     }
+    setBlobUrl(null);
     let cancelled = false;
     let objectUrl: string | null = null;
     fetchMediaObjectUrl(item.filename)

@@ -97,6 +97,12 @@ export interface AccountNotesUpdate {
   notes?: string | null;
 }
 
+export interface AccountTotpOut {
+  totp_seed: string;
+  code: string;
+  seconds_remaining: number;
+}
+
 export interface AccountIn {
   username: string;
   password: string;

@@ -37,6 +37,7 @@ describe("Layout", () => {
       authRequired: false,
       logout: vi.fn(),
       login: vi.fn(),
+      retryBootstrap: vi.fn(),
     });
     renderAt("/accounts");
     expect(screen.getByTestId("nav-dashboard")).toBeInTheDocument();
@@ -53,6 +54,7 @@ describe("Layout", () => {
       authRequired: false,
       logout: vi.fn(),
       login: vi.fn(),
+      retryBootstrap: vi.fn(),
     });
     renderAt();
     expect(screen.getByText(/открытый режим/i)).toBeInTheDocument();
@@ -66,6 +68,7 @@ describe("Layout", () => {
       authRequired: true,
       logout,
       login: vi.fn(),
+      retryBootstrap: vi.fn(),
     });
     renderAt();
     const logoutBtn = screen.getByRole("button", { name: /выйти/i });

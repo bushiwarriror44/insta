@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from typing import List
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
@@ -17,7 +18,11 @@ from app.accounts.device_factory import device_path, load_fingerprint
 from app.accounts.login_identifier import resolve_login_identifier
 from app.accounts.first_login_service import run_account_first_login
 from app.accounts.mint_mobile_session import mint_mobile_session
-from app.accounts.playwright_session import login_debug_screenshot_path, playwright_state_path
+from app.accounts.playwright_session import (
+    clear_playwright_state,
+    login_debug_screenshot_path,
+    playwright_state_path,
+)
 from app.accounts.session_export import export_sessionid
 from app.accounts.session_cookie import normalize_sessionid
 from app.accounts.session_manager import (
@@ -34,6 +39,7 @@ from app.api.schemas import (
     AccountProxyUpdate,
     AccountSessionOut,
     AccountSessionUpdate,
+    AccountTotpOut,
     CookiesImportOut,
     FirstLoginOut,
     MintMobileSessionOut,
@@ -60,7 +66,16 @@ def _account_session_fields(username: str, db_session_id: str | None):
     return file_exists, updated_at, source
 
 
-def _serialize(account: Account, *, db: Session, today: str) -> AccountOut:
+def _account_local_today(account: Account) -> str:
+    """Calendar date_key for DailyStat, matching planner increment_daily_stat."""
+    try:
+        tz = ZoneInfo(account.timezone)
+    except Exception:
+        tz = ZoneInfo("UTC")
+    return datetime.now(tz).date().isoformat()
+
+
+def _serialize(account: Account, *, db: Session) -> AccountOut:
     proxy_label = None
     proxy_country = None
     proxy_geo_country = None
@@ -75,6 +90,7 @@ def _serialize(account: Account, *, db: Session, today: str) -> AccountOut:
             proxy_is_healthy = proxy.is_healthy
             proxy_last_ip = proxy.last_known_ip
 
+    today = _account_local_today(account)
     stat = db.scalar(
         select(DailyStat).where(
             DailyStat.account_id == account.id,
@@ -110,7 +126,7 @@ def _serialize(account: Account, *, db: Session, today: str) -> AccountOut:
         last_session_rotation_at=account.last_session_rotation_at,
         cooldown_until=account.cooldown_until,
         caption_profile=account.caption_profile,
-        has_totp=bool(account.totp_seed),
+        has_totp=bool((account.totp_seed or "").strip()),
         has_session_id=bool(account.session_id),
         login_surface=account.login_surface if account.login_surface in ("mobile", "desktop") else None,
         session_file_exists=file_exists,
@@ -124,9 +140,8 @@ def _serialize(account: Account, *, db: Session, today: str) -> AccountOut:
 
 @router.get("", response_model=List[AccountOut])
 def list_accounts(db: Session = Depends(get_db)) -> List[AccountOut]:
-    today = datetime.now(timezone.utc).date().isoformat()
     rows = db.scalars(select(Account).order_by(Account.username)).all()
-    return [_serialize(a, db=db, today=today) for a in rows]
+    return [_serialize(a, db=db) for a in rows]
 
 
 @router.post("", response_model=AccountOut, status_code=status.HTTP_201_CREATED)
@@ -160,6 +175,7 @@ def create_account(payload: AccountIn, db: Session = Depends(get_db)) -> Account
         account.session_id = normalize_sessionid(payload.session_id)
         if account.session_id:
             clear_session_file(account.username)
+            clear_playwright_state(account.username)
     if payload.login_identifier is not None:
         account.login_identifier = payload.login_identifier.strip() or None
     if payload.email is not None:
@@ -196,8 +212,7 @@ def create_account(payload: AccountIn, db: Session = Depends(get_db)) -> Account
         timezone_id=timezone_from_proxy(proxy.timezone, proxy.country),
     )
 
-    today = datetime.now(timezone.utc).date().isoformat()
-    return _serialize(account, db=db, today=today)
+    return _serialize(account, db=db)
 
 
 @router.put("/{username}/proxy", response_model=AccountOut)
@@ -225,8 +240,7 @@ def update_account_proxy(
         timezone_id=account.timezone,
     )
 
-    today = datetime.now(timezone.utc).date().isoformat()
-    return _serialize(account, db=db, today=today)
+    return _serialize(account, db=db)
 
 
 @router.patch("/{username}/notes", response_model=AccountOut)
@@ -243,8 +257,40 @@ def update_account_notes(
     db.commit()
     db.refresh(account)
 
-    today = datetime.now(timezone.utc).date().isoformat()
-    return _serialize(account, db=db, today=today)
+    return _serialize(account, db=db)
+
+
+@router.get("/{username}/totp", response_model=AccountTotpOut)
+def get_account_totp(username: str, db: Session = Depends(get_db)) -> AccountTotpOut:
+    """Return the stored TOTP seed and the current 6-digit code (admin only)."""
+    account = db.scalar(select(Account).where(Account.username == username))
+    if account is None:
+        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+
+    seed = (account.totp_seed or "").strip()
+    if not seed:
+        raise HTTPException(status_code=404, detail="TOTP seed не задан для этого аккаунта")
+
+    cleaned = "".join(seed.split()).upper()
+    try:
+        import pyotp
+    except ImportError as exc:  # pragma: no cover
+        raise HTTPException(status_code=503, detail="pyotp не установлен") from exc
+
+    try:
+        totp = pyotp.TOTP(cleaned)
+        code = totp.now()
+        # pyotp interval is 30s; remaining until next tick.
+        remaining = int(totp.interval - (datetime.now(timezone.utc).timestamp() % totp.interval))
+        if remaining <= 0:
+            remaining = int(totp.interval)
+    except Exception as exc:  # noqa: BLE001 - bad seed
+        raise HTTPException(
+            status_code=400,
+            detail=f"Некорректный TOTP seed: {exc}",
+        ) from exc
+
+    return AccountTotpOut(totp_seed=cleaned, code=code, seconds_remaining=remaining)
 
 
 @router.put("/{username}/session", response_model=AccountOut)
@@ -265,11 +311,11 @@ def update_account_session(
         )
     account.session_id = normalized
     clear_session_file(account.username)
+    clear_playwright_state(account.username)
     db.commit()
     db.refresh(account)
 
-    today = datetime.now(timezone.utc).date().isoformat()
-    return _serialize(account, db=db, today=today)
+    return _serialize(account, db=db)
 
 
 @router.get("/{username}/session", response_model=AccountSessionOut)
@@ -407,8 +453,7 @@ def _set_status(db: Session, username: str, new_status: AccountStatus) -> Accoun
     account.status = new_status
     db.commit()
     db.refresh(account)
-    today = datetime.now(timezone.utc).date().isoformat()
-    return _serialize(account, db=db, today=today)
+    return _serialize(account, db=db)
 
 
 @router.post("/{username}/pause", response_model=AccountOut)
@@ -418,7 +463,14 @@ def pause_account(username: str, db: Session = Depends(get_db)) -> AccountOut:
 
 @router.post("/{username}/resume", response_model=AccountOut)
 def resume_account(username: str, db: Session = Depends(get_db)) -> AccountOut:
-    return _set_status(db, username, AccountStatus.active)
+    account = db.scalar(select(Account).where(Account.username == username))
+    if account is None:
+        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+    account.cooldown_until = None
+    account.status = AccountStatus.active
+    db.commit()
+    db.refresh(account)
+    return _serialize(account, db=db)
 
 
 @router.post("/{username}/test-connection", response_model=AccountConnectionTestOut)

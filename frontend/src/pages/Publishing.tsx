@@ -1,7 +1,7 @@
 import { BarChart3, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api } from "../api/client";
+import { api, formatApiError } from "../api/client";
 import { Card } from "../components/Card";
 import { DropZone } from "../components/DropZone";
 import { Loader } from "../components/Loader";
@@ -9,6 +9,14 @@ import { MediaLibraryGrid } from "../components/MediaLibraryGrid";
 import { MediaPreviewPanel } from "../components/MediaPreviewPanel";
 import { useToast } from "../context/ToastContext";
 import type { AccountOut, PostType, PublicationOut, VideoOut } from "../api/types";
+
+type UploadQueueItem = {
+  id: string;
+  name: string;
+  pct: number;
+  status: "pending" | "uploading" | "done" | "error";
+  error?: string;
+};
 
 function count(v: number | null | undefined) {
   return v == null ? "-" : v.toLocaleString("ru-RU");
@@ -50,6 +58,7 @@ export function Publishing() {
   const [checkedFilenames, setCheckedFilenames] = useState<Set<string>>(() => new Set());
   const [archiveBusy, setArchiveBusy] = useState(false);
   const [downloadBusy, setDownloadBusy] = useState(false);
+  const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
 
   const selectedItem = useMemo(
     () => media.find((m) => m.filename === selectedFilename) ?? null,
@@ -156,32 +165,83 @@ export function Publishing() {
 
   async function uploadFiles(files: File[]) {
     if (files.length === 0) return;
+    const queue: UploadQueueItem[] = files.map((file, index) => ({
+      id: `${file.name}-${file.size}-${index}-${Date.now()}`,
+      name: file.name,
+      pct: 0,
+      status: "pending",
+    }));
+    setUploadQueue(queue);
     setUploading(true);
+
+    let last: VideoOut | null = null;
+    let okCount = 0;
+    const errors: string[] = [];
+
     try {
-      let last: VideoOut | null = null;
-      for (const file of files) {
-        const out = await api.videos.upload(file, {
-          compress: !skipImageCompress,
-        });
-        last = {
-          filename: out.filename,
-          size_bytes: out.size_bytes,
-          modified_at: new Date().toISOString(),
-          media_type: out.media_type,
-          duration_sec: out.duration_sec,
-        };
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const itemId = queue[i].id;
+        setUploadQueue((prev) =>
+          prev.map((row) =>
+            row.id === itemId ? { ...row, status: "uploading", pct: 0, error: undefined } : row
+          )
+        );
+        try {
+          const out = await api.videos.upload(file, {
+            compress: !skipImageCompress,
+            onProgress: (loaded, total) => {
+              const pct = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
+              setUploadQueue((prev) =>
+                prev.map((row) => (row.id === itemId ? { ...row, pct } : row))
+              );
+            },
+          });
+          okCount += 1;
+          last = {
+            filename: out.filename,
+            size_bytes: out.size_bytes,
+            modified_at: new Date().toISOString(),
+            media_type: out.media_type,
+            duration_sec: out.duration_sec,
+          };
+          setUploadQueue((prev) =>
+            prev.map((row) =>
+              row.id === itemId ? { ...row, status: "done", pct: 100 } : row
+            )
+          );
+        } catch (err) {
+          const message = formatApiError(err);
+          errors.push(`${file.name}: ${message}`);
+          setUploadQueue((prev) =>
+            prev.map((row) =>
+              row.id === itemId ? { ...row, status: "error", error: message } : row
+            )
+          );
+        }
       }
-      const list = await api.videos.list();
-      setMedia(list);
-      if (last) {
-        selectItem(last);
+
+      try {
+        const list = await api.videos.list();
+        setMedia(list);
+      } catch (err) {
+        push(formatApiError(err), "error");
+      }
+
+      if (last) selectItem(last);
+
+      if (okCount === files.length) {
         push(
-          files.length === 1 ? `Загружено: ${last.filename}` : `Загружено файлов: ${files.length}`,
+          files.length === 1
+            ? `Загружено: ${last?.filename ?? files[0].name}`
+            : `Загружено файлов: ${okCount}`,
           "success"
         );
+      } else if (okCount > 0) {
+        push(`Загружено ${okCount} из ${files.length}. ${errors[0] ?? ""}`.trim(), "error");
+      } else {
+        push(errors[0] ?? "Не удалось загрузить файлы", "error");
       }
-    } catch (err) {
-      push((err as Error).message, "error");
     } finally {
       setUploading(false);
     }
@@ -236,7 +296,7 @@ export function Publishing() {
   }
 
   async function quickPublish(item: VideoOut) {
-    const account = defaultUsername || username;
+    const account = username || defaultUsername;
     if (!account) {
       push("Сначала добавьте аккаунт", "error");
       return;
@@ -259,7 +319,13 @@ export function Publishing() {
       push("Медиафайл удалён", "info");
       const list = await api.videos.list();
       setMedia(list);
-      setSelectedFilename(list[0]?.filename ?? null);
+      if (list[0]) {
+        selectItem(list[0]);
+      } else {
+        setSelectedFilename(null);
+        setLibraryTab("video");
+        setPostType("reel");
+      }
     } catch (err) {
       push((err as Error).message, "error");
     }
@@ -310,7 +376,53 @@ export function Publishing() {
           />
           Не сжимать
         </label>
-        {uploading ? <div className="text-xs text-slate-400 mt-2">Загрузка…</div> : null}
+        {uploadQueue.length > 0 ? (
+          <ul className="mt-3 space-y-2" aria-label="Очередь загрузки">
+            {uploadQueue.map((item) => (
+              <li key={item.id} className="text-xs text-slate-300 space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate font-mono" title={item.name}>
+                    {item.name}
+                  </span>
+                  <span className="shrink-0 tabular-nums text-slate-400">
+                    {item.status === "pending"
+                      ? "ожидание"
+                      : item.status === "uploading"
+                        ? `${item.pct}%`
+                        : item.status === "done"
+                          ? "готово"
+                          : "ошибка"}
+                  </span>
+                </div>
+                <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                  <div
+                    className={
+                      item.status === "error"
+                        ? "h-full bg-rose-500 transition-[width]"
+                        : item.status === "done"
+                          ? "h-full bg-emerald-500 transition-[width]"
+                          : "h-full bg-brand-500 transition-[width]"
+                    }
+                    style={{
+                      width: `${
+                        item.status === "pending"
+                          ? 0
+                          : item.status === "error"
+                            ? Math.max(item.pct, 8)
+                            : item.pct
+                      }%`,
+                    }}
+                  />
+                </div>
+                {item.error ? (
+                  <p className="text-rose-300 break-words">{item.error}</p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : uploading ? (
+          <div className="text-xs text-slate-400 mt-2">Загрузка…</div>
+        ) : null}
       </Card>
 
       <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">

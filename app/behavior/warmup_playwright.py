@@ -742,8 +742,12 @@ async def _resolve_instagram_sessionid(
     state_file: Path,
     *,
     timeout_sec: float = _SESSIONID_POLL_TIMEOUT_SEC,
-) -> tuple[str | None, tuple[str, ...]]:
-    """Poll cookies and storage state until sessionid appears or timeout."""
+) -> tuple[str | None, tuple[str, ...], bool]:
+    """Poll cookies and storage state until sessionid appears or timeout.
+
+    Returns ``(session_id, cookie_names, challenge)``. ``challenge`` is True when
+    a checkpoint/challenge page was detected during the poll.
+    """
     deadline = time.monotonic() + timeout_sec
     last_names: tuple[str, ...] = ()
     nav_targets = (
@@ -755,12 +759,12 @@ async def _resolve_instagram_sessionid(
 
     while time.monotonic() < deadline:
         if await _detect_challenge(page):
-            return None, last_names
+            return None, last_names, True
 
         login_error = await _detect_login_error(page)
         if login_error:
             logger.warning("playwright.login_error_text", error=login_error, url=page.url)
-            return None, last_names
+            return None, last_names, False
 
         await _dismiss_post_login_modals(page)
 
@@ -768,11 +772,11 @@ async def _resolve_instagram_sessionid(
         last_names = _cookie_names(cookies)
         session_id = _instagram_sessionid_from_cookies(cookies)
         if session_id:
-            return session_id, last_names
+            return session_id, last_names, False
 
         session_id = await _sessionid_from_saved_storage(context, state_file)
         if session_id:
-            return session_id, last_names
+            return session_id, last_names, False
 
         try:
             target = nav_targets[nav_index % len(nav_targets)]
@@ -784,7 +788,7 @@ async def _resolve_instagram_sessionid(
 
         await asyncio.sleep(random.uniform(0.8, 1.6))
 
-    return None, last_names
+    return None, last_names, False
 
 
 async def _dismiss_post_login_modals(page) -> None:
@@ -1018,7 +1022,9 @@ async def _async_first_login(
         await _dismiss_post_login_modals(page)
         await _human_scroll(page, total_scrolls=random.randint(2, 4))
 
-        session_id, cookie_names = await _resolve_instagram_sessionid(context, page, state_file)
+        session_id, cookie_names, challenged = await _resolve_instagram_sessionid(
+            context, page, state_file
+        )
         if not session_id:
             if await _save_login_debug(page, username):
                 login_debug_saved = True
@@ -1029,10 +1035,14 @@ async def _async_first_login(
                 page_url=page.url,
             )
             failure_page_url = page.url
+            # Detect challenge / login errors on the live page before closing.
+            challenged = challenged or await _detect_challenge(page)
+            login_error = None if challenged else await _detect_login_error(page)
+            still_on_login = False if challenged else await _is_still_on_login_page(page)
             await context.storage_state(path=str(state_file))
             await context.close()
             await browser.close()
-            if await _detect_challenge(page):
+            if challenged:
                 return FirstLoginResult(
                     ok=False,
                     challenge=True,
@@ -1041,7 +1051,6 @@ async def _async_first_login(
                     login_debug_saved=login_debug_saved,
                     page_url=failure_page_url,
                 )
-            login_error = await _detect_login_error(page)
             if login_error:
                 return FirstLoginResult(
                     ok=False,
@@ -1050,7 +1059,7 @@ async def _async_first_login(
                     login_debug_saved=login_debug_saved,
                     page_url=failure_page_url,
                 )
-            if await _is_still_on_login_page(page):
+            if still_on_login:
                 err = (
                     "Браузер остался на странице логина — Instagram не принял учётные данные "
                     "или блокирует автоматический вход"

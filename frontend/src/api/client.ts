@@ -6,6 +6,7 @@ import type {
   AccountProxyUpdate,
   AccountSessionOut,
   AccountSessionUpdate,
+  AccountTotpOut,
   BrowserSaveOut,
   BrowserSessionOut,
   CookiesImportOut,
@@ -42,9 +43,22 @@ export class ApiError extends Error {
 /** User-facing API error text with hints for common status codes. */
 export function formatApiError(err: unknown): string {
   if (!(err instanceof ApiError)) {
-    return err instanceof Error ? err.message : "Неизвестная ошибка";
+    const msg = err instanceof Error ? err.message : "Неизвестная ошибка";
+    if (/networkerror|failed to fetch|network request failed|load failed/i.test(msg)) {
+      return (
+        "Сеть оборвала загрузку (NetworkError). Проверьте соединение, VPN и что API доступен; " +
+        "при мультизагрузке остальные файлы продолжат грузиться."
+      );
+    }
+    return msg;
   }
   const detail = err.message;
+  if (err.status === 0) {
+    return (
+      detail ||
+      "Сеть оборвала загрузку. Проверьте соединение и лимиты прокси/nginx, затем повторите."
+    );
+  }
   if (err.status === 405 || detail.toLowerCase().includes("method not allowed")) {
     return (
       "Метод не разрешён (405). Не открывайте API-URL в адресной строке браузера — " +
@@ -155,6 +169,101 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   return undefined as T;
 }
 
+export type UploadProgressCallback = (loaded: number, total: number) => void;
+
+function parseXhrErrorDetail(xhr: XMLHttpRequest): string {
+  const raw = xhr.responseText || "";
+  if (!raw) {
+    if (xhr.status === 0) {
+      return "Сеть оборвала загрузку (соединение сброшено или CORS/прокси)";
+    }
+    return xhr.statusText || `HTTP ${xhr.status}`;
+  }
+  try {
+    const parsed = JSON.parse(raw) as { detail?: unknown };
+    if (parsed && typeof parsed === "object" && "detail" in parsed) {
+      return String(parsed.detail);
+    }
+  } catch {
+    /* plain text */
+  }
+  return raw.slice(0, 300) || `HTTP ${xhr.status}`;
+}
+
+/** Upload via XHR so browsers can report upload progress (fetch cannot). */
+export function uploadWithProgress(
+  file: File,
+  opts?: {
+    compress?: boolean;
+    onProgress?: UploadProgressCallback;
+    signal?: AbortSignal;
+  }
+): Promise<UploadOut> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const compress = opts?.compress ?? true;
+  fd.append("compress", compress ? "true" : "false");
+
+  return new Promise<UploadOut>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", buildUrl("/api/videos"));
+    const token = tokenGetter();
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+
+    xhr.upload.onprogress = (ev) => {
+      if (!opts?.onProgress) return;
+      const total = ev.lengthComputable ? ev.total : file.size;
+      opts.onProgress(ev.loaded, total || file.size);
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const data = JSON.parse(xhr.responseText || "{}") as UploadOut;
+          resolve(data);
+        } catch (err) {
+          reject(
+            new ApiError(xhr.status, "Некорректный ответ сервера при загрузке", err)
+          );
+        }
+        return;
+      }
+      reject(new ApiError(xhr.status, parseXhrErrorDetail(xhr)));
+    };
+
+    xhr.onerror = () => {
+      reject(
+        new ApiError(
+          0,
+          "Сеть оборвала загрузку (NetworkError). Проверьте соединение и доступность API."
+        )
+      );
+    };
+
+    xhr.ontimeout = () => {
+      reject(new ApiError(0, "Таймаут загрузки файла. Повторите попытку."));
+    };
+
+    xhr.onabort = () => {
+      reject(new ApiError(0, "Загрузка отменена"));
+    };
+
+    if (opts?.signal) {
+      if (opts.signal.aborted) {
+        xhr.abort();
+        return;
+      }
+      const onAbort = () => xhr.abort();
+      opts.signal.addEventListener("abort", onAbort, { once: true });
+      xhr.addEventListener("loadend", () => {
+        opts.signal?.removeEventListener("abort", onAbort);
+      });
+    }
+
+    xhr.send(fd);
+  });
+}
+
 async function downloadFile(
   path: string,
   filename: string,
@@ -187,7 +296,7 @@ async function downloadFile(
     throw new ApiError(res.status, message, detail);
   }
   const disposition = res.headers.get("content-disposition") ?? "";
-  const match = /filename\*?=(?:UTF-8''|")?([^\";]+)/i.exec(disposition);
+  const match = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(disposition);
   const downloadName = match
     ? decodeURIComponent(match[1].replace(/"/g, "").trim())
     : filename;
@@ -253,6 +362,10 @@ export const api = {
     getSession: (username: string) =>
       request<AccountSessionOut>(
         `/api/accounts/${encodeURIComponent(username)}/session`
+      ),
+    getTotp: (username: string) =>
+      request<AccountTotpOut>(
+        `/api/accounts/${encodeURIComponent(username)}/totp`
       ),
     pause: (username: string) =>
       request<AccountOut>(
@@ -402,13 +515,14 @@ export const api = {
     list: () => request<VideoOut[]>("/api/videos"),
     mediaPath: (filename: string) =>
       `${BASE}/api/videos/${encodeURIComponent(filename)}`,
-    upload: (file: File, opts?: { compress?: boolean }) => {
-      const fd = new FormData();
-      fd.append("file", file);
-      const compress = opts?.compress ?? true;
-      fd.append("compress", compress ? "true" : "false");
-      return request<UploadOut>("/api/videos", { method: "POST", formData: fd });
-    },
+    upload: (
+      file: File,
+      opts?: {
+        compress?: boolean;
+        onProgress?: UploadProgressCallback;
+        signal?: AbortSignal;
+      }
+    ) => uploadWithProgress(file, opts),
     download: (filename: string) =>
       downloadFile(`/api/videos/${encodeURIComponent(filename)}`, filename),
     downloadArchive: (filenames: string[]) =>

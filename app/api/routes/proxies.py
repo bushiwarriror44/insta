@@ -16,10 +16,9 @@ from app.proxies.pool import HealthSnapshot, health_check_record, upsert_proxy
 router = APIRouter(prefix="/api/proxies", tags=["proxies"], dependencies=[AuthDep])
 
 
-def _geo_mismatch(proxy: Proxy, snapshot: HealthSnapshot | None) -> bool:
-    if snapshot is None:
-        return False
-    return countries_mismatch(proxy.country, snapshot.country)
+def _geo_mismatch(proxy: Proxy, snapshot: HealthSnapshot | None = None) -> bool:
+    actual = snapshot.country if snapshot is not None else proxy.last_geo_country
+    return countries_mismatch(proxy.country, actual)
 
 
 def _proxy_account_counts(db: Session) -> dict[int, int]:
@@ -39,9 +38,9 @@ def _to_proxy_out(
 ) -> ProxyOut:
     data = ProxyOut.model_validate(proxy).model_dump()
     data["accounts_count"] = accounts_count
+    data["geo_mismatch_warning"] = _geo_mismatch(proxy, snapshot)
     if snapshot is not None:
         data["instagram_reachable"] = snapshot.instagram_reachable
-        data["geo_mismatch_warning"] = _geo_mismatch(proxy, snapshot)
     return ProxyOut.model_validate(data)
 
 

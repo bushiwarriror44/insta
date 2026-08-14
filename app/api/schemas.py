@@ -136,6 +136,12 @@ class AccountNotesUpdate(BaseModel):
     notes: Optional[str] = Field(default=None, max_length=8000)
 
 
+class AccountTotpOut(BaseModel):
+    totp_seed: str
+    code: str
+    seconds_remaining: int
+
+
 class AccountSessionUpdate(BaseModel):
     session_id: str = Field(min_length=31, max_length=1000)
 

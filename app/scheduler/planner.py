@@ -179,7 +179,7 @@ def schedule_jobs(
         for slot in slots:
             if slot <= now_utc:
                 continue
-            if _too_close_to_existing(db, account.id, slot, account.min_gap_hours):
+            if _too_close_to_existing(db, account.id, slot, profile_min_gap_for_account(account)):
                 continue
             if _too_close_to_others_in_pool(db, slot):
                 continue
@@ -241,7 +241,7 @@ def can_post_today(db: Session, account: Account, when: datetime | None = None) 
 
     stat = db.scalar(select(DailyStat).where(DailyStat.account_id == account.id, DailyStat.date_key == local_day))
     posted = stat.posts_count if stat else 0
-    return posted < account.daily_post_cap
+    return posted < profile_cap_for_account(account)
 
 
 def increment_daily_stat(db: Session, account: Account, when: datetime | None = None, *, success: bool) -> None:

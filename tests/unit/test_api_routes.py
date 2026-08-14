@@ -90,9 +90,11 @@ def test_dashboard_open_mode_returns_summary(api_client):
 def test_auth_required_when_token_set(auth_client):
     res = auth_client.get("/api/dashboard")
     assert res.status_code == 401
+    assert "авторизац" in res.json()["detail"].lower()
 
     res = auth_client.get("/api/dashboard", headers={"Authorization": "Bearer wrong"})
     assert res.status_code == 401
+    assert res.json()["detail"] == "Неверный токен"
 
     res = auth_client.get(
         "/api/dashboard", headers={"Authorization": "Bearer secret-token"}
@@ -124,6 +126,57 @@ def test_proxies_create_and_list(api_client):
     assert res.status_code == 200
     items = res.json()
     assert any(p["label"] == "res-eu-1" and p.get("accounts_count", 0) == 0 for p in items)
+
+
+def test_proxies_list_geo_mismatch_warning_from_stored_fields(api_client, app_env):
+    from sqlalchemy import select
+
+    from app.db import Proxy
+
+    api_client.post(
+        "/api/proxies",
+        json={
+            "label": "px-geo-bad",
+            "url": "http://u:p@h:1",
+            "country": "DE",
+            "skip_health_check": True,
+        },
+    )
+    with app_env.SessionLocal() as db:
+        proxy = db.scalar(select(Proxy).where(Proxy.label == "px-geo-bad"))
+        assert proxy is not None
+        proxy.last_geo_country = "US"
+        db.commit()
+
+    listed = api_client.get("/api/proxies").json()
+    row = next(p for p in listed if p["label"] == "px-geo-bad")
+    assert row["geo_mismatch_warning"] is True
+    assert row["last_geo_country"] == "US"
+
+
+def test_proxies_list_geo_mismatch_false_for_country_aliases(api_client, app_env):
+    from sqlalchemy import select
+
+    from app.db import Proxy
+
+    api_client.post(
+        "/api/proxies",
+        json={
+            "label": "px-geo-alias",
+            "url": "http://u:p@h:1",
+            "country": "USA",
+            "skip_health_check": True,
+        },
+    )
+    with app_env.SessionLocal() as db:
+        proxy = db.scalar(select(Proxy).where(Proxy.label == "px-geo-alias"))
+        assert proxy is not None
+        proxy.last_geo_country = "US"
+        db.commit()
+
+    listed = api_client.get("/api/proxies").json()
+    row = next(p for p in listed if p["label"] == "px-geo-alias")
+    assert row["geo_mismatch_warning"] is False
 
 
 def test_proxies_update(api_client):
@@ -289,6 +342,100 @@ def test_accounts_create_pause_resume(api_client):
     res = api_client.get("/api/accounts")
     assert res.status_code == 200
     assert any(a["username"] == "alice" for a in res.json())
+
+
+def test_accounts_list_posts_today_uses_account_local_timezone(api_client, app_env):
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
+
+    from sqlalchemy import select
+
+    from app.db import Account, DailyStat
+
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-ny", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/accounts",
+        json={
+            "username": "ny_user",
+            "password": "secret",
+            "proxy_label": "px-ny",
+            "timezone": "America/New_York",
+        },
+    )
+
+    ny_tz = ZoneInfo("America/New_York")
+    local_today = datetime.now(ny_tz).date().isoformat()
+    utc_today = datetime.now(timezone.utc).date().isoformat()
+    # A date_key that is "today" in UTC but not the account's local day when they differ;
+    # when they coincide, use yesterday UTC so list must still prefer local_today.
+    other_day = utc_today if utc_today != local_today else (
+        datetime.now(timezone.utc).date() - timedelta(days=1)
+    ).isoformat()
+
+    with app_env.SessionLocal() as db:
+        account = db.scalar(select(Account).where(Account.username == "ny_user"))
+        assert account is not None
+        db.add(
+            DailyStat(
+                account_id=account.id,
+                date_key=local_today,
+                posts_count=3,
+                failures_count=1,
+            )
+        )
+        db.add(
+            DailyStat(
+                account_id=account.id,
+                date_key=other_day,
+                posts_count=9,
+                failures_count=9,
+            )
+        )
+        db.commit()
+
+    listed = api_client.get("/api/accounts").json()
+    row = next(a for a in listed if a["username"] == "ny_user")
+    assert row["posts_today"] == 3
+    assert row["failures_today"] == 1
+
+
+def test_accounts_resume_clears_cooldown_until(api_client, app_env):
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import select
+
+    from app.db import Account, AccountStatus
+
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-cd", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/accounts",
+        json={
+            "username": "cooldown_user",
+            "password": "secret",
+            "proxy_label": "px-cd",
+            "timezone": "UTC",
+        },
+    )
+
+    future = datetime.now(timezone.utc) + timedelta(hours=12)
+    with app_env.SessionLocal() as db:
+        account = db.scalar(select(Account).where(Account.username == "cooldown_user"))
+        assert account is not None
+        account.status = AccountStatus.cooldown
+        account.cooldown_until = future
+        db.commit()
+
+    res = api_client.post("/api/accounts/cooldown_user/resume")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["status"] == "active"
+    assert body["cooldown_until"] is None
 
 
 def test_accounts_update_proxy_reassigns_account_and_counts(api_client):
@@ -547,6 +694,42 @@ def test_accounts_export_cookies_404(api_client):
     assert res.status_code == 404
 
 
+def test_accounts_put_session_clears_playwright_so_cookie_export_uses_database(api_client, app_env):
+    import json
+
+    from app.accounts.playwright_session import playwright_state_path
+
+    _create_account(api_client, "pwclear", "px-pwclear")
+    old_sid = "o" * 40
+    new_sid = "n" * 40
+    state_path = playwright_state_path("pwclear")
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "cookies": [
+                    {"name": "sessionid", "value": old_sid, "domain": ".instagram.com"},
+                    {"name": "csrftoken", "value": "stale", "domain": ".instagram.com"},
+                ],
+                "origins": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    res = api_client.put("/api/accounts/pwclear/session", json={"session_id": new_sid})
+    assert res.status_code == 200, res.text
+    assert not state_path.exists()
+
+    res = api_client.get("/api/accounts/pwclear/cookies/export")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert isinstance(body, list)
+    assert len(body) == 1
+    assert body[0]["name"] == "sessionid"
+    assert body[0]["value"] == new_sid
+
+
 def test_accounts_export_playwright_state(api_client, app_env):
     import json
 
@@ -735,6 +918,84 @@ def test_accounts_patch_notes(api_client):
     clear = api_client.patch("/api/accounts/notesuser/notes", json={"notes": None})
     assert clear.status_code == 200
     assert clear.json()["notes"] is None
+
+
+def test_accounts_get_totp_returns_seed_and_code(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-totp", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    seed = "JBSWY3DPEHPK3PXP"
+    api_client.post(
+        "/api/accounts",
+        json={
+            "username": "totpuser",
+            "password": "secret",
+            "proxy_label": "px-totp",
+            "totp_seed": seed,
+        },
+    )
+
+    res = api_client.get("/api/accounts/totpuser/totp")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["totp_seed"] == seed
+    assert body["code"].isdigit() and len(body["code"]) == 6
+    assert 1 <= body["seconds_remaining"] <= 30
+
+    listed = api_client.get("/api/accounts")
+    row = next(a for a in listed.json() if a["username"] == "totpuser")
+    assert row["has_totp"] is True
+    assert "totp_seed" not in row
+
+
+def test_accounts_get_totp_404_without_seed(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-nototp", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/accounts",
+        json={
+            "username": "noseed",
+            "password": "secret",
+            "proxy_label": "px-nototp",
+        },
+    )
+    res = api_client.get("/api/accounts/noseed/totp")
+    assert res.status_code == 404
+
+
+def test_accounts_has_totp_false_for_whitespace_seed(api_client, db_session):
+    from app.db import Account
+
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-ws", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/accounts",
+        json={
+            "username": "wseed",
+            "password": "secret",
+            "proxy_label": "px-ws",
+        },
+    )
+    row = db_session.query(Account).filter_by(username="wseed").one()
+    row.totp_seed = "   "
+    db_session.commit()
+
+    listed = api_client.get("/api/accounts").json()
+    acc = next(a for a in listed if a["username"] == "wseed")
+    assert acc["has_totp"] is False
+
+    res = api_client.get("/api/accounts/wseed/totp")
+    assert res.status_code == 404
+
+
+def test_accounts_get_totp_404_missing_account(api_client):
+    res = api_client.get("/api/accounts/ghost/totp")
+    assert res.status_code == 404
 
 
 def test_accounts_create_rejects_missing_proxy(api_client):

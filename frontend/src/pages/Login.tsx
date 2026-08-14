@@ -14,9 +14,14 @@ export function Login() {
     e.preventDefault();
     if (!token.trim()) return;
     setBusy(true);
-    const ok = await login(token.trim());
+    const result = await login(token.trim());
     setBusy(false);
-    if (!ok) push("Неверный токен", "error");
+    if (!result.ok) {
+      push(
+        result.reason === "invalid" ? "Неверный токен" : result.message,
+        "error"
+      );
+    }
   }
 
   return (

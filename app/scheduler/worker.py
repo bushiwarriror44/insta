@@ -246,6 +246,19 @@ def _process_job(db: Session, job: PostJob) -> None:
     log = log.bind(risk_profile=risk_profile.name)
     diag.info("account", f"@{account.username} статус={account.status.value}")
 
+    # Soft-block cooldown expired → restore active so claimable jobs are not cancelled.
+    if account.status == AccountStatus.cooldown:
+        now = datetime.now(timezone.utc)
+        until = account.cooldown_until
+        if until is not None and until.tzinfo is None:
+            until = until.replace(tzinfo=timezone.utc)
+        if until is None or until <= now:
+            account.status = AccountStatus.active
+            account.cooldown_until = None
+            db.commit()
+            log.info("worker.cooldown_expired_restored")
+            diag.info("account", "Cooldown истёк — статус active")
+
     if account.status != AccountStatus.active:
         job.status = PostJobStatus.cancelled
         job.last_error = f"account status: {account.status.value}"

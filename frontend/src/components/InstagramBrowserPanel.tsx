@@ -1,8 +1,14 @@
 import { CheckCircle2, Copy, Eye, EyeOff, Loader2, MonitorPlay, Save, Send, Square } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { api, formatApiError } from "../api/client";
-import type { BrowserSaveOut, BrowserSessionOut, DiagnosticLogLine, LoginSurface } from "../api/types";
+import { api, formatApiError, ApiError } from "../api/client";
+import type {
+  AccountTotpOut,
+  BrowserSaveOut,
+  BrowserSessionOut,
+  DiagnosticLogLine,
+  LoginSurface,
+} from "../api/types";
 import { useToast } from "../context/ToastContext";
 import { CountryFlag } from "./CountryFlag";
 import {
@@ -38,6 +44,8 @@ interface Props {
   adminToken?: string | null;
   mode?: "standalone" | "setup";
   loginSurface?: LoginSurface;
+  /** When false, browser start is blocked (account has no proxy). */
+  hasProxy?: boolean;
   onSessionSaved?: (result: BrowserSaveOut) => void;
 }
 
@@ -77,6 +85,7 @@ export function InstagramBrowserPanel({
   adminToken,
   mode = "standalone",
   loginSurface = "mobile",
+  hasProxy = true,
   onSessionSaved,
 }: Props) {
   const { push } = useToast();
@@ -88,7 +97,12 @@ export function InstagramBrowserPanel({
   const [notesDraft, setNotesDraft] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [copyOk, setCopyOk] = useState(false);
+  const [totpInfo, setTotpInfo] = useState<AccountTotpOut | null>(null);
+  const [totpAvailable, setTotpAvailable] = useState(true);
+  const [totpSeedCopied, setTotpSeedCopied] = useState(false);
+  const [totpCodeCopied, setTotpCodeCopied] = useState(false);
   const pollRef = useRef<number | null>(null);
+  const totpPollRef = useRef<number | null>(null);
 
   const applySession = useCallback((data: BrowserSessionOut) => {
     setSession(data);
@@ -126,6 +140,52 @@ export function InstagramBrowserPanel({
     setNotesDraft(session?.account_notes ?? "");
   }, [session?.account_notes]);
 
+  const live =
+    !!session && ["running", "awaiting_code", "saved", "starting"].includes(session.status);
+  const navReady =
+    !!session && ["running", "awaiting_code", "saved"].includes(session.status);
+
+  useEffect(() => {
+    setTotpInfo(null);
+    setTotpAvailable(true);
+  }, [username]);
+
+  useEffect(() => {
+    if (totpPollRef.current !== null) {
+      window.clearInterval(totpPollRef.current);
+      totpPollRef.current = null;
+    }
+    if (!live || !totpAvailable) return;
+
+    let cancelled = false;
+
+    async function tick() {
+      try {
+        const data = await api.accounts.getTotp(username);
+        if (!cancelled) {
+          setTotpInfo(data);
+          setTotpAvailable(true);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        if (err instanceof ApiError && err.status === 404) {
+          setTotpAvailable(false);
+          setTotpInfo(null);
+        }
+      }
+    }
+
+    void tick();
+    totpPollRef.current = window.setInterval(() => void tick(), 1000);
+    return () => {
+      cancelled = true;
+      if (totpPollRef.current !== null) {
+        window.clearInterval(totpPollRef.current);
+        totpPollRef.current = null;
+      }
+    };
+  }, [live, totpAvailable, username]);
+
   const vncPath = session?.vnc_path?.replace(/^\//, "") ?? "";
 
   const vncUrl = useMemo(() => {
@@ -147,10 +207,6 @@ export function InstagramBrowserPanel({
     return `/novnc/vnc.html?${params.toString()}`;
   }, [vncPath, session, adminToken]);
 
-  const live =
-    !!session && ["running", "awaiting_code", "saved", "starting"].includes(session.status);
-  const navReady =
-    !!session && ["running", "awaiting_code", "saved"].includes(session.status);
   const isSetup = mode === "setup";
   const showBlankWarning =
     session?.status === "running" &&
@@ -162,6 +218,10 @@ export function InstagramBrowserPanel({
     );
 
   async function startBrowser() {
+    if (!hasProxy) {
+      push("Сначала назначьте прокси", "error");
+      return;
+    }
     setBusy(true);
     try {
       const data = await api.accounts.browserStart(username, { loginSurface });
@@ -281,6 +341,30 @@ export function InstagramBrowserPanel({
     push(ok ? "URL скопирован" : "Не удалось скопировать URL", ok ? "success" : "error");
   }
 
+  async function copyTotpCode() {
+    if (!totpInfo?.code) return;
+    setCode(totpInfo.code);
+    const ok = await copyTextToClipboard(totpInfo.code);
+    push(ok ? "Код TOTP скопирован" : "Не удалось скопировать код TOTP", ok ? "success" : "error");
+    if (ok) {
+      setTotpCodeCopied(true);
+      window.setTimeout(() => setTotpCodeCopied(false), 2000);
+    }
+  }
+
+  async function copyTotpSeed() {
+    if (!totpInfo?.totp_seed) return;
+    const ok = await copyTextToClipboard(totpInfo.totp_seed);
+    push(
+      ok ? "Секретный ключ TOTP скопирован" : "Не удалось скопировать ключ TOTP",
+      ok ? "success" : "error"
+    );
+    if (ok) {
+      setTotpSeedCopied(true);
+      window.setTimeout(() => setTotpSeedCopied(false), 2000);
+    }
+  }
+
   const setupStep = savedOk ? 4 : live ? 2 : 1;
 
   return (
@@ -336,18 +420,23 @@ export function InstagramBrowserPanel({
         </div>
       ) : null}
 
-      {showBlankWarning && session?.warning ? (
+      {showBlankWarning ? (
         <div className="rounded-lg border border-amber-500/40 bg-amber-950/30 p-3 text-sm text-amber-100">
-          {session.warning.includes("429") || session.proxy_instagram_login_http_status === 429 ? (
+          {session?.warning &&
+          (session.warning.includes("429") || session.proxy_instagram_login_http_status === 429) ? (
             <>
               Instagram временно ограничил запросы с IP прокси{" "}
               <span className="font-mono">{session.proxy_ip ?? ""}</span> (HTTP 429). Подождите
               30–60 минут или смените прокси, затем нажмите «Открыть Instagram».
             </>
-          ) : (
+          ) : session?.warning ? (
             <>
               Автопереход не удался — повторите «Открыть Instagram» / «Login» или введите адрес в
               VNC. {session.warning}
+            </>
+          ) : (
+            <>
+              Страница пустая — нажмите «Открыть Instagram» или «Login», либо введите адрес в VNC.
             </>
           )}
         </div>
@@ -461,7 +550,13 @@ export function InstagramBrowserPanel({
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className="btn-primary" disabled={busy || live} onClick={startBrowser}>
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={busy || live || !hasProxy}
+          title={hasProxy ? undefined : "Сначала назначьте прокси"}
+          onClick={startBrowser}
+        >
           <MonitorPlay size={16} className={busy ? "animate-spin" : ""} />
           Запустить браузер
         </button>
@@ -498,6 +593,9 @@ export function InstagramBrowserPanel({
           <Loader2 size={16} className="animate-spin text-slate-500 ml-auto" />
         )}
       </div>
+      {!hasProxy ? (
+        <p className="text-xs text-amber-300">Сначала назначьте прокси</p>
+      ) : null}
 
       <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-3 space-y-2">
         <p className="text-xs uppercase tracking-wide text-slate-500">Быстрый переход в Instagram</p>
@@ -583,6 +681,37 @@ export function InstagramBrowserPanel({
             <Send size={14} />
             Отправить
           </button>
+          {totpInfo ? (
+            <div className="rounded-lg border border-emerald-800/50 bg-emerald-950/20 p-2 space-y-2">
+              <p className="text-[10px] uppercase tracking-wide text-emerald-400">TOTP сейчас</p>
+              <p className="font-mono text-lg tracking-widest text-emerald-100">
+                {totpInfo.code}
+                <span className="ml-2 text-xs text-slate-400 tabular-nums">
+                  {totpInfo.seconds_remaining}s
+                </span>
+              </p>
+              <button
+                type="button"
+                className="btn-ghost text-xs w-full"
+                onClick={() => void copyTotpCode()}
+              >
+                <Copy size={12} />
+                {totpCodeCopied ? "Скопировано" : "Копировать код"}
+              </button>
+              <button
+                type="button"
+                className="btn-ghost text-xs w-full"
+                onClick={() => void copyTotpSeed()}
+              >
+                <Copy size={12} />
+                {totpSeedCopied ? "Скопировано" : "Копировать секретный ключ TOTP"}
+              </button>
+            </div>
+          ) : session?.awaiting_code && !totpAvailable ? (
+            <p className="text-xs text-amber-300">
+              TOTP seed не задан — добавьте в настройках аккаунта
+            </p>
+          ) : null}
           <p className="text-xs text-slate-500">
             Введите код здесь или прямо в окне браузера справа.
           </p>

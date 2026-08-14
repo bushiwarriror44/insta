@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -49,9 +49,26 @@ describe("App routing", () => {
       authRequired: false,
       logout: vi.fn(),
       login: vi.fn(),
+      retryBootstrap: vi.fn(),
     });
     renderAt("/");
     expect(screen.getByText(/подключение к api/i)).toBeInTheDocument();
+  });
+
+  it("shows API unavailable screen with retry on error state", () => {
+    const retryBootstrap = vi.fn();
+    useAuthMock.mockReturnValue({
+      state: { state: "error", message: "connection refused" },
+      authRequired: false,
+      logout: vi.fn(),
+      login: vi.fn(),
+      retryBootstrap,
+    });
+    renderAt("/");
+    expect(screen.getByRole("heading", { name: /api недоступен/i })).toBeInTheDocument();
+    expect(screen.getByText(/connection refused/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /повторить/i }));
+    expect(retryBootstrap).toHaveBeenCalledTimes(1);
   });
 
   it("redirects unauthenticated users to /login", () => {
@@ -60,6 +77,7 @@ describe("App routing", () => {
       authRequired: true,
       logout: vi.fn(),
       login: vi.fn(),
+      retryBootstrap: vi.fn(),
     });
     renderAt("/accounts");
     expect(screen.getByText("LOGIN_PAGE")).toBeInTheDocument();
@@ -71,6 +89,7 @@ describe("App routing", () => {
       authRequired: false,
       logout: vi.fn(),
       login: vi.fn(),
+      retryBootstrap: vi.fn(),
     });
     renderAt("/");
     expect(screen.getByText("DASHBOARD_PAGE")).toBeInTheDocument();
@@ -82,6 +101,7 @@ describe("App routing", () => {
       authRequired: true,
       logout: vi.fn(),
       login: vi.fn(),
+      retryBootstrap: vi.fn(),
     });
     renderAt("/accounts");
     expect(screen.getByText("ACCOUNTS_PAGE")).toBeInTheDocument();
@@ -93,6 +113,7 @@ describe("App routing", () => {
       authRequired: false,
       logout: vi.fn(),
       login: vi.fn(),
+      retryBootstrap: vi.fn(),
     });
     renderAt("/upload");
     expect(screen.getByText("PUBLISHING_PAGE")).toBeInTheDocument();
@@ -104,6 +125,7 @@ describe("App routing", () => {
       authRequired: false,
       logout: vi.fn(),
       login: vi.fn(),
+      retryBootstrap: vi.fn(),
     });
     renderAt("/publishing");
     expect(screen.getByText("PUBLISHING_PAGE")).toBeInTheDocument();
@@ -115,6 +137,7 @@ describe("App routing", () => {
       authRequired: false,
       logout: vi.fn(),
       login: vi.fn(),
+      retryBootstrap: vi.fn(),
     });
     renderAt("/activity");
     expect(screen.getByText("ACTIVITY_PAGE")).toBeInTheDocument();
@@ -126,6 +149,7 @@ describe("App routing", () => {
       authRequired: false,
       logout: vi.fn(),
       login: vi.fn(),
+      retryBootstrap: vi.fn(),
     });
     renderAt("/something/random");
     expect(screen.getByText("DASHBOARD_PAGE")).toBeInTheDocument();

@@ -2,12 +2,13 @@ import {
   Activity as ActivityIcon,
   AlertTriangle,
   CheckCircle2,
+  RefreshCw,
   Server,
   Users,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { api } from "../api/client";
+import { api, formatApiError } from "../api/client";
 import { Card } from "../components/Card";
 import { Loader } from "../components/Loader";
 import { StatCard } from "../components/StatCard";
@@ -25,31 +26,72 @@ export function Dashboard() {
   const { push } = useToast();
   const [data, setData] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
+  const hasDataRef = useRef(false);
+
+  const refresh = useCallback(async (opts?: { isInitial?: boolean }) => {
+    const isInitial = opts?.isInitial ?? false;
+    try {
+      const summary = await api.dashboard();
+      hasDataRef.current = true;
+      setData(summary);
+      setLoadError(null);
+    } catch (err) {
+      const message = formatApiError(err);
+      if (!hasDataRef.current) {
+        setLoadError(message);
+        if (isInitial) push(message, "error");
+      }
+    } finally {
+      if (isInitial || !hasDataRef.current) setLoading(false);
+    }
+  }, [push]);
 
   useEffect(() => {
     let cancelled = false;
     let initial = true;
+
     async function tick() {
-      try {
-        const summary = await api.dashboard();
-        if (cancelled) return;
-        setData(summary);
-      } catch (err) {
-        if (initial) push((err as Error).message, "error");
-      } finally {
-        if (initial) setLoading(false);
-        initial = false;
-      }
+      if (cancelled) return;
+      await refresh({ isInitial: initial });
+      initial = false;
     }
-    tick();
-    const id = window.setInterval(tick, POLL_INTERVAL_MS);
+
+    void tick();
+    const id = window.setInterval(() => void tick(), POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [push]);
+  }, [push, refresh, retryKey]);
 
-  if (loading || !data) return <Loader />;
+  if (loading && !data) return <Loader />;
+
+  if (!data && loadError) {
+    return (
+      <div className="min-h-[40vh] grid place-items-center">
+        <div className="card w-full max-w-md p-8 space-y-4 text-center">
+          <h1 className="text-xl font-semibold">Не удалось загрузить панель</h1>
+          <p className="text-sm text-slate-400 break-words">{loadError}</p>
+          <button
+            type="button"
+            className="btn-primary w-full"
+            onClick={() => {
+              setLoading(true);
+              setLoadError(null);
+              setRetryKey((k) => k + 1);
+            }}
+          >
+            <RefreshCw size={16} />
+            Повторить
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!data) return <Loader />;
 
   return (
     <div className="space-y-6">

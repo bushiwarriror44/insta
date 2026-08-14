@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AccountOut, VideoOut } from "../../api/types";
+import { fetchMediaObjectUrl } from "../../api/media";
 import { MediaPreviewPanel } from "../MediaPreviewPanel";
 
 vi.mock("../../api/media", () => ({
@@ -48,26 +49,36 @@ const video: VideoOut = {
   duration_sec: 60,
 };
 
+const image: VideoOut = {
+  filename: "photo.jpg",
+  size_bytes: 512,
+  modified_at: new Date().toISOString(),
+  media_type: "image",
+};
+
+const baseProps = {
+  accounts: [account],
+  username: "alice",
+  whenLocal: "",
+  caption: "",
+  saving: false,
+  onUsernameChange: () => {},
+  onPostTypeChange: () => {},
+  onWhenChange: () => {},
+  onCaptionChange: () => {},
+  onPublish: () => {},
+  onDelete: () => {},
+  onDownload: () => {},
+};
+
 describe("MediaPreviewPanel", () => {
+  beforeEach(() => {
+    vi.mocked(fetchMediaObjectUrl).mockReset();
+    vi.mocked(fetchMediaObjectUrl).mockResolvedValue("blob:mock-preview");
+  });
+
   it("shows empty state when no item selected", () => {
-    render(
-      <MediaPreviewPanel
-        item={null}
-        accounts={[account]}
-        username="alice"
-        postType="reel"
-        whenLocal=""
-        caption=""
-        saving={false}
-        onUsernameChange={() => {}}
-        onPostTypeChange={() => {}}
-        onWhenChange={() => {}}
-        onCaptionChange={() => {}}
-        onPublish={() => {}}
-        onDelete={() => {}}
-        onDownload={() => {}}
-      />
-    );
+    render(<MediaPreviewPanel item={null} postType="reel" {...baseProps} />);
     expect(screen.getByText(/выберите видео или фото/i)).toBeInTheDocument();
   });
 
@@ -77,18 +88,9 @@ describe("MediaPreviewPanel", () => {
     render(
       <MediaPreviewPanel
         item={video}
-        accounts={[account]}
-        username="alice"
         postType="reel"
-        whenLocal=""
-        caption=""
-        saving={false}
-        onUsernameChange={() => {}}
-        onPostTypeChange={() => {}}
-        onWhenChange={() => {}}
-        onCaptionChange={() => {}}
+        {...baseProps}
         onPublish={onPublish}
-        onDelete={() => {}}
         onDownload={onDownload}
       />
     );
@@ -98,5 +100,39 @@ describe("MediaPreviewPanel", () => {
     expect(onPublish).toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /^скачать$/i }));
     expect(onDownload).toHaveBeenCalled();
+  });
+
+  it("clears stale preview blob when switching files", async () => {
+    let resolveImage: (url: string) => void = () => {};
+    vi.mocked(fetchMediaObjectUrl)
+      .mockResolvedValueOnce("blob:video")
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveImage = resolve;
+          })
+      );
+
+    const { rerender } = render(
+      <MediaPreviewPanel item={video} postType="reel" {...baseProps} />
+    );
+    await waitFor(() => {
+      const el = document.querySelector("video");
+      expect(el).toBeTruthy();
+      expect(el?.getAttribute("src")).toBe("blob:video");
+    });
+
+    rerender(<MediaPreviewPanel item={image} postType="feed_photo" {...baseProps} />);
+
+    expect(screen.getByText(/предпросмотр недоступен/i)).toBeInTheDocument();
+    expect(document.querySelector("video")).toBeNull();
+    expect(document.querySelector("img")).toBeNull();
+
+    resolveImage("blob:image");
+    await waitFor(() => {
+      const el = document.querySelector("img");
+      expect(el).toBeTruthy();
+      expect(el?.getAttribute("src")).toBe("blob:image");
+    });
   });
 });

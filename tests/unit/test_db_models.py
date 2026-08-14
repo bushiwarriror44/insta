@@ -36,6 +36,30 @@ def test_init_db_creates_all_tables(app_env):
     assert expected.issubset(tables), f"missing tables: {expected - tables}"
 
 
+def test_init_db_adds_pending_email_totp_columns(app_env):
+    """Old DBs missing email/2FA columns must pick them up via auto-init."""
+    from sqlalchemy import text
+
+    from app.db.session import init_db
+
+    engine = app_env.engine
+    with engine.begin() as conn:
+        for column in ("email", "email_password", "totp_seed"):
+            conn.execute(text(f"ALTER TABLE accounts DROP COLUMN {column}"))
+
+    cols_before = {c["name"] for c in inspect(engine).get_columns("accounts")}
+    assert "email" not in cols_before
+    assert "email_password" not in cols_before
+    assert "totp_seed" not in cols_before
+
+    init_db()
+
+    cols = {c["name"] for c in inspect(engine).get_columns("accounts")}
+    assert "email" in cols
+    assert "email_password" in cols
+    assert "totp_seed" in cols
+
+
 def test_account_username_unique(db_session, make_proxy):
     proxy = make_proxy()
     db_session.add(Account(username="dup", password="x", proxy_id=proxy.id))

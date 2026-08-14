@@ -173,6 +173,16 @@ export function Accounts() {
     }
     push("Сессия сохранена", "success");
   };
+  const onBrowserSessionSaved = async () => {
+    await reload();
+    if (browserAccount) {
+      const refreshed = await api.accounts.list().catch(() => null);
+      if (refreshed) {
+        const next = refreshed.find((a) => a.username === browserAccount.username);
+        if (next) setBrowserAccount(next);
+      }
+    }
+  };
   const onSessionSetupCompleted = async () => {
     setSessionSetupAccount(null);
     await reload();
@@ -323,25 +333,17 @@ export function Accounts() {
                     </td>
                     <td
                       className={
-                        p.last_geo_country &&
-                        p.country &&
-                        p.last_geo_country.toUpperCase() !== p.country.toUpperCase()
-                          ? "text-amber-300"
-                          : "text-slate-400"
+                        p.geo_mismatch_warning ? "text-amber-300" : "text-slate-400"
                       }
                       title={
-                        p.last_geo_country &&
-                        p.country &&
-                        p.last_geo_country.toUpperCase() !== p.country.toUpperCase()
+                        p.geo_mismatch_warning
                           ? `Не совпадает с заявленной страной (${p.country})`
                           : undefined
                       }
                     >
                       <span
                         className={
-                          p.last_geo_country &&
-                          p.country &&
-                          p.last_geo_country.toUpperCase() !== p.country.toUpperCase()
+                          p.geo_mismatch_warning
                             ? "inline-flex items-center gap-1.5 text-amber-300"
                             : "inline-flex items-center gap-1.5"
                         }
@@ -509,7 +511,13 @@ export function Accounts() {
                         </a>
                         <button
                           type="button"
-                          className="inline-flex items-center gap-1 text-xs font-normal text-sky-300 hover:text-sky-200"
+                          className="inline-flex items-center gap-1 text-xs font-normal text-sky-300 hover:text-sky-200 disabled:opacity-40 disabled:pointer-events-none"
+                          disabled={!a.proxy_label}
+                          title={
+                            a.proxy_label
+                              ? "Открыть браузер Instagram через прокси аккаунта"
+                              : "Сначала назначьте прокси"
+                          }
                           onClick={() => setBrowserAccount(a)}
                         >
                           <MonitorPlay size={12} />
@@ -574,6 +582,12 @@ export function Accounts() {
                           type="button"
                           className="btn-ghost text-xs"
                           aria-label={`Подключение для ${a.username}`}
+                          disabled={!a.proxy_label}
+                          title={
+                            a.proxy_label
+                              ? "Полная проверка подключения"
+                              : "Сначала назначьте прокси"
+                          }
                           onClick={() => setConnectionAccount(a)}
                         >
                           <Network size={14} /> Подключение
@@ -586,6 +600,29 @@ export function Accounts() {
                         >
                           <KeyRound size={14} /> Сессия
                         </button>
+                        {a.has_totp ? (
+                          <button
+                            type="button"
+                            className="btn-ghost text-xs"
+                            aria-label={`Копировать TOTP для ${a.username}`}
+                            onClick={async () => {
+                              try {
+                                const data = await api.accounts.getTotp(a.username);
+                                const ok = await copyTextToClipboard(data.totp_seed);
+                                push(
+                                  ok
+                                    ? "Секретный ключ TOTP скопирован"
+                                    : "Не удалось скопировать ключ TOTP",
+                                  ok ? "success" : "error"
+                                );
+                              } catch (err) {
+                                push((err as Error).message, "error");
+                              }
+                            }}
+                          >
+                            <Copy size={14} /> TOTP
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           className="btn-ghost text-xs"
@@ -723,7 +760,9 @@ export function Accounts() {
           <InstagramBrowserPanel
             username={browserAccount.username}
             adminToken={adminToken}
+            hasProxy={Boolean(browserAccount.proxy_label)}
             loginSurface={browserAccount.login_surface === "desktop" ? "desktop" : "mobile"}
+            onSessionSaved={() => void onBrowserSessionSaved()}
           />
         ) : null}
       </Modal>
@@ -774,6 +813,7 @@ function AddAccountModal({
     backup_codes: "",
     notes: "",
   });
+  const [totpCopied, setTotpCopied] = useState(false);
 
   useEffect(() => {
     if (open && proxies.length > 0 && !form.proxy_label) {
@@ -1026,6 +1066,11 @@ function AddAccountModal({
                 type="button"
                 className="btn-ghost text-xs"
                 disabled={!(form.totp_seed ?? "").trim()}
+                title={
+                  (form.totp_seed ?? "").trim()
+                    ? "Скопировать Base32-секрет в буфер обмена"
+                    : "Сначала введите TOTP seed в поле выше"
+                }
                 onClick={async () => {
                   const seed = (form.totp_seed ?? "").trim();
                   if (!seed) return;
@@ -1034,9 +1079,14 @@ function AddAccountModal({
                     ok ? "Секретный ключ TOTP скопирован" : "Не удалось скопировать ключ TOTP",
                     ok ? "success" : "error"
                   );
+                  if (ok) {
+                    setTotpCopied(true);
+                    window.setTimeout(() => setTotpCopied(false), 2000);
+                  }
                 }}
               >
-                <Copy size={14} /> Копировать секретный ключ TOTP
+                <Copy size={14} />{" "}
+                {totpCopied ? "Скопировано" : "Копировать секретный ключ TOTP"}
               </button>
             </div>
             <p className="text-xs text-slate-500 mt-1">
@@ -1134,8 +1184,14 @@ function ConnectionModal({
     };
   }, [open, connectionUsername, result?.run_id, historyTick]);
 
+  const hasProxy = Boolean(account?.proxy_label);
+
   async function runTest() {
     if (!account) return;
+    if (!account.proxy_label) {
+      push("Сначала назначьте прокси", "error");
+      return;
+    }
     setRunning(true);
     setResult(null);
     setLastCheckMode("cookies");
@@ -1166,6 +1222,10 @@ function ConnectionModal({
 
   async function runMobileProbe() {
     if (!account) return;
+    if (!account.proxy_label) {
+      push("Сначала назначьте прокси", "error");
+      return;
+    }
     setRunning(true);
     setResult(null);
     setLastCheckMode("mobile");
@@ -1283,17 +1343,24 @@ function ConnectionModal({
           : "fail"
         : "pending";
 
+  const storagePresent = (storage: AccountConnectionTestOut["session_storage"]) =>
+    storage.session_source !== "none" ||
+    storage.has_session_id ||
+    storage.session_file_exists;
+
   const step3: StepVisual = running
     ? "running"
     : result
-      ? result.proxy_health.instagram_reachable
+      ? storagePresent(result.session_storage)
         ? "ok"
         : "fail"
       : viewingHistory && historyOverall && historyOverall !== "running"
         ? historyOverall === "ok"
           ? "ok"
           : "fail"
-        : "pending";
+        : account?.session_source && account.session_source !== "none"
+          ? "ok"
+          : "pending";
 
   const step4: StepVisual = running
     ? "running"
@@ -1366,9 +1433,13 @@ function ConnectionModal({
           <button
             type="button"
             className="btn-ghost"
-            disabled={running || minting || !account}
+            disabled={running || minting || !account || !hasProxy}
             onClick={() => void runMobileProbe()}
-            title="Может инвалидировать web-cookie из Dolphin"
+            title={
+              hasProxy
+                ? "Может инвалидировать web-cookie из Dolphin"
+                : "Сначала назначьте прокси"
+            }
           >
             <ShieldOff size={16} className={running && lastCheckMode === "mobile" ? "animate-pulse" : ""} />
             {running && lastCheckMode === "mobile" ? "Mobile…" : "Проверить mobile API"}
@@ -1376,7 +1447,8 @@ function ConnectionModal({
           <button
             type="button"
             className="btn-primary"
-            disabled={running || minting || !account}
+            disabled={running || minting || !account || !hasProxy}
+            title={hasProxy ? undefined : "Сначала назначьте прокси"}
             onClick={runTest}
           >
             <RefreshCw size={16} className={running && lastCheckMode === "cookies" ? "animate-spin" : ""} />
@@ -1386,6 +1458,11 @@ function ConnectionModal({
       }
     >
       <div className="space-y-4">
+        {!hasProxy ? (
+          <p className="rounded-xl border border-amber-800/50 bg-amber-950/20 px-3 py-2 text-sm text-amber-200">
+            Сначала назначьте прокси
+          </p>
+        ) : null}
         <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-sm space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-slate-400">Прокси:</span>
@@ -1423,13 +1500,16 @@ function ConnectionModal({
             }
           />
           <ConnectionStepRow
-            label="2. Прокси отвечает"
+            label="2. Прокси health"
             state={step2}
             detail={
               result?.proxy_health.ok ? (
                 <span className="inline-flex items-center gap-2 flex-wrap">
                   IP: {result.proxy_health.ip ?? "—"}
                   <CountryFlag code={result.proxy_health.geo_country} showCode />
+                  {result.proxy_health.instagram_reachable
+                    ? "· Instagram доступен"
+                    : "· Instagram недоступен"}
                   {result.proxy_health.geo_mismatch ? (
                     <span className="text-amber-300">Гео не совпадает с заявленной страной</span>
                   ) : null}
@@ -1445,31 +1525,44 @@ function ConnectionModal({
             }
           />
           <ConnectionStepRow
-            label="3. Instagram доступен через прокси"
+            label="3. Хранилище сессии"
             state={step3}
             detail={
-              result
-                ? result.proxy_health.instagram_reachable
-                  ? "TLS-рукопожатие с Instagram успешно"
-                  : "Прокси не может достучаться до Instagram"
-                : running
-                  ? "Проверка Instagram…"
-                  : viewingHistory
-                    ? selectedHistory.summary ?? "См. лог истории"
-                    : "Ещё не проверено"
+              result ? (
+                <span className="inline-flex items-center gap-2 flex-wrap">
+                  {sessionSourceLabel(result.session_storage.session_source)}
+                  {result.session_storage.has_session_id ? (
+                    <span className="text-brand-300">sessionid</span>
+                  ) : null}
+                  {result.session_storage.session_file_exists ? (
+                    <span className="text-sky-300">файл</span>
+                  ) : null}
+                  {result.session_storage.device_file_exists ? (
+                    <span className="text-slate-500">device</span>
+                  ) : null}
+                </span>
+              ) : running ? (
+                "Проверка хранилища…"
+              ) : viewingHistory ? (
+                selectedHistory.summary ?? "См. лог истории"
+              ) : account ? (
+                sessionSourceLabel(account.session_source)
+              ) : (
+                "Ещё не проверено"
+              )
             }
           />
           <ConnectionStepRow
             label={
               result?.instagram_auth.ok
                 ? lastCheckMode === "cookies"
-                  ? "4. Cookies установлены"
-                  : "4. Сессия действительна"
+                  ? "4. Instagram auth (cookies)"
+                  : "4. Instagram auth OK"
                 : result
                   ? lastCheckMode === "mobile"
-                    ? "4. Сессия недействительна"
-                    : "4. Cookies не найдены"
-                  : "4. Cookies / сессия"
+                    ? "4. Instagram auth недействительна"
+                    : "4. Instagram auth"
+                  : "4. Instagram auth"
             }
             state={step4}
             detail={
@@ -1487,13 +1580,14 @@ function ConnectionModal({
                 (running
                   ? lastCheckMode === "mobile"
                     ? "Проверка сессии… (до 1–2 мин)"
-                    : "Проверка хранилища…"
+                    : "Проверка auth…"
                   : viewingHistory
                     ? selectedHistory.summary ?? "См. лог истории"
                     : "Ещё не проверено")
               )
             }
-          />        </div>
+          />
+        </div>
 
         {statusBanner ? (
           <div

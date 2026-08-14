@@ -158,7 +158,10 @@ describe("Publishing page", () => {
     await userEvent.upload(input, file);
     fireEvent.click(screen.getByRole("button", { name: /^загрузить$/i }));
     await waitFor(() =>
-      expect(apiMock.videos.upload).toHaveBeenCalledWith(file, { compress: true })
+      expect(apiMock.videos.upload).toHaveBeenCalledWith(
+        file,
+        expect.objectContaining({ compress: true })
+      )
     );
     await screen.findByText(/загружено: new\.mp4/i);
   });
@@ -182,8 +185,48 @@ describe("Publishing page", () => {
     await userEvent.upload(input, file);
     fireEvent.click(screen.getByRole("button", { name: /^загрузить$/i }));
     await waitFor(() =>
-      expect(apiMock.videos.upload).toHaveBeenCalledWith(file, { compress: false })
+      expect(apiMock.videos.upload).toHaveBeenCalledWith(
+        file,
+        expect.objectContaining({ compress: false })
+      )
     );
+  });
+
+  it("continues batch upload after one file fails and shows progress queue", async () => {
+    apiMock.videos.upload
+      .mockRejectedValueOnce(new Error("NetworkError when attempting to fetch resource."))
+      .mockResolvedValueOnce({
+        filename: "ok.mp4",
+        size_bytes: 4,
+        media_type: "video",
+      });
+    apiMock.videos.list
+      .mockResolvedValueOnce([video, image])
+      .mockResolvedValueOnce([
+        video,
+        image,
+        {
+          filename: "ok.mp4",
+          size_bytes: 4,
+          modified_at: new Date().toISOString(),
+          media_type: "video",
+        },
+      ]);
+    renderPublishing();
+    await screen.findAllByText("clip.mp4");
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const bad = new File([new Uint8Array([1])], "bad.mp4", { type: "video/mp4" });
+    const good = new File([new Uint8Array([1, 2, 3, 4])], "ok.mp4", {
+      type: "video/mp4",
+    });
+    await userEvent.upload(input, [bad, good]);
+    fireEvent.click(screen.getByRole("button", { name: /^загрузить$/i }));
+
+    await waitFor(() => expect(apiMock.videos.upload).toHaveBeenCalledTimes(2));
+    expect(await screen.findByLabelText(/очередь загрузки/i)).toBeInTheDocument();
+    expect(await screen.findByText(/загружено 1 из 2/i)).toBeInTheDocument();
+    expect(screen.getByText("bad.mp4")).toBeInTheDocument();
+    expect(screen.getByText("ok.mp4")).toBeInTheDocument();
   });
 
   it("downloads ZIP for checked media files", async () => {
@@ -247,11 +290,56 @@ describe("Publishing page", () => {
     );
   });
 
+  it("quick publish uses the account selected in the preview panel", async () => {
+    apiMock.accounts.list.mockResolvedValue([
+      account,
+      { ...account, id: 2, username: "bob" },
+    ]);
+    apiMock.jobs.enqueue.mockResolvedValue({});
+    renderPublishing();
+    await screen.findAllByText("clip.mp4");
+
+    fireEvent.change(byLabel(/аккаунт/i), { target: { value: "bob" } });
+    fireEvent.click(screen.getByRole("button", { name: /быстрая публикация clip\.mp4/i }));
+
+    await waitFor(() =>
+      expect(apiMock.jobs.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          username: "bob",
+          media_filename: "clip.mp4",
+          post_type: "reel",
+          when: null,
+        })
+      )
+    );
+  });
+
+  it("after delete selects remaining media and syncs tab/post type", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    apiMock.videos.list.mockResolvedValue([video, image]);
+    apiMock.videos.remove.mockImplementation(async () => {
+      apiMock.videos.list.mockResolvedValue([image]);
+    });
+
+    renderPublishing();
+    await screen.findAllByText("clip.mp4");
+    await waitFor(() => expect(byLabel(/тип публикации/i)).toHaveValue("reel"));
+
+    fireEvent.click(screen.getByRole("button", { name: /^удалить$/i }));
+
+    await waitFor(() => expect(apiMock.videos.remove).toHaveBeenCalledWith("clip.mp4"));
+    await waitFor(() => {
+      expect(byLabel(/тип публикации/i)).toHaveValue("feed_photo");
+    });
+    expect(screen.getAllByText("photo.jpg").length).toBeGreaterThanOrEqual(1);
+  });
+
   it("refreshes stats for a publication", async () => {
+    const lastStatsAt = "2026-08-15T12:00:00.000Z";
     apiMock.publications.refreshStats.mockResolvedValue({
       ...publication,
       like_count: 11,
-      last_stats_at: new Date().toISOString(),
+      last_stats_at: lastStatsAt,
     });
     renderPublishing();
     await screen.findByText("CODE");
@@ -260,5 +348,8 @@ describe("Publishing page", () => {
       expect(apiMock.publications.refreshStats).toHaveBeenCalledWith(10)
     );
     await screen.findByText("11");
+    expect(
+      screen.getByText(new Date(lastStatsAt).toLocaleString("ru-RU"))
+    ).toBeInTheDocument();
   });
 });

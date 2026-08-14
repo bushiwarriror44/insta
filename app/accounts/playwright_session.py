@@ -32,6 +32,18 @@ def save_playwright_state(username: str, state: dict) -> Path:
     return path
 
 
+def clear_playwright_state(username: str) -> bool:
+    """Remove Playwright storage state after a pasted/imported DB sessionid."""
+    path = playwright_state_path(username)
+    if not path.exists():
+        return False
+    try:
+        path.unlink()
+    except OSError:
+        return False
+    return True
+
+
 def _load_playwright_state_data(username: str) -> dict | None:
     path = playwright_state_path(username)
     if not path.exists():

@@ -248,6 +248,38 @@ def test_process_job_account_not_active_cancels(worker_env, db_session, make_acc
     assert job.status == PostJobStatus.cancelled
 
 
+def test_process_job_expired_cooldown_restores_active(
+    worker_env, db_session, make_account, monkeypatch
+):
+    """Expired soft-block cooldown must auto-restore active, not cancel the job."""
+    account = make_account(status=AccountStatus.cooldown)
+    account.cooldown_until = datetime.now(timezone.utc) - timedelta(hours=1)
+    db_session.commit()
+
+    video = _make_video(worker_env, "cdexit.mp4")
+    job = _make_job(db_session, account, video)
+
+    def _publish_ok(**kwargs):
+        return PublishResult(
+            media_id="MID",
+            media_code="CODE",
+            final_video_path=video,
+            final_caption="cap",
+        )
+
+    monkeypatch.setattr(worker_module, "publish_reel", _publish_ok)
+    job.status = PostJobStatus.running
+    db_session.commit()
+    worker_module._process_job(db_session, job)
+
+    db_session.refresh(job)
+    db_session.refresh(account)
+    assert job.status != PostJobStatus.cancelled
+    assert job.status == PostJobStatus.done
+    assert account.status == AccountStatus.active
+    assert account.cooldown_until is None
+
+
 def test_process_job_daily_cap_reached_reschedules(worker_env, db_session, make_account):
     account = make_account(daily_post_cap=1)
     today = datetime.now(timezone.utc).date().isoformat()

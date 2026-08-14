@@ -411,6 +411,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
               adminToken={adminToken}
               mode="setup"
               loginSurface={loginSurface}
+              hasProxy={Boolean(account.proxy_label)}
               onSessionSaved={handleBrowserSessionSaved}
             />
           ) : null

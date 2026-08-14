@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ToastProvider } from "../../context/ToastContext";
@@ -120,5 +120,24 @@ describe("Dashboard page", () => {
     await waitFor(() =>
       expect(apiMock.dashboard.mock.calls.length).toBeGreaterThanOrEqual(2)
     );
+  });
+
+  it("shows error UI with retry when the first load fails", async () => {
+    apiMock.dashboard.mockRejectedValueOnce(new Error("dashboard down"));
+    renderDashboard();
+
+    expect(
+      await screen.findByRole("heading", { name: /не удалось загрузить панель/i })
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/загрузка/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /повторить/i })).toBeInTheDocument();
+
+    apiMock.dashboard.mockResolvedValueOnce(summary());
+    fireEvent.click(screen.getByRole("button", { name: /повторить/i }));
+
+    await waitFor(() =>
+      expect(screen.getByText("Активные аккаунты")).toBeInTheDocument()
+    );
+    expect(apiMock.dashboard.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 });

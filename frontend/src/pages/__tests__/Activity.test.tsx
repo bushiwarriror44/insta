@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ToastProvider } from "../../context/ToastContext";
@@ -152,6 +152,79 @@ describe("Activity page", () => {
     fireEvent.click(screen.getByText("#42"));
     await waitFor(() => expect(apiMock.jobs.logs).toHaveBeenCalledWith(42));
     expect(await screen.findByText(/timeout/i)).toBeInTheDocument();
+  });
+
+  it("syncs selected job status in the modal after reload", async () => {
+    apiMock.jobs.list.mockResolvedValue([{ ...job, status: "running" }]);
+    apiMock.jobs.logs.mockResolvedValue([
+      {
+        id: 1,
+        kind: "publish_job",
+        account_id: 1,
+        account_username: "alice",
+        job_id: 42,
+        status: "running",
+        summary: null,
+        logs: [
+          {
+            ts: new Date().toISOString(),
+            level: "info",
+            step: "publish",
+            message: "uploading",
+          },
+        ],
+        created_at: new Date().toISOString(),
+        finished_at: null,
+      },
+    ]);
+    renderActivity();
+    await screen.findByText("#42");
+    fireEvent.click(screen.getByText("#42"));
+    const modalTitle = await screen.findByRole("heading", { name: /логи задачи #42/i });
+    const modal = modalTitle.closest("div.card") as HTMLElement;
+    expect(within(modal).getByText("В работе")).toBeInTheDocument();
+
+    apiMock.jobs.list.mockResolvedValue([{ ...job, status: "done", attempts: 1 }]);
+    fireEvent.click(screen.getByRole("button", { name: /обновить сейчас/i }));
+
+    await waitFor(() => {
+      expect(within(modal).getByText("Готово")).toBeInTheDocument();
+    });
+  });
+
+  it("labels diagnostic run statuses with Russian diag labels", async () => {
+    apiMock.jobs.logs.mockResolvedValue([
+      {
+        id: 1,
+        kind: "publish_job",
+        account_id: 1,
+        account_username: "alice",
+        job_id: 42,
+        status: "fail",
+        summary: "proxy unhealthy",
+        logs: [],
+        created_at: new Date().toISOString(),
+        finished_at: new Date().toISOString(),
+      },
+      {
+        id: 2,
+        kind: "publish_job",
+        account_id: 1,
+        account_username: "alice",
+        job_id: 42,
+        status: "ok",
+        summary: "published",
+        logs: [],
+        created_at: new Date().toISOString(),
+        finished_at: new Date().toISOString(),
+      },
+    ]);
+    renderActivity();
+    await screen.findByText("#42");
+    fireEvent.click(screen.getByText("#42"));
+
+    expect(await screen.findByRole("option", { name: /попытка 1 — ошибка/i })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /попытка 2 — ok/i })).toBeInTheDocument();
   });
 
   it("renders empty placeholder when there are no jobs", async () => {

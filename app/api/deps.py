@@ -32,14 +32,14 @@ def require_token(authorization: Optional[str] = Header(default=None)) -> None:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing or invalid Authorization header",
+            detail="Требуется авторизация: заголовок Authorization Bearer",
             headers={"WWW-Authenticate": "Bearer"},
         )
     provided = authorization.split(" ", 1)[1].strip()
     if provided != expected:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
+            detail="Неверный токен",
             headers={"WWW-Authenticate": "Bearer"},
         )
 

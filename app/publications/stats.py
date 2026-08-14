@@ -19,13 +19,23 @@ STATS_SYNC_LOOKBACK = timedelta(days=14)
 
 
 def apply_stats(post_log: PostLog, stats: MediaStats, *, now: datetime | None = None) -> None:
-    """Copy normalized stat counters into a ``PostLog`` row."""
-    post_log.view_count = stats.view_count
-    post_log.like_count = stats.like_count
-    post_log.comment_count = stats.comment_count
-    post_log.play_count = stats.play_count
-    post_log.save_count = stats.save_count
-    post_log.share_count = stats.share_count
+    """Copy normalized stat counters into a ``PostLog`` row.
+
+    Only non-``None`` counters overwrite existing values so a partial Instagram
+    payload cannot wipe previously stored metrics.
+    """
+    if stats.view_count is not None:
+        post_log.view_count = stats.view_count
+    if stats.like_count is not None:
+        post_log.like_count = stats.like_count
+    if stats.comment_count is not None:
+        post_log.comment_count = stats.comment_count
+    if stats.play_count is not None:
+        post_log.play_count = stats.play_count
+    if stats.save_count is not None:
+        post_log.save_count = stats.save_count
+    if stats.share_count is not None:
+        post_log.share_count = stats.share_count
     post_log.raw_stats_json = stats.raw_json
     post_log.last_stats_at = now or datetime.now(timezone.utc)
 

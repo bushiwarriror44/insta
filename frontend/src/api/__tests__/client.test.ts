@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, api, configureAuth, formatApiError } from "../client";
+import {
+  ApiError,
+  api,
+  configureAuth,
+  formatApiError,
+  uploadWithProgress,
+} from "../client";
 
 interface FakeResponseInit {
   status?: number;
@@ -38,13 +44,89 @@ function getCall(index = 0) {
   return { url, init };
 }
 
+type FakeXhrInstance = {
+  open: ReturnType<typeof vi.fn>;
+  setRequestHeader: ReturnType<typeof vi.fn>;
+  send: ReturnType<typeof vi.fn>;
+  abort: ReturnType<typeof vi.fn>;
+  addEventListener: ReturnType<typeof vi.fn>;
+  upload: { onprogress: ((ev: ProgressEvent) => void) | null };
+  onload: (() => void) | null;
+  onerror: (() => void) | null;
+  ontimeout: (() => void) | null;
+  onabort: (() => void) | null;
+  status: number;
+  statusText: string;
+  responseText: string;
+};
+
+let lastXhr: FakeXhrInstance | null = null;
+let xhrInstances: FakeXhrInstance[] = [];
+
+function installXhrMock(opts?: {
+  status?: number;
+  responseText?: string;
+  trigger?: "load" | "error";
+  progress?: Array<{ loaded: number; total: number }>;
+}) {
+  const status = opts?.status ?? 200;
+  const responseText =
+    opts?.responseText ??
+    JSON.stringify({ filename: "x.mp4", size_bytes: 4, media_type: "video" });
+  const trigger = opts?.trigger ?? "load";
+  const progress = opts?.progress ?? [{ loaded: 2, total: 4 }];
+
+  class FakeXHR {
+    open = vi.fn();
+    setRequestHeader = vi.fn();
+    abort = vi.fn();
+    addEventListener = vi.fn();
+    upload: { onprogress: ((ev: ProgressEvent) => void) | null } = { onprogress: null };
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    ontimeout: (() => void) | null = null;
+    onabort: (() => void) | null = null;
+    status = status;
+    statusText = status >= 200 && status < 300 ? "OK" : "Error";
+    responseText = responseText;
+
+    send = vi.fn(() => {
+      queueMicrotask(() => {
+        for (const p of progress) {
+          this.upload.onprogress?.({
+            lengthComputable: true,
+            loaded: p.loaded,
+            total: p.total,
+          } as ProgressEvent);
+        }
+        if (trigger === "error") this.onerror?.();
+        else this.onload?.();
+      });
+    });
+  }
+
+  xhrInstances = [];
+  vi.stubGlobal(
+    "XMLHttpRequest",
+    vi.fn(function (this: FakeXhrInstance) {
+      const inst = new FakeXHR() as unknown as FakeXhrInstance;
+      lastXhr = inst;
+      xhrInstances.push(inst);
+      return inst;
+    })
+  );
+}
+
 beforeEach(() => {
   configureAuth(() => null);
   fetchSpy = vi.spyOn(window, "fetch");
+  lastXhr = null;
+  xhrInstances = [];
 });
 
 afterEach(() => {
   fetchSpy.mockRestore();
+  vi.unstubAllGlobals();
 });
 
 describe("api.health", () => {
@@ -111,33 +193,70 @@ describe("body serialization", () => {
     expect(headers["Content-Type"]).toBe("application/json");
   });
 
-  it("passes FormData as-is and does not force Content-Type", async () => {
-    fetchSpy.mockResolvedValueOnce(
-      makeResponse({ json: { filename: "x.mp4", size_bytes: 4 } })
-    );
+  it("uploads via XHR with FormData compress=true by default", async () => {
+    installXhrMock({
+      responseText: JSON.stringify({
+        filename: "x.mp4",
+        size_bytes: 4,
+        media_type: "video",
+      }),
+    });
     const file = new File([new Uint8Array([1, 2, 3, 4])], "clip.mp4", {
       type: "video/mp4",
     });
-    await api.videos.upload(file);
-    const { init } = getCall();
-    expect(init.body).toBeInstanceOf(FormData);
-    const fd = init.body as FormData;
-    expect(fd.get("compress")).toBe("true");
-    const headers = init.headers as Record<string, string>;
-    expect(headers["Content-Type"]).toBeUndefined();
+    const out = await api.videos.upload(file);
+    expect(out.filename).toBe("x.mp4");
+    expect(lastXhr?.open).toHaveBeenCalledWith("POST", "/api/videos");
+    const sent = lastXhr?.send.mock.calls[0]?.[0] as FormData;
+    expect(sent).toBeInstanceOf(FormData);
+    expect(sent.get("compress")).toBe("true");
+    expect(sent.get("file")).toBeTruthy();
   });
 
   it("sends compress=false when upload opts disable compression", async () => {
-    fetchSpy.mockResolvedValueOnce(
-      makeResponse({ json: { filename: "p.jpg", size_bytes: 10, media_type: "image" } })
-    );
+    installXhrMock({
+      responseText: JSON.stringify({
+        filename: "p.jpg",
+        size_bytes: 10,
+        media_type: "image",
+      }),
+    });
     const file = new File([new Uint8Array([1, 2, 3])], "p.jpg", {
       type: "image/jpeg",
     });
     await api.videos.upload(file, { compress: false });
-    const { init } = getCall();
-    const fd = init.body as FormData;
-    expect(fd.get("compress")).toBe("false");
+    const sent = lastXhr?.send.mock.calls[0]?.[0] as FormData;
+    expect(sent.get("compress")).toBe("false");
+  });
+
+  it("uploadWithProgress reports progress callbacks", async () => {
+    installXhrMock({
+      progress: [
+        { loaded: 1, total: 4 },
+        { loaded: 4, total: 4 },
+      ],
+      responseText: JSON.stringify({
+        filename: "clip.mp4",
+        size_bytes: 4,
+        media_type: "video",
+      }),
+    });
+    const onProgress = vi.fn();
+    const file = new File([new Uint8Array([1, 2, 3, 4])], "clip.mp4", {
+      type: "video/mp4",
+    });
+    await uploadWithProgress(file, { onProgress });
+    expect(onProgress).toHaveBeenCalledWith(1, 4);
+    expect(onProgress).toHaveBeenCalledWith(4, 4);
+  });
+
+  it("uploadWithProgress maps network failure to ApiError status 0", async () => {
+    installXhrMock({ trigger: "error" });
+    const file = new File([new Uint8Array([1])], "a.mp4", { type: "video/mp4" });
+    await expect(uploadWithProgress(file)).rejects.toMatchObject({
+      status: 0,
+      message: expect.stringMatching(/сеть|network/i),
+    });
   });
 
   it("downloads media archive via POST /api/videos/archive", async () => {
@@ -474,6 +593,18 @@ describe("error handling", () => {
     const msg = formatApiError(new ApiError(401, "Missing or invalid Authorization header"));
     expect(msg).toContain("401");
     expect(msg).toContain("ADMIN_TOKEN");
+  });
+
+  it("formatApiError rewrites Firefox NetworkError messages", () => {
+    const msg = formatApiError(
+      new TypeError("NetworkError when attempting to fetch resource.")
+    );
+    expect(msg).toMatch(/сеть|соединен/i);
+  });
+
+  it("formatApiError explains status 0 upload failures", () => {
+    const msg = formatApiError(new ApiError(0, "Сеть оборвала загрузку"));
+    expect(msg).toMatch(/сеть|соединен/i);
   });
 });
 

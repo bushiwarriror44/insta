@@ -26,6 +26,10 @@ describe("DiagnosticLogPanel", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    Object.defineProperty(window, "isSecureContext", {
+      configurable: true,
+      value: true,
+    });
   });
 
   it("shows empty state", () => {
@@ -97,6 +101,10 @@ describe("copyTextToClipboard", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    Object.defineProperty(window, "isSecureContext", {
+      configurable: true,
+      value: true,
+    });
   });
 
   it("uses execCommand when clipboard is missing", async () => {
@@ -107,6 +115,40 @@ describe("copyTextToClipboard", () => {
       value: execCommand,
     });
     await expect(copyTextToClipboard("hello")).resolves.toBe(true);
+    expect(execCommand).toHaveBeenCalledWith("copy");
+  });
+
+  it("skips Clipboard API on insecure context and uses execCommand", async () => {
+    Object.defineProperty(window, "isSecureContext", {
+      configurable: true,
+      value: false,
+    });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    const execCommand = vi.fn().mockReturnValue(true);
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommand,
+    });
+
+    await expect(copyTextToClipboard("secret")).resolves.toBe(true);
+    expect(writeText).not.toHaveBeenCalled();
+    expect(execCommand).toHaveBeenCalledWith("copy");
+  });
+
+  it("falls back when Clipboard API times out", async () => {
+    const writeText = vi.fn().mockImplementation(
+      () => new Promise(() => undefined) // never resolves
+    );
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    const execCommand = vi.fn().mockReturnValue(true);
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommand,
+    });
+
+    await expect(copyTextToClipboard("slow")).resolves.toBe(true);
+    expect(writeText).toHaveBeenCalledTimes(1);
     expect(execCommand).toHaveBeenCalledWith("copy");
   });
 });

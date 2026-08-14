@@ -28,6 +28,13 @@ const JOB_STATUS_LABELS: Record<string, string> = {
   cancelled: "отменена",
 };
 
+const DIAG_RUN_STATUS_LABELS: Record<string, string> = {
+  running: "выполняется",
+  ok: "OK",
+  warn: "предупреждение",
+  fail: "ошибка",
+};
+
 const EVENT_LEVEL_LABELS: Record<string, string> = {
   info: "инфо",
   warn: "предупреждение",
@@ -102,6 +109,13 @@ export function Activity() {
       window.clearInterval(id);
     };
   }, [reload, push]);
+
+  useEffect(() => {
+    setSelectedJob((prev) => {
+      if (!prev) return prev;
+      return jobs.find((j) => j.id === prev.id) ?? prev;
+    });
+  }, [jobs]);
 
   useEffect(() => {
     if (!selectedJob) return;
@@ -324,7 +338,7 @@ export function Activity() {
               >
                 {jobRuns.map((run, idx) => (
                   <option key={run.id} value={run.id}>
-                    Попытка {idx + 1} — {JOB_STATUS_LABELS[run.status] ?? run.status}
+                    Попытка {idx + 1} — {DIAG_RUN_STATUS_LABELS[run.status] ?? run.status}
                     {run.summary ? ` — ${run.summary}` : ""}
                   </option>
                 ))}

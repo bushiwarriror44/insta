@@ -9,20 +9,26 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 
-import { api, ApiError, configureAuth } from "../api/client";
+import { api, ApiError, configureAuth, formatApiError } from "../api/client";
 
 const STORAGE_KEY = "reels-admin-token";
 
-type AuthState =
+export type AuthState =
   | { state: "loading" }
   | { state: "open" }
   | { state: "needs-login" }
-  | { state: "authed"; token: string };
+  | { state: "authed"; token: string }
+  | { state: "error"; message: string };
+
+export type LoginResult =
+  | { ok: true }
+  | { ok: false; reason: "invalid" | "network"; message: string };
 
 interface AuthCtx {
   state: AuthState;
-  login: (token: string) => Promise<boolean>;
+  login: (token: string) => Promise<LoginResult>;
   logout: () => void;
+  retryBootstrap: () => void;
   authRequired: boolean;
 }
 
@@ -32,6 +38,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const tokenRef = useRef<string | null>(null);
   const [state, setState] = useState<AuthState>({ state: "loading" });
   const [authRequired, setAuthRequired] = useState<boolean>(false);
+  const [bootstrapKey, setBootstrapKey] = useState(0);
 
   useEffect(() => {
     configureAuth(() => tokenRef.current);
@@ -39,6 +46,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+    setState({ state: "loading" });
+
     (async () => {
       try {
         const h = await api.health();
@@ -60,30 +69,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           } catch (err) {
             if (err instanceof ApiError && err.status === 401) {
               window.localStorage.removeItem(STORAGE_KEY);
-              tokenRef.current = null;
             }
+            tokenRef.current = null;
           }
+        } else {
+          tokenRef.current = null;
         }
         if (!cancelled) setState({ state: "needs-login" });
-      } catch {
-        if (!cancelled) setState({ state: "needs-login" });
+      } catch (err) {
+        if (cancelled) return;
+        tokenRef.current = null;
+        setState({
+          state: "error",
+          message: formatApiError(err),
+        });
       }
     })();
+
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [bootstrapKey]);
 
-  const login = useCallback(async (token: string) => {
+  const login = useCallback(async (token: string): Promise<LoginResult> => {
     tokenRef.current = token;
     try {
       await api.dashboard();
       window.localStorage.setItem(STORAGE_KEY, token);
       setState({ state: "authed", token });
-      return true;
-    } catch {
+      return { ok: true };
+    } catch (err) {
       tokenRef.current = null;
-      return false;
+      if (err instanceof ApiError && err.status === 401) {
+        return { ok: false, reason: "invalid", message: "Неверный токен" };
+      }
+      return {
+        ok: false,
+        reason: "network",
+        message: formatApiError(err),
+      };
     }
   }, []);
 
@@ -93,9 +117,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setState({ state: "needs-login" });
   }, []);
 
+  const retryBootstrap = useCallback(() => {
+    setBootstrapKey((k) => k + 1);
+  }, []);
+
   const value = useMemo<AuthCtx>(
-    () => ({ state, login, logout, authRequired }),
-    [state, login, logout, authRequired]
+    () => ({ state, login, logout, retryBootstrap, authRequired }),
+    [state, login, logout, retryBootstrap, authRequired]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
