@@ -9,10 +9,26 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import accounts, browser, dashboard, diagnostics, events, health, jobs, proxies, publications, videos
+from app.api.routes import (
+    accounts,
+    auth,
+    browser,
+    dashboard,
+    diagnostics,
+    events,
+    health,
+    jobs,
+    operators,
+    panel,
+    proxies,
+    publications,
+    settings as settings_routes,
+    videos,
+)
 from app.config import settings
-from app.db import init_db
+from app.db import SessionLocal, init_db
 from app.logging_setup import configure_logging, get_logger
+from app.panel.settings_store import auth_is_required, get_or_create_panel_settings
 
 logger = get_logger(__name__)
 
@@ -21,11 +37,18 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI):
     configure_logging()
     init_db()
+    db = SessionLocal()
+    try:
+        row = get_or_create_panel_settings(db)
+        entry = row.entry_path
+    finally:
+        db.close()
     logger.info(
         "api.startup",
         host=settings.api_host,
         port=settings.api_port,
-        auth_required=bool(settings.admin_token),
+        auth_required=auth_is_required(),
+        panel_entry_path=entry,
     )
     yield
     logger.info("api.shutdown")
@@ -50,6 +73,10 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(health.router)
+    app.include_router(panel.router)
+    app.include_router(auth.router)
+    app.include_router(settings_routes.router)
+    app.include_router(operators.router)
     app.include_router(dashboard.router)
     app.include_router(accounts.router)
     app.include_router(browser.router)

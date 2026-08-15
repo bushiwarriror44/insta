@@ -411,3 +411,53 @@ class DashboardSummary(BaseModel):
     quarantined_accounts: int
     daily_stats: list[DailyStatRow]
     recent_events: list[EventOut]
+
+
+# --- Panel auth / operators ------------------------------------------------
+
+
+class AuthMeOut(BaseModel):
+    role: Optional[Literal["owner", "operator"]] = None
+    label: Optional[str] = None
+
+
+class PanelOperatorOut(BaseModel):
+    id: int
+    label: str
+    created_at: datetime
+    revoked_at: Optional[datetime] = None
+    last_used_at: Optional[datetime] = None
+    active: bool
+
+
+class PanelOperatorCreateIn(BaseModel):
+    label: str = Field(min_length=1, max_length=120)
+
+
+class PanelOperatorCreatedOut(PanelOperatorOut):
+    """Includes one-time plaintext password (only on create)."""
+
+    password: str
+
+
+# --- Panel gate / settings -------------------------------------------------
+
+
+class PanelGateOut(BaseModel):
+    allowed: bool
+    entry_path: Optional[str] = None
+
+
+class PanelSettingsOut(BaseModel):
+    entry_path: str
+    master_password_set: bool
+
+
+class PanelEntryPathUpdateIn(BaseModel):
+    path: str = Field(min_length=12, max_length=200)
+    current_password: str = Field(min_length=1)
+
+
+class PanelMasterPasswordUpdateIn(BaseModel):
+    current_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=8, max_length=200)

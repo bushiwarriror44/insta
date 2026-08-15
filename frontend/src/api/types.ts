@@ -4,6 +4,36 @@ export interface Health {
   auth_required: boolean;
 }
 
+export type AuthRole = "owner" | "operator";
+
+export interface AuthMeOut {
+  role: AuthRole | null;
+  label: string | null;
+}
+
+export interface PanelGateOut {
+  allowed: boolean;
+  entry_path: string | null;
+}
+
+export interface PanelSettingsOut {
+  entry_path: string;
+  master_password_set: boolean;
+}
+
+export interface PanelOperatorOut {
+  id: number;
+  label: string;
+  created_at: string;
+  revoked_at: string | null;
+  last_used_at: string | null;
+  active: boolean;
+}
+
+export interface PanelOperatorCreatedOut extends PanelOperatorOut {
+  password: string;
+}
+
 export interface ProxyOut {
   id: number;
   label: string;

@@ -237,3 +237,29 @@ class DiagnosticRun(Base):
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class PanelOperator(Base):
+    """Panel login credentials for sub-admins (operators)."""
+
+    __tablename__ = "panel_operators"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    label: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class PanelSettings(Base):
+    """Singleton panel gate settings (id must stay 1)."""
+
+    __tablename__ = "panel_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entry_path: Mapped[str] = mapped_column(String(200))
+    master_password_hash: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )

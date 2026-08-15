@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 
+/** Login as a modal-style card on a dimmed backdrop. */
 export function Login() {
   const { login } = useAuth();
   const { push } = useToast();
@@ -18,15 +19,19 @@ export function Login() {
     setBusy(false);
     if (!result.ok) {
       push(
-        result.reason === "invalid" ? "Неверный токен" : result.message,
+        result.reason === "invalid" ? "Неверный пароль" : result.message,
         "error"
       );
     }
   }
 
   return (
-    <div className="min-h-screen grid place-items-center bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900 px-4">
-      <div className="card w-full max-w-md p-8">
+    <div className="min-h-screen grid place-items-center bg-slate-950/95 px-4">
+      <div
+        className="fixed inset-0 bg-black/50 backdrop-blur-sm"
+        aria-hidden
+      />
+      <div className="card relative z-10 w-full max-w-md p-8 shadow-2xl border border-slate-700">
         <div className="flex items-center justify-center mb-5">
           <div className="rounded-2xl bg-brand-500/15 p-3 text-brand-300">
             <ShieldCheck size={28} />
@@ -34,18 +39,18 @@ export function Login() {
         </div>
         <h1 className="text-2xl font-semibold text-center">Reels Admin</h1>
         <p className="text-sm text-slate-400 text-center mt-1">
-          Введите токен администратора для входа.
+          Введите мастер-пароль (ADMIN_TOKEN) или пароль оператора.
         </p>
         <form className="mt-6 space-y-4" onSubmit={submit}>
           <div>
             <label className="label" htmlFor="token">
-              Токен администратора
+              Пароль для входа
             </label>
             <input
               id="token"
               type="password"
               className="input"
-              placeholder="вставьте ADMIN_TOKEN"
+              placeholder="мастер-пароль или пароль оператора"
               value={token}
               onChange={(e) => setToken(e.target.value)}
               autoFocus

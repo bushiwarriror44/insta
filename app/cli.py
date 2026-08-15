@@ -491,6 +491,10 @@ def cmd_status() -> None:
     _bootstrap()
     today = datetime.now(timezone.utc).date().isoformat()
     with SessionLocal() as db:
+        from app.panel.settings_store import get_or_create_panel_settings
+
+        panel = get_or_create_panel_settings(db)
+        console.print(f"[bold]Panel entry path:[/bold] {panel.entry_path}")
         queued = db.scalar(select(PostJob).where(PostJob.status == PostJobStatus.queued).order_by(PostJob.scheduled_for).limit(1))
         running = db.scalars(select(PostJob).where(PostJob.status == PostJobStatus.running)).all()
         dead = db.scalars(

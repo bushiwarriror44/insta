@@ -34,6 +34,7 @@ describe("Layout", () => {
   it("renders all sidebar links and the active outlet content", () => {
     useAuthMock.mockReturnValue({
       state: { state: "open" },
+      role: null,
       authRequired: false,
       logout: vi.fn(),
       login: vi.fn(),
@@ -45,12 +46,42 @@ describe("Layout", () => {
     expect(screen.getByTestId("nav-publishing")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /^upload$/i })).not.toBeInTheDocument();
     expect(screen.getByTestId("nav-activity")).toBeInTheDocument();
+    expect(screen.queryByTestId("nav-operators")).not.toBeInTheDocument();
     expect(screen.getByText("ACC")).toBeInTheDocument();
+  });
+
+  it("shows operators and settings nav only for owner role", () => {
+    useAuthMock.mockReturnValue({
+      state: { state: "authed", token: "tok" },
+      role: "owner",
+      authRequired: true,
+      logout: vi.fn(),
+      login: vi.fn(),
+      retryBootstrap: vi.fn(),
+    });
+    renderAt();
+    expect(screen.getByTestId("nav-operators")).toBeInTheDocument();
+    expect(screen.getByTestId("nav-settings")).toBeInTheDocument();
+  });
+
+  it("hides operators nav for operator role", () => {
+    useAuthMock.mockReturnValue({
+      state: { state: "authed", token: "tok" },
+      role: "operator",
+      authRequired: true,
+      logout: vi.fn(),
+      login: vi.fn(),
+      retryBootstrap: vi.fn(),
+    });
+    renderAt();
+    expect(screen.queryByTestId("nav-operators")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("nav-settings")).not.toBeInTheDocument();
   });
 
   it("shows the open-mode hint when auth is not required", () => {
     useAuthMock.mockReturnValue({
       state: { state: "open" },
+      role: null,
       authRequired: false,
       logout: vi.fn(),
       login: vi.fn(),
@@ -65,6 +96,7 @@ describe("Layout", () => {
     const logout = vi.fn();
     useAuthMock.mockReturnValue({
       state: { state: "authed", token: "tok" },
+      role: "owner",
       authRequired: true,
       logout,
       login: vi.fn(),

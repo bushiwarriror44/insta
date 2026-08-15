@@ -10,6 +10,7 @@ import {
 import type { ReactNode } from "react";
 
 import { api, ApiError, configureAuth, formatApiError } from "../api/client";
+import type { AuthRole } from "../api/types";
 
 const STORAGE_KEY = "reels-admin-token";
 
@@ -26,6 +27,7 @@ export type LoginResult =
 
 interface AuthCtx {
   state: AuthState;
+  role: AuthRole | null;
   login: (token: string) => Promise<LoginResult>;
   logout: () => void;
   retryBootstrap: () => void;
@@ -34,9 +36,19 @@ interface AuthCtx {
 
 const Ctx = createContext<AuthCtx | null>(null);
 
+async function fetchRole(): Promise<AuthRole | null> {
+  try {
+    const me = await api.auth.me();
+    return me.role ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const tokenRef = useRef<string | null>(null);
   const [state, setState] = useState<AuthState>({ state: "loading" });
+  const [role, setRole] = useState<AuthRole | null>(null);
   const [authRequired, setAuthRequired] = useState<boolean>(false);
   const [bootstrapKey, setBootstrapKey] = useState(0);
 
@@ -47,6 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     setState({ state: "loading" });
+    setRole(null);
 
     (async () => {
       try {
@@ -55,6 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAuthRequired(h.auth_required);
         if (!h.auth_required) {
           tokenRef.current = null;
+          setRole(null);
           setState({ state: "open" });
           return;
         }
@@ -63,7 +77,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           tokenRef.current = stored;
           try {
             await api.dashboard();
+            const nextRole = await fetchRole();
             if (cancelled) return;
+            setRole(nextRole);
             setState({ state: "authed", token: stored });
             return;
           } catch (err) {
@@ -71,6 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               window.localStorage.removeItem(STORAGE_KEY);
             }
             tokenRef.current = null;
+            setRole(null);
           }
         } else {
           tokenRef.current = null;
@@ -79,6 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch (err) {
         if (cancelled) return;
         tokenRef.current = null;
+        setRole(null);
         setState({
           state: "error",
           message: formatApiError(err),
@@ -95,13 +113,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     tokenRef.current = token;
     try {
       await api.dashboard();
+      const nextRole = await fetchRole();
       window.localStorage.setItem(STORAGE_KEY, token);
+      setRole(nextRole);
       setState({ state: "authed", token });
       return { ok: true };
     } catch (err) {
       tokenRef.current = null;
+      setRole(null);
       if (err instanceof ApiError && err.status === 401) {
-        return { ok: false, reason: "invalid", message: "Неверный токен" };
+        return { ok: false, reason: "invalid", message: "Неверный пароль" };
       }
       return {
         ok: false,
@@ -114,6 +135,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     tokenRef.current = null;
     window.localStorage.removeItem(STORAGE_KEY);
+    setRole(null);
     setState({ state: "needs-login" });
   }, []);
 
@@ -122,8 +144,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<AuthCtx>(
-    () => ({ state, login, logout, retryBootstrap, authRequired }),
-    [state, login, logout, retryBootstrap, authRequired]
+    () => ({ state, role, login, logout, retryBootstrap, authRequired }),
+    [state, role, login, logout, retryBootstrap, authRequired]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

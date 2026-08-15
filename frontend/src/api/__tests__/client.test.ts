@@ -595,6 +595,11 @@ describe("error handling", () => {
     expect(msg).toContain("ADMIN_TOKEN");
   });
 
+  it("formatApiError keeps specific 401 detail", () => {
+    const msg = formatApiError(new ApiError(401, "Неверный текущий пароль"));
+    expect(msg).toBe("Неверный текущий пароль");
+  });
+
   it("formatApiError rewrites Firefox NetworkError messages", () => {
     const msg = formatApiError(
       new TypeError("NetworkError when attempting to fetch resource.")

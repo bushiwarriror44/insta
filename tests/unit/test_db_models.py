@@ -32,6 +32,8 @@ def test_init_db_creates_all_tables(app_env):
         "post_logs",
         "daily_stats",
         "events",
+        "panel_operators",
+        "panel_settings",
     }
     assert expected.issubset(tables), f"missing tables: {expected - tables}"
 

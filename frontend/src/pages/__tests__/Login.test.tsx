@@ -41,7 +41,7 @@ describe("Login page", () => {
     const login = vi.fn().mockResolvedValue({ ok: true });
     useAuthMock.mockReturnValue({ login });
     renderLogin();
-    const input = screen.getByLabelText(/токен администратора/i);
+    const input = screen.getByLabelText(/пароль для входа/i);
     fireEvent.change(input, { target: { value: "  my-secret  " } });
     fireEvent.click(screen.getByRole("button", { name: /войти/i }));
     await waitFor(() => expect(login).toHaveBeenCalledWith("my-secret"));
@@ -51,15 +51,15 @@ describe("Login page", () => {
     const login = vi.fn().mockResolvedValue({
       ok: false,
       reason: "invalid",
-      message: "Неверный токен",
+      message: "Неверный пароль",
     });
     useAuthMock.mockReturnValue({ login });
     renderLogin();
-    fireEvent.change(screen.getByLabelText(/токен администратора/i), {
+    fireEvent.change(screen.getByLabelText(/пароль для входа/i), {
       target: { value: "bad" },
     });
     fireEvent.click(screen.getByRole("button", { name: /войти/i }));
-    await screen.findByText(/неверный токен/i);
+    await screen.findByText(/неверный пароль/i);
   });
 
   it("shows network message when login returns network failure", async () => {
@@ -70,7 +70,7 @@ describe("Login page", () => {
     });
     useAuthMock.mockReturnValue({ login });
     renderLogin();
-    fireEvent.change(screen.getByLabelText(/токен администратора/i), {
+    fireEvent.change(screen.getByLabelText(/пароль для входа/i), {
       target: { value: "tok" },
     });
     fireEvent.click(screen.getByRole("button", { name: /войти/i }));
@@ -84,7 +84,7 @@ describe("Login page", () => {
     );
     useAuthMock.mockReturnValue({ login });
     renderLogin();
-    fireEvent.change(screen.getByLabelText(/токен администратора/i), {
+    fireEvent.change(screen.getByLabelText(/пароль для входа/i), {
       target: { value: "x" },
     });
     fireEvent.click(screen.getByRole("button", { name: /войти/i }));

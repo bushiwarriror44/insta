@@ -66,6 +66,13 @@ export function formatApiError(err: unknown): string {
     );
   }
   if (err.status === 401) {
+    const genericAuth =
+      !detail ||
+      /^unauthorized$/i.test(detail) ||
+      /missing or invalid authorization/i.test(detail);
+    if (!genericAuth) {
+      return detail;
+    }
     return "Требуется авторизация (401). Войдите в панель с ADMIN_TOKEN.";
   }
   if (err.status === 503 && detail.toLowerCase().includes("playwright")) {
@@ -570,6 +577,47 @@ export const api = {
       request<PublicationOut[]>("/api/publications", { query: params }),
     refreshStats: (id: number) =>
       request<PublicationOut>(`/api/publications/${id}/refresh-stats`, {
+        method: "POST",
+      }),
+  },
+
+  auth: {
+    me: () => request<import("./types").AuthMeOut>("/api/auth/me"),
+  },
+
+  panel: {
+    gate: (path: string) =>
+      request<import("./types").PanelGateOut>("/api/panel/gate", {
+        query: { path },
+      }),
+  },
+
+  settings: {
+    get: () => request<import("./types").PanelSettingsOut>("/api/settings"),
+    updateEntryPath: (path: string, currentPassword: string) =>
+      request<import("./types").PanelSettingsOut>("/api/settings/entry-path", {
+        method: "PUT",
+        body: { path, current_password: currentPassword },
+      }),
+    updateMasterPassword: (currentPassword: string, newPassword: string) =>
+      request<import("./types").PanelSettingsOut>("/api/settings/master-password", {
+        method: "PUT",
+        body: {
+          current_password: currentPassword,
+          new_password: newPassword,
+        },
+      }),
+  },
+
+  operators: {
+    list: () => request<import("./types").PanelOperatorOut[]>("/api/operators"),
+    create: (label: string) =>
+      request<import("./types").PanelOperatorCreatedOut>("/api/operators", {
+        method: "POST",
+        body: { label },
+      }),
+    revoke: (id: number) =>
+      request<import("./types").PanelOperatorOut>(`/api/operators/${id}/revoke`, {
         method: "POST",
       }),
   },

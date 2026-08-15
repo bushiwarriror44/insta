@@ -1,8 +1,10 @@
 import {
   Activity as ActivityIcon,
+  KeyRound,
   LayoutDashboard,
   Library,
   LogOut,
+  Settings as SettingsIcon,
   Users,
 } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
@@ -18,8 +20,9 @@ const NAV = [
 ];
 
 export function Layout() {
-  const { state, logout, authRequired } = useAuth();
+  const { state, logout, authRequired, role } = useAuth();
   const isAuthed = state.state === "authed";
+  const isOwner = role === "owner";
 
   return (
     <div className="min-h-screen flex bg-slate-950 text-slate-100">
@@ -48,6 +51,40 @@ export function Layout() {
               <span>{label}</span>
             </NavLink>
           ))}
+          {isOwner ? (
+            <>
+              <NavLink
+                to="/operators"
+                data-testid="nav-operators"
+                className={({ isActive }) =>
+                  clsx(
+                    "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                    isActive
+                      ? "bg-brand-500/15 text-brand-200"
+                      : "text-slate-300 hover:bg-slate-800/60 hover:text-white"
+                  )
+                }
+              >
+                <KeyRound size={18} />
+                <span>Доступы</span>
+              </NavLink>
+              <NavLink
+                to="/settings"
+                data-testid="nav-settings"
+                className={({ isActive }) =>
+                  clsx(
+                    "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                    isActive
+                      ? "bg-brand-500/15 text-brand-200"
+                      : "text-slate-300 hover:bg-slate-800/60 hover:text-white"
+                  )
+                }
+              >
+                <SettingsIcon size={18} />
+                <span>Настройки</span>
+              </NavLink>
+            </>
+          ) : null}
         </nav>
         <div className="px-3 pb-4">
           {isAuthed && (
@@ -61,6 +98,9 @@ export function Layout() {
               Открытый режим (без токена)
             </div>
           )}
+          {isAuthed && role === "operator" ? (
+            <div className="text-xs text-slate-500 px-3 mt-2">Роль: оператор</div>
+          ) : null}
         </div>
       </aside>
       <main className="flex-1 min-w-0">

@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from "../AuthContext";
 
 const healthMock = vi.hoisted(() => vi.fn());
 const dashboardMock = vi.hoisted(() => vi.fn());
+const meMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../../api/client", async () => {
   const actual = await vi.importActual<typeof import("../../api/client")>(
@@ -16,6 +17,7 @@ vi.mock("../../api/client", async () => {
     api: {
       health: healthMock,
       dashboard: dashboardMock,
+      auth: { me: meMock },
     },
     configureAuth: vi.fn(),
   };
@@ -30,6 +32,8 @@ function wrapper({ children }: { children: React.ReactNode }) {
 beforeEach(() => {
   healthMock.mockReset();
   dashboardMock.mockReset();
+  meMock.mockReset();
+  meMock.mockResolvedValue({ role: "owner", label: "master" });
   window.localStorage.clear();
 });
 
@@ -119,7 +123,7 @@ describe("AuthContext", () => {
     expect(out).toEqual({
       ok: false,
       reason: "invalid",
-      message: "Неверный токен",
+      message: "Неверный пароль",
     });
     expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
     expect(result.current.state.state).toBe("needs-login");

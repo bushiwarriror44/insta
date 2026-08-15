@@ -8,7 +8,9 @@ import { Accounts } from "./pages/Accounts";
 import { Activity } from "./pages/Activity";
 import { Dashboard } from "./pages/Dashboard";
 import { Login } from "./pages/Login";
+import { Operators } from "./pages/Operators";
 import { Publishing } from "./pages/Publishing";
+import { Settings } from "./pages/Settings";
 
 export default function App() {
   const { state, retryBootstrap } = useAuth();
@@ -40,7 +42,7 @@ export default function App() {
     return (
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route path="*" element={<Navigate to="/login" replace />} />
+        <Route path="*" element={<Login />} />
       </Routes>
     );
   }
@@ -53,6 +55,8 @@ export default function App() {
         <Route path="/publishing" element={<Publishing />} />
         <Route path="/upload" element={<Navigate to="/publishing" replace />} />
         <Route path="/activity" element={<Activity />} />
+        <Route path="/operators" element={<Operators />} />
+        <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
