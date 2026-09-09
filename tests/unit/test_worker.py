@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from freezegun import freeze_time
 from sqlalchemy import select
 
 from app.config import settings
@@ -56,7 +57,10 @@ def worker_env(monkeypatch, app_env):
     monkeypatch.setattr(worker_module, "notify_proxy_down", lambda *a, **k: None)
     monkeypatch.setattr(worker_module, "notify_publish_failure", lambda *a, **k: None)
     monkeypatch.setattr(worker_module, "jitter_seconds", lambda *_a, **_k: 0.0)
-    return app_env
+    # Default account hours are 10–22 UTC; freeze noon so publish tests do not
+    # depend on the wall clock.
+    with freeze_time("2026-03-15 12:00:00", tz_offset=0):
+        yield app_env
 
 
 class _Fingerprint:
@@ -239,13 +243,14 @@ def test_process_job_feed_video_uses_video_publisher(worker_env, db_session, mak
     assert log.media_id == "VID"
 
 
-def test_process_job_account_not_active_cancels(worker_env, db_session, make_account):
+def test_process_job_account_not_active_requeues(worker_env, db_session, make_account):
     account = make_account(status=AccountStatus.paused)
     video = _make_video(worker_env)
     job = _make_job(db_session, account, video)
     worker_module._process_job(db_session, job)
     db_session.refresh(job)
-    assert job.status == PostJobStatus.cancelled
+    assert job.status == PostJobStatus.queued
+    assert job.finished_at is None
 
 
 def test_process_job_expired_cooldown_restores_active(
@@ -297,6 +302,24 @@ def test_process_job_daily_cap_reached_reschedules(worker_env, db_session, make_
     if sched.tzinfo is not None:
         sched = sched.replace(tzinfo=None)
     assert sched > naive_now
+    assert sched.hour == 14
+    assert sched.minute == 0
+
+
+def test_process_job_outside_active_hours_reschedules(
+    worker_env, db_session, make_account, monkeypatch
+):
+    monkeypatch.setattr(worker_module.random, "randint", lambda a, b: 5)
+    account = make_account(active_hour_start=18, active_hour_end=22)
+    video = _make_video(worker_env)
+    job = _make_job(db_session, account, video)
+    worker_module._process_job(db_session, job)
+    db_session.refresh(job)
+    assert job.status == PostJobStatus.queued
+    sched = job.scheduled_for
+    if sched.tzinfo is not None:
+        sched = sched.replace(tzinfo=None)
+    assert sched == datetime(2026, 3, 15, 18, 5)
 
 
 def test_process_job_no_proxy_dead_letters(worker_env, db_session, make_account):
@@ -448,6 +471,15 @@ def test_claim_due_job_skips_cooldown_accounts(worker_env, db_session, make_acco
     assert worker_module._claim_due_job(db_session, datetime.now(timezone.utc)) is None
 
 
+def test_claim_due_job_skips_paused_accounts(worker_env, db_session, make_account):
+    account = make_account(status=AccountStatus.paused)
+    _make_job(
+        db_session, account, _make_video(worker_env, "paused.mp4"),
+        when=datetime.now(timezone.utc) - timedelta(minutes=10),
+    )
+    assert worker_module._claim_due_job(db_session, datetime.now(timezone.utc)) is None
+
+
 def test_claim_due_job_picks_up_after_cooldown_expires(worker_env, db_session, make_account):
     account = make_account()
     account.cooldown_until = datetime.now(timezone.utc) - timedelta(hours=1)
@@ -533,7 +565,8 @@ def test_temporary_auth_signal_enters_quarantine(
 
     db_session.refresh(account)
     db_session.refresh(job)
-    assert account.status == AccountStatus.paused
+    assert account.status == AccountStatus.cooldown
+    assert account.cooldown_until is not None
     assert "quarantine" in (job.last_error or "")
     event = db_session.scalar(select(Event).where(Event.kind == "risk.quarantine"))
     assert event is not None
@@ -570,3 +603,57 @@ def test_proxy_unstable_event_created_on_geo_mismatch(
     worker_module._process_job(db_session, job)
     evt = db_session.scalar(select(Event).where(Event.kind == "proxy.unstable"))
     assert evt is not None
+
+
+def test_youtube_short_dispatches_to_playwright_publisher(
+    worker_env, db_session, make_account, monkeypatch
+):
+    from app.db.models import Platform
+
+    account = make_account(username="ytuser", platform=Platform.youtube)
+    video = _make_video(worker_env, "yt.mp4")
+    job = _make_job(db_session, account, video, post_type=PostType.youtube_short)
+    job.title = "My Short"
+    db_session.commit()
+    seen: dict = {}
+
+    def _publish(**kwargs):
+        seen.update(kwargs)
+        return PublishResult(
+            media_id="yt-1",
+            media_code=None,
+            final_video_path=kwargs["video_path"],
+            final_caption=kwargs["title"],
+        )
+
+    monkeypatch.setattr(worker_module, "publish_youtube_short", _publish)
+    worker_module._process_job(db_session, job)
+    db_session.refresh(job)
+    assert job.status == PostJobStatus.done
+    assert seen["username"] == "ytuser"
+    assert seen["title"] == "My Short"
+
+
+def test_tiktok_dispatches_to_playwright_publisher(
+    worker_env, db_session, make_account, monkeypatch
+):
+    from app.db.models import Platform
+
+    account = make_account(username="ttuser", platform=Platform.tiktok)
+    video = _make_video(worker_env, "tt.mp4")
+    job = _make_job(db_session, account, video, post_type=PostType.tiktok)
+
+    monkeypatch.setattr(
+        worker_module,
+        "publish_tiktok",
+        lambda **kwargs: PublishResult(
+            media_id="tt-1",
+            media_code=None,
+            final_video_path=kwargs["video_path"],
+            final_caption="cap",
+        ),
+    )
+    worker_module._process_job(db_session, job)
+    db_session.refresh(job)
+    assert job.status == PostJobStatus.done
+

@@ -64,7 +64,7 @@ export function Settings() {
       setData(out);
       setPathPassword("");
       push("Путь обновлён — перезагрузка…", "success");
-      window.location.replace(`${out.entry_path}/`);
+      window.location.replace(`${window.location.origin}${out.entry_path}/`);
     } catch (err) {
       push(formatApiError(err), "error");
     } finally {

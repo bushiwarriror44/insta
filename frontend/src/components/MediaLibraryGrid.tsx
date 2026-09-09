@@ -1,9 +1,10 @@
 import clsx from "clsx";
 import { Download, Film, ImageIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { fetchMediaObjectUrl, formatBytes, formatDuration, revokeMediaObjectUrl } from "../api/media";
 import type { VideoOut } from "../api/types";
+import { useHotkeys } from "../hooks/useHotkeys";
 
 function MediaThumb({ item }: { item: VideoOut }) {
   const [url, setUrl] = useState<string | null>(null);
@@ -95,6 +96,25 @@ export function MediaLibraryGrid({
     return item.filename.toLowerCase().includes(search.trim().toLowerCase());
   });
 
+  const libraryKeys = useMemo(
+    () => ({
+      j: () => {
+        if (!filtered.length) return;
+        const i = filtered.findIndex((item) => item.filename === selectedFilename);
+        const next = filtered[Math.min((i < 0 ? -1 : i) + 1, filtered.length - 1)];
+        if (next) onSelect(next);
+      },
+      k: () => {
+        if (!filtered.length) return;
+        const i = filtered.findIndex((item) => item.filename === selectedFilename);
+        const next = filtered[Math.max((i < 0 ? 0 : i) - 1, 0)];
+        if (next) onSelect(next);
+      },
+    }),
+    [filtered, onSelect, selectedFilename]
+  );
+  useHotkeys(libraryKeys);
+
   const checkedCount = checkedFilenames.size;
 
   return (
@@ -109,6 +129,7 @@ export function MediaLibraryGrid({
                 ? "bg-slate-800 text-white"
                 : "text-slate-400 hover:text-slate-200"
             )}
+            aria-label="Вкладка видео"
             onClick={() => onTabChange("video")}
           >
             Видео
@@ -121,6 +142,7 @@ export function MediaLibraryGrid({
                 ? "bg-slate-800 text-white"
                 : "text-slate-400 hover:text-slate-200"
             )}
+            aria-label="Вкладка фото"
             onClick={() => onTabChange("image")}
           >
             Фото
@@ -128,6 +150,8 @@ export function MediaLibraryGrid({
         </div>
         <input
           className="input flex-1 min-w-[10rem] text-sm py-1.5"
+          data-page-search
+          aria-label="Поиск по имени файла"
           placeholder="Поиск по имени файла…"
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}

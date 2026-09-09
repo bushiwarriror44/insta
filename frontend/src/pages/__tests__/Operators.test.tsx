@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { copyTextToClipboard } from "../../components/DiagnosticLogPanel";
 import { ToastProvider } from "../../context/ToastContext";
 import { Operators } from "../Operators";
 
@@ -104,6 +105,32 @@ describe("Operators page", () => {
       expect(apiMock.create).toHaveBeenCalledWith("ivan");
     });
     expect(screen.getAllByText("ivan").length).toBeGreaterThanOrEqual(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /копировать пароль/i }));
+    await waitFor(() => {
+      expect(copyTextToClipboard).toHaveBeenCalledWith("once-only-secret");
+    });
+  });
+
+  it("does not revoke when confirm is cancelled", async () => {
+    useAuthMock.mockReturnValue({ role: "owner" });
+    apiMock.list.mockResolvedValue([
+      {
+        id: 7,
+        label: "temp",
+        created_at: new Date().toISOString(),
+        revoked_at: null,
+        last_used_at: null,
+        active: true,
+      },
+    ]);
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    renderOperators();
+    expect(await screen.findByText("temp")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /отозвать/i }));
+
+    expect(apiMock.revoke).not.toHaveBeenCalled();
   });
 
   it("revokes an active operator", async () => {

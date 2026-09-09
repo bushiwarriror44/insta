@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ToastProvider } from "../../context/ToastContext";
@@ -6,8 +7,12 @@ import type { EventOut, JobOut } from "../../api/types";
 import { Activity } from "../Activity";
 
 const apiMock = vi.hoisted(() => ({
-  jobs: { list: vi.fn(), cancel: vi.fn(), logs: vi.fn() },
+  jobs: { list: vi.fn(), cancel: vi.fn(), logs: vi.fn(), approve: vi.fn(), retry: vi.fn() },
   events: { list: vi.fn() },
+  factory: {
+    generations: vi.fn().mockResolvedValue([]),
+    compositions: vi.fn().mockResolvedValue([]),
+  },
 }));
 
 vi.mock("../../api/client", async () => {
@@ -51,21 +56,46 @@ beforeEach(() => {
   apiMock.jobs.list.mockReset();
   apiMock.jobs.cancel.mockReset();
   apiMock.jobs.logs.mockReset();
+  apiMock.jobs.approve.mockReset();
+  apiMock.jobs.retry.mockReset();
   apiMock.events.list.mockReset();
+  apiMock.factory.generations.mockReset();
+  apiMock.factory.compositions.mockReset();
   apiMock.jobs.list.mockResolvedValue([job]);
   apiMock.jobs.logs.mockResolvedValue([]);
   apiMock.events.list.mockResolvedValue([event]);
+  apiMock.factory.generations.mockResolvedValue([]);
+  apiMock.factory.compositions.mockResolvedValue([]);
 });
 
-function renderActivity() {
+function renderActivity(path = "/activity") {
   return render(
-    <ToastProvider>
-      <Activity />
-    </ToastProvider>
+    <MemoryRouter initialEntries={[path]}>
+      <ToastProvider>
+        <Activity />
+      </ToastProvider>
+    </MemoryRouter>
   );
 }
 
 describe("Activity page", () => {
+  it("opens the job log when ?job= is in the URL", async () => {
+    renderActivity("/activity?job=42");
+    expect(await screen.findByRole("heading", { name: /логи задачи #42/i })).toBeInTheDocument();
+  });
+
+  it("does not reopen job logs after close and refresh", async () => {
+    renderActivity("/activity?job=42");
+    expect(await screen.findByRole("heading", { name: /логи задачи #42/i })).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: /закрыть/i })[0]);
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: /логи задачи #42/i })).not.toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /обновить сейчас/i }));
+    await waitFor(() => expect(apiMock.jobs.list.mock.calls.length).toBeGreaterThan(1));
+    expect(screen.queryByRole("heading", { name: /логи задачи #42/i })).not.toBeInTheDocument();
+  });
+
   it("renders jobs and events tables", async () => {
     renderActivity();
     await screen.findByText("#42");
@@ -74,6 +104,26 @@ describe("Activity page", () => {
     expect(screen.getAllByText("В очереди").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("challenge")).toBeInTheDocument();
     expect(screen.getByText("code requested")).toBeInTheDocument();
+  });
+
+  it("filters jobs by status from the URL", async () => {
+    renderActivity("/activity?status=queued");
+    await waitFor(() =>
+      expect(apiMock.jobs.list).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "queued", limit: 100 })
+      )
+    );
+    expect(screen.getAllByRole("combobox")[0]).toHaveValue("queued");
+  });
+
+  it("filters dead jobs when opened with ?status=dead", async () => {
+    renderActivity("/activity?status=dead");
+    await waitFor(() =>
+      expect(apiMock.jobs.list).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "dead", limit: 100 })
+      )
+    );
+    expect(screen.getAllByRole("combobox")[0]).toHaveValue("dead");
   });
 
   it("filters jobs by status when the dropdown changes", async () => {
@@ -104,6 +154,15 @@ describe("Activity page", () => {
         expect.objectContaining({ level: "error", limit: 100 })
       )
     );
+  });
+
+  it("approves a job waiting for review", async () => {
+    apiMock.jobs.list.mockResolvedValue([{ ...job, status: "awaiting_review" }]);
+    apiMock.jobs.approve.mockResolvedValue({ ...job, status: "queued" });
+    renderActivity();
+    await screen.findByText("#42");
+    fireEvent.click(screen.getByRole("button", { name: /одобрить/i }));
+    await waitFor(() => expect(apiMock.jobs.approve).toHaveBeenCalledWith(42));
   });
 
   it("cancels a queued job from the table", async () => {
@@ -233,5 +292,77 @@ describe("Activity page", () => {
     renderActivity();
     await screen.findByText(/нет задач по выбранному фильтру/i);
     expect(screen.getByText(/событий нет/i)).toBeInTheDocument();
+  });
+
+  it("opens the highlighted job with Enter", async () => {
+    renderActivity();
+    await screen.findByText("#42");
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(await screen.findByRole("heading", { name: /логи задачи #42/i })).toBeInTheDocument();
+  });
+
+  it("moves the cursor with j", async () => {
+    apiMock.jobs.list.mockResolvedValue([
+      job,
+      { ...job, id: 43, account_username: "bob" },
+    ]);
+    renderActivity();
+    await screen.findByText("#43");
+    fireEvent.keyDown(window, { key: "j" });
+    expect(screen.getByRole("row", { name: /задача #43/i }).className).toContain("bg-white");
+  });
+
+  it("moves the cursor back with k", async () => {
+    apiMock.jobs.list.mockResolvedValue([
+      job,
+      { ...job, id: 43, account_username: "bob" },
+    ]);
+    renderActivity();
+    await screen.findByText("#43");
+    fireEvent.keyDown(window, { key: "j" });
+    expect(screen.getByRole("row", { name: /задача #43/i }).className).toContain("bg-white");
+    fireEvent.keyDown(window, { key: "k" });
+    expect(screen.getByRole("row", { name: /задача #43/i }).className).not.toContain("bg-white");
+    expect(screen.getByRole("row", { name: /задача #42/i }).className).toContain("bg-white");
+  });
+
+  it("links an event with @user to the account page", async () => {
+    renderActivity();
+    expect(await screen.findByRole("link", { name: /challenge/i })).toHaveAttribute(
+      "href",
+      "/accounts?username=alice"
+    );
+  });
+
+  it("links an event with account id but no username to the account row", async () => {
+    apiMock.events.list.mockResolvedValue([
+      { ...event, account_id: 10, account_username: null, kind: "publish_failed" },
+    ]);
+    renderActivity();
+    expect(await screen.findByRole("link", { name: /publish_failed/i })).toHaveAttribute(
+      "href",
+      "/accounts?id=10"
+    );
+  });
+
+  it("retries a failed job", async () => {
+    apiMock.jobs.list.mockResolvedValue([{ ...job, status: "failed" }]);
+    apiMock.jobs.retry.mockResolvedValue({ ...job, status: "queued" });
+    renderActivity();
+    await screen.findByText("#42");
+    fireEvent.click(screen.getByRole("button", { name: /повторить/i }));
+    await waitFor(() => expect(apiMock.jobs.retry).toHaveBeenCalledWith(42));
+  });
+
+  it("loads renders when switching lanes", async () => {
+    apiMock.factory.generations.mockResolvedValue([
+      { id: 7, status: "queued", prompt: "sunset", post_title: "clip a", last_error: null },
+    ]);
+    renderActivity();
+    await screen.findByText("#42");
+    apiMock.factory.generations.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: /^рендеры$/i }));
+    await waitFor(() => expect(apiMock.factory.generations).toHaveBeenCalled());
+    expect(await screen.findByText(/#7/)).toBeInTheDocument();
   });
 });

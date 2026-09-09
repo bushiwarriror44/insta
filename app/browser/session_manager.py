@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.accounts.backup_codes import consume_next_backup_code
 from app.accounts.device_factory import load_fingerprint
 from app.accounts.login_identifier import resolve_login_identifier
+from app.accounts.cookie_formats import cookies_match_platform
 from app.accounts.playwright_session import (
     import_playwright_session_to_account,
     playwright_state_path,
@@ -73,6 +74,23 @@ NavTarget = Literal[
 ]
 
 _INSTAGRAM_BASE = "https://www.instagram.com"
+
+
+def _account_platform_value(account) -> str:
+    platform = getattr(account, "platform", None)
+    if isinstance(platform, str) and platform.strip():
+        return platform
+    value = getattr(platform, "value", None) if platform is not None else None
+    if isinstance(value, str) and value.strip():
+        return value
+    return "instagram"
+
+
+async def _platform_logged_in(context, page, platform: str) -> bool:
+    if platform == "instagram":
+        return await _is_logged_in(context, page)
+    cookies = await context.cookies()
+    return cookies_match_platform(cookies, platform)
 
 
 def _nav_urls_for_target(
@@ -453,7 +471,13 @@ class BrowserSessionManager:
         proxy_snapshot: Any = None,
     ) -> BrowserSessionState:
         username = account.username
-        resolved_surface = resolve_playwright_surface(surface or getattr(account, "login_surface", None))
+        platform_value = _account_platform_value(account)
+        if platform_value in ("youtube", "tiktok"):
+            resolved_surface = "desktop"
+        else:
+            resolved_surface = resolve_playwright_surface(
+                surface or getattr(account, "login_surface", None)
+            )
         async with self._lock:
             existing = self._sessions.get(username)
             if existing and existing.status not in (
@@ -608,8 +632,13 @@ class BrowserSessionManager:
             except ImportError:
                 pass
 
-        fingerprint = load_fingerprint(account.username)
-        locale = getattr(fingerprint, "locale", None) or "en-US"
+        platform_value = _account_platform_value(account)
+        if platform_value in ("youtube", "tiktok"):
+            fingerprint = None
+            locale = "en-US"
+        else:
+            fingerprint = load_fingerprint(account.username)
+            locale = getattr(fingerprint, "locale", None) or "en-US"
         tz_id = normalize_playwright_timezone(proxy.timezone, country=proxy.country)
 
         proxy_arg = _parse_proxy(proxy.url)
@@ -617,6 +646,10 @@ class BrowserSessionManager:
             raise RuntimeError("proxy required for interactive browser")
 
         state_file = playwright_state_path(account.username)
+        if platform_value == "instagram":
+            has_saved_session = state_file.exists() and storage_state_has_session(account.username)
+        else:
+            has_saved_session = state_file.exists()
         display_env = os.environ.copy()
         display_env["DISPLAY"] = vnc_stack_display(session)
         lightweight = settings.browser_lightweight
@@ -635,9 +668,7 @@ class BrowserSessionManager:
             fingerprint=fingerprint,
             locale=locale,
             timezone_id=tz_id,
-            storage_state_path=str(state_file)
-            if state_file.exists() and storage_state_has_session(account.username)
-            else None,
+            storage_state_path=str(state_file) if has_saved_session else None,
             lightweight=lightweight,
         )
 
@@ -651,14 +682,13 @@ class BrowserSessionManager:
                 pass
 
         page = session.page
-        has_saved_session = state_file.exists() and storage_state_has_session(account.username)
         need_login = not has_saved_session
         session.log(
             "info",
             "browser",
             f"Контекст готов; storage_state={'да' if has_saved_session else 'нет'}; need_login={need_login}",
         )
-        await self._maybe_open_instagram(
+        await self._maybe_open_home(
             session,
             account,
             proxy,
@@ -670,6 +700,34 @@ class BrowserSessionManager:
         session.page_url = page.url
         session.last_logged_url = page.url
         await self._refresh_code_state(session)
+
+    async def _maybe_open_home(
+        self,
+        session: BrowserSessionState,
+        account,
+        proxy,
+        *,
+        page,
+        need_login: bool,
+        autofill_login: bool,
+    ) -> None:
+        value = _account_platform_value(account)
+        if value == "youtube":
+            session.log("info", "goto", "Открываю YouTube Studio")
+            await _try_goto_url(page, "https://studio.youtube.com", username=session.username)
+            return
+        if value == "tiktok":
+            session.log("info", "goto", "Открываю TikTok Studio")
+            await _try_goto_url(page, "https://www.tiktok.com/tiktokstudio/upload", username=session.username)
+            return
+        await self._maybe_open_instagram(
+            session,
+            account,
+            proxy,
+            page=page,
+            need_login=need_login,
+            autofill_login=autofill_login,
+        )
 
     async def _maybe_open_instagram(
         self,
@@ -910,16 +968,31 @@ class BrowserSessionManager:
         if session is None or session.context is None:
             raise RuntimeError("No active browser session for this account")
 
-        if session.page is None or not await _is_logged_in(session.context, session.page):
-            session.log("error", "save", "Нет sessionid — сначала войдите в Instagram")
+        if session.page is None or not await _platform_logged_in(
+            session.context, session.page, _account_platform_value(account)
+        ):
+            platform = _account_platform_value(account)
+            label = {"youtube": "YouTube", "tiktok": "TikTok"}.get(platform, "Instagram")
+            session.log("error", "save", f"Нет cookies {label} — сначала войдите в браузере")
             raise RuntimeError(
-                "Сначала войдите в Instagram в браузере — sessionid не найден в cookies"
+                f"Сначала войдите в {label} в браузере — cookies площадки не найдены"
             )
 
         state_file = playwright_state_path(account.username)
         state_file.parent.mkdir(parents=True, exist_ok=True)
         await session.context.storage_state(path=str(state_file))
         data = json.loads(state_file.read_text(encoding="utf-8"))
+        platform = _account_platform_value(account)
+        if platform != "instagram":
+            session.status = BrowserSessionStatus.saved
+            session.awaiting_code = False
+            session.log("info", "save", f"Playwright cookies {platform} сохранены в state.json")
+            return {
+                "session_imported": False,
+                "session_id_saved": False,
+                "playwright_state_saved": True,
+            }
+
         session_id = sessionid_from_playwright_state_data(data)
         imported = import_playwright_session_to_account(db, account, session_id=session_id)
         if not imported:

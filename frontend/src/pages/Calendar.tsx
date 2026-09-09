@@ -1,0 +1,147 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+
+import { api, formatApiError } from "../api/client";
+import { StatusBadge } from "../components/StatusBadge";
+import { useToast } from "../context/ToastContext";
+import { useAssistantMutate } from "../lib/assistantMutate";
+import type { JobOut } from "../api/types";
+
+function startOfWeek(now: Date): Date {
+  const day = now.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() + mondayOffset);
+  return start;
+}
+
+function dayKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+}
+
+export function Calendar() {
+  const { push } = useToast();
+  const navigate = useNavigate();
+  const [jobs, setJobs] = useState<JobOut[] | null>(null);
+  const [dragId, setDragId] = useState<number | null>(null);
+  const [weekOffset, setWeekOffset] = useState(0);
+  const weekStart = useMemo(() => {
+    const start = startOfWeek(new Date());
+    start.setDate(start.getDate() + weekOffset * 7);
+    return start;
+  }, [weekOffset]);
+  const days = useMemo(
+    () =>
+      Array.from({ length: 7 }, (_, i) => {
+        const day = new Date(weekStart);
+        day.setDate(weekStart.getDate() + i);
+        return day;
+      }),
+    [weekStart]
+  );
+
+  const load = useCallback(async () => {
+    try {
+      setJobs(await api.jobs.list({ limit: 200 }));
+    } catch (err) {
+      push(formatApiError(err), "error");
+    }
+  }, [push]);
+
+  useAssistantMutate(load);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const byDay = useMemo(() => {
+    const map: Record<string, JobOut[]> = {};
+    for (const day of days) map[dayKey(day)] = [];
+    for (const job of jobs ?? []) {
+      const key = dayKey(new Date(job.scheduled_for));
+      if (map[key]) map[key].push(job);
+    }
+    return map;
+  }, [jobs, days]);
+
+  async function dropOn(day: Date) {
+    if (dragId == null) return;
+    const job = jobs?.find((row) => row.id === dragId);
+    const when = new Date(day);
+    if (job?.scheduled_for) {
+      const original = new Date(job.scheduled_for);
+      when.setHours(original.getHours(), original.getMinutes(), original.getSeconds(), original.getMilliseconds());
+    } else {
+      when.setHours(12, 0, 0, 0);
+    }
+    try {
+      await api.jobs.reschedule(dragId, when.toISOString());
+      await load();
+    } catch (err) {
+      push(formatApiError(err), "error");
+    } finally {
+      setDragId(null);
+    }
+  }
+
+  const heading = weekStart.toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold">Календарь</h1>
+        <div className="flex items-center gap-2">
+          <button type="button" className="btn-ghost text-xs" onClick={() => setWeekOffset((n) => n - 1)}>
+            Назад
+          </button>
+          <span className="text-sm text-slate-400">неделя с {heading}</span>
+          <button type="button" className="btn-ghost text-xs" onClick={() => setWeekOffset(0)}>
+            Сегодня
+          </button>
+          <button type="button" className="btn-ghost text-xs" onClick={() => setWeekOffset((n) => n + 1)}>
+            Вперёд
+          </button>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
+        {days.map((day) => (
+          <div
+            key={dayKey(day)}
+            data-testid={`calendar-day-${dayKey(day)}`}
+            className="card p-3 min-h-[220px]"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={() => void dropOn(day)}
+          >
+            <div className="text-xs text-slate-400 mb-2">
+              {day.toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" })}
+            </div>
+            <div className="space-y-2">
+              {(byDay[dayKey(day)] ?? []).map((job) => (
+                <div
+                  id={`job-${job.id}`}
+                  key={job.id}
+                  draggable
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (dragId != null) return;
+                    navigate(`/activity?job=${job.id}`);
+                  }}
+                  onDragStart={() => setDragId(job.id)}
+                  onDragEnd={() => setDragId(null)}
+                  className="rounded-lg border border-slate-800 bg-slate-900/60 p-2 text-xs cursor-grab"
+                >
+                  <div className="font-medium truncate">{job.title || job.account_username}</div>
+                  <StatusBadge value={job.status} />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

@@ -19,6 +19,20 @@ CookieImportFormat = Literal["dolphin", "playwright_state"]
 ImportFormatDetect = Literal["dolphin", "playwright_state", "unknown"]
 
 INSTAGRAM_DOMAIN = ".instagram.com"
+YOUTUBE_DOMAIN = ".youtube.com"
+TIKTOK_DOMAIN = ".tiktok.com"
+
+_PLATFORM_NEEDLES: dict[str, tuple[str, ...]] = {
+    "instagram": ("instagram.com",),
+    "youtube": ("youtube.com", "google.com", "youtu.be", "gstatic.com"),
+    "tiktok": ("tiktok.com",),
+}
+_PLATFORM_DEFAULT_DOMAIN = {
+    "instagram": INSTAGRAM_DOMAIN,
+    "youtube": YOUTUBE_DOMAIN,
+    "tiktok": TIKTOK_DOMAIN,
+}
+STUDIO_PLATFORMS = frozenset({"youtube", "tiktok"})
 
 
 class CookieFormatError(ValueError):
@@ -54,14 +68,21 @@ def _is_instagram_cookie_domain(domain: str | None) -> bool:
     return "instagram.com" in domain.lower()
 
 
-def normalize_dolphin_cookie(item: dict) -> dict:
+def _domain_matches(domain: str | None, needles: tuple[str, ...]) -> bool:
+    if not isinstance(domain, str) or not domain.strip():
+        return True
+    lowered = domain.lower()
+    return any(needle in lowered for needle in needles)
+
+
+def normalize_dolphin_cookie(item: dict, *, default_domain: str = INSTAGRAM_DOMAIN) -> dict:
     name = item.get("name")
     value = item.get("value")
     if not isinstance(name, str) or not isinstance(value, str):
         raise CookieFormatError("Каждая cookie должна содержать name и value")
     domain = item.get("domain")
     if not isinstance(domain, str) or not domain.strip():
-        domain = INSTAGRAM_DOMAIN
+        domain = default_domain
     path = item.get("path")
     if not isinstance(path, str) or not path.strip():
         path = "/"
@@ -89,17 +110,52 @@ def normalize_dolphin_cookie(item: dict) -> dict:
 
 def filter_instagram_cookies(cookies: list) -> list:
     """Keep only Instagram-domain cookies (drop Google/ads noise from Dolphin dumps)."""
-    ig = [
+    return filter_cookies_for_platform(cookies, "instagram")
+
+
+def filter_cookies_for_platform(cookies: list, platform: str = "instagram") -> list:
+    needles = _PLATFORM_NEEDLES.get(platform, _PLATFORM_NEEDLES["instagram"])
+    kept = [
         c
         for c in cookies
-        if isinstance(c, dict) and _is_instagram_cookie_domain(c.get("domain"))
+        if isinstance(c, dict) and _domain_matches(c.get("domain"), needles)
     ]
-    return ig if ig else [c for c in cookies if isinstance(c, dict)]
+    return kept if kept else [c for c in cookies if isinstance(c, dict)]
 
 
-def cookies_array_to_playwright_state(cookies: list) -> dict:
-    filtered = filter_instagram_cookies(cookies)
-    normalized = [normalize_dolphin_cookie(c) for c in filtered if isinstance(c, dict)]
+def cookies_match_platform(cookies: list, platform: str) -> bool:
+    """True when the jar has cookies for *platform* (IG also needs sessionid)."""
+    needles = _PLATFORM_NEEDLES.get(platform, _PLATFORM_NEEDLES["instagram"])
+    matched = [
+        c
+        for c in cookies
+        if isinstance(c, dict) and _domain_matches(c.get("domain"), needles)
+    ]
+    if not matched:
+        return False
+    if platform == "instagram":
+        return sessionid_from_cookies_array(matched) is not None
+    return True
+
+
+def studio_session_ready(username: str, platform: str) -> bool:
+    """True when Playwright state.json has YouTube/TikTok cookies (not IG sessionid)."""
+    if platform not in STUDIO_PLATFORMS:
+        return False
+    cookies = _load_playwright_cookies(username)
+    if not cookies:
+        return False
+    return cookies_match_platform(cookies, platform)
+
+
+def cookies_array_to_playwright_state(cookies: list, platform: str = "instagram") -> dict:
+    filtered = filter_cookies_for_platform(cookies, platform)
+    default_domain = _PLATFORM_DEFAULT_DOMAIN.get(platform, INSTAGRAM_DOMAIN)
+    normalized = [
+        normalize_dolphin_cookie(c, default_domain=default_domain)
+        for c in filtered
+        if isinstance(c, dict)
+    ]
     if not normalized:
         raise CookieFormatError("Список cookies пуст")
     return {"cookies": normalized, "origins": []}
@@ -155,11 +211,30 @@ def export_dolphin_cookies(
     username: str,
     *,
     db_session_id: str | None = None,
+    platform: str = "instagram",
 ) -> tuple[list[dict], CookieExportSource]:
     """Return Dolphin-compatible cookie array and the source used."""
+    kind = platform or "instagram"
     pw = _load_playwright_cookies(username)
     if pw:
-        return pw, "playwright"
+        filtered = [
+            c
+            for c in pw
+            if isinstance(c, dict)
+            and _domain_matches(c.get("domain"), _PLATFORM_NEEDLES.get(kind, _PLATFORM_NEEDLES["instagram"]))
+        ]
+        if filtered:
+            return filtered, "playwright"
+        if kind in STUDIO_PLATFORMS:
+            raise CookieFormatError(
+                "Playwright state не содержит cookies этой площадки — "
+                "импортируйте cookies или сохраните сессию в браузере"
+            )
+
+    if kind in STUDIO_PLATFORMS:
+        raise CookieFormatError(
+            "Playwright state не найден — импортируйте cookies или сохраните сессию в браузере"
+        )
 
     ig = _load_instagrapi_cookies(username)
     if ig:
@@ -185,8 +260,10 @@ def export_dolphin_cookies(
     )
 
 
-def import_cookies_data(username: str, data: object) -> CookiesImportResult:
-    """Parse imported JSON, persist Playwright state, return sessionid."""
+def import_cookies_data(
+    username: str, data: object, *, platform: str = "instagram"
+) -> CookiesImportResult:
+    """Parse imported JSON, persist Playwright state, return sessionid when present."""
     fmt = detect_import_format(data)
     if fmt == "unknown":
         raise CookieFormatError(
@@ -196,21 +273,21 @@ def import_cookies_data(username: str, data: object) -> CookiesImportResult:
 
     if fmt == "dolphin":
         assert isinstance(data, list)
-        state = cookies_array_to_playwright_state(data)
+        state = cookies_array_to_playwright_state(data, platform=platform)
     else:
         assert isinstance(data, dict)
         cookies = data.get("cookies")
         if not isinstance(cookies, list) or not cookies:
             raise CookieFormatError("Playwright state не содержит cookies")
-        state = cookies_array_to_playwright_state(cookies)
+        state = cookies_array_to_playwright_state(cookies, platform=platform)
 
-    session_id = sessionid_from_cookies_array(state["cookies"])
-    if not session_id:
+    session_id = sessionid_from_cookies_array(state["cookies"]) or ""
+    if platform == "instagram" and not session_id:
         raise CookieFormatError("В файле не найдена cookie sessionid (31+ символов)")
-    # Ensure Playwright state stores the decoded sessionid value.
-    for cookie in state["cookies"]:
-        if isinstance(cookie, dict) and cookie.get("name") == "sessionid":
-            cookie["value"] = session_id
+    if session_id:
+        for cookie in state["cookies"]:
+            if isinstance(cookie, dict) and cookie.get("name") == "sessionid":
+                cookie["value"] = session_id
 
     save_playwright_state(username, state)
     # Keep mobile session_*.json if present — web cookies live in Playwright state;
@@ -223,11 +300,20 @@ def import_cookies_data(username: str, data: object) -> CookiesImportResult:
     )
 
 
-def write_dolphin_cookies_export(username: str, *, db_session_id: str | None = None) -> Path:
+def write_dolphin_cookies_export(
+    username: str,
+    *,
+    db_session_id: str | None = None,
+    as_txt: bool = False,
+    platform: str = "instagram",
+) -> Path:
     """Write Dolphin cookies JSON to a temp path for FileResponse."""
-    cookies, _ = export_dolphin_cookies(username, db_session_id=db_session_id)
+    cookies, _ = export_dolphin_cookies(
+        username, db_session_id=db_session_id, platform=platform
+    )
     out_dir = playwright_state_path(username).parent
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"cookies_export_{username}.json"
+    suffix = ".txt" if as_txt else ".json"
+    out_path = out_dir / f"cookies_export_{username}{suffix}"
     out_path.write_text(json.dumps(cookies, indent=2, ensure_ascii=False), encoding="utf-8")
     return out_path

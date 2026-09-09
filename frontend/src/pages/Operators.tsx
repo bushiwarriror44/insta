@@ -112,52 +112,55 @@ export function Operators() {
       </form>
 
       <div className="card overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="text-left text-xs uppercase tracking-wide text-slate-500 border-b border-slate-800">
+        <table className="table-base">
+          <thead>
             <tr>
-              <th className="px-4 py-3">Метка</th>
-              <th className="px-4 py-3">Создан</th>
-              <th className="px-4 py-3">Статус</th>
-              <th className="px-4 py-3">Последний вход</th>
-              <th className="px-4 py-3 text-right">Действия</th>
+              <th>Метка</th>
+              <th>Создан</th>
+              <th>Статус</th>
+              <th>Последний вход</th>
+              <th className="text-right">Действия</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                <td colSpan={5} className="px-2 py-8 text-center text-slate-500">
                   Загрузка…
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                <td colSpan={5} className="px-2 py-8 text-center text-slate-500">
                   Операторов пока нет
                 </td>
               </tr>
             ) : (
               rows.map((row) => (
-                <tr key={row.id} className="border-t border-slate-800/80">
-                  <td className="px-4 py-3 font-medium">{row.label}</td>
-                  <td className="px-4 py-3 text-slate-400">
+                <tr key={row.id} className="hover:bg-slate-900/40">
+                  <td className="font-medium truncate" title={row.label}>
+                    {row.label}
+                  </td>
+                  <td className="text-slate-400 truncate" title={new Date(row.created_at).toLocaleString()}>
                     {new Date(row.created_at).toLocaleString()}
                   </td>
-                  <td className="px-4 py-3">
+                  <td>
                     {row.active ? (
                       <span className="text-emerald-300">активен</span>
                     ) : (
                       <span className="text-slate-500">отозван</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-slate-400">
+                  <td className="text-slate-400 truncate">
                     {row.last_used_at
                       ? new Date(row.last_used_at).toLocaleString()
                       : "—"}
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="text-right">
                     <button
                       type="button"
-                      className="btn-ghost text-xs"
+                      className="btn-ghost btn-compact"
+                      aria-label="Отозвать"
                       disabled={!row.active || revokingId === row.id}
                       onClick={() => void onRevoke(row)}
                     >

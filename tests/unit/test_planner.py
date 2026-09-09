@@ -67,6 +67,15 @@ def test_schedule_jobs_creates_records_round_robin(db_session, make_account):
         assert src in sources
 
 
+def test_schedule_jobs_hold_for_review(db_session, make_account):
+    account = make_account(hold_for_review=True, daily_post_cap=2, min_gap_hours=4.0)
+    created = schedule_jobs(
+        db_session, account, ["/v/a.mp4", "/v/b.mp4"], days_ahead=2, rng=random.Random(7)
+    )
+    assert created
+    assert all(job.status == PostJobStatus.awaiting_review for job in created)
+
+
 def test_schedule_jobs_no_sources(db_session, make_account):
     account = make_account()
     assert schedule_jobs(db_session, account, []) == []

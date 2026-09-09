@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ToastProvider } from "../../context/ToastContext";
@@ -81,9 +82,11 @@ beforeEach(() => {
 
 function renderUpload() {
   return render(
-    <ToastProvider>
-      <Upload />
-    </ToastProvider>
+    <MemoryRouter>
+      <ToastProvider>
+        <Upload />
+      </ToastProvider>
+    </MemoryRouter>
   );
 }
 
@@ -121,7 +124,10 @@ describe("Upload page (library alias)", () => {
     fireEvent.click(screen.getByRole("button", { name: /^загрузить$/i }));
 
     await waitFor(() =>
-      expect(apiMock.videos.upload).toHaveBeenCalledWith(file)
+      expect(apiMock.videos.upload).toHaveBeenCalledWith(
+        file,
+        expect.objectContaining({ compress: true })
+      )
     );
     await screen.findByText(/загружено: uploaded\.mp4/i);
   });

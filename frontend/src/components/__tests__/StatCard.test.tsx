@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { Activity, Users } from "lucide-react";
 import { describe, expect, it } from "vitest";
 
@@ -19,6 +20,15 @@ describe("StatCard", () => {
   it("supports string values", () => {
     render(<StatCard label="ratio" value="3 / 10" icon={Activity} />);
     expect(screen.getByText("3 / 10")).toBeInTheDocument();
+  });
+
+  it("wraps the card in a link when to is set", () => {
+    render(
+      <MemoryRouter>
+        <StatCard label="Active" value={1} icon={Users} to="/accounts" />
+      </MemoryRouter>
+    );
+    expect(screen.getByRole("link", { name: "Active" })).toHaveAttribute("href", "/accounts");
   });
 
   it("applies tone-based styles", () => {

@@ -10,6 +10,7 @@ import type {
   BrowserSaveOut,
   BrowserSessionOut,
   CookiesImportOut,
+  DeviceFingerprintImportOut,
   DashboardSummary,
   DiagnosticRunOut,
   EnqueueIn,
@@ -413,15 +414,19 @@ export const api = {
         `/api/accounts/${encodeURIComponent(username)}/mint-mobile-session`,
         { method: "POST" }
       ),
-    exportCookies: (username: string) =>
+    exportCookies: (username: string, format: "json" | "txt" = "json") =>
       downloadFile(
-        `/api/accounts/${encodeURIComponent(username)}/cookies/export`,
-        `cookies_${username}.json`
+        `/api/accounts/${encodeURIComponent(username)}/cookies/export${
+          format === "txt" ? "?format=txt" : ""
+        }`,
+        `cookies_${username}.${format === "txt" ? "txt" : "json"}`
       ),
-    exportPlaywrightState: (username: string) =>
+    exportPlaywrightState: (username: string, format: "json" | "txt" = "json") =>
       downloadFile(
-        `/api/accounts/${encodeURIComponent(username)}/playwright-state`,
-        `state_${username}.json`
+        `/api/accounts/${encodeURIComponent(username)}/playwright-state${
+          format === "txt" ? "?format=txt" : ""
+        }`,
+        `state_${username}.${format === "txt" ? "txt" : "json"}`
       ),
     fetchLoginDebugScreenshot: (username: string) =>
       fetchObjectUrl(
@@ -483,16 +488,26 @@ export const api = {
         `/api/accounts/${encodeURIComponent(username)}/browser/stop`,
         { method: "DELETE" }
       ),
-    exportDeviceFingerprint: (username: string) =>
+    exportDeviceFingerprint: (username: string, format: "json" | "txt" = "json") =>
       downloadFile(
-        `/api/accounts/${encodeURIComponent(username)}/device-fingerprint`,
-        `device_${username}.json`
+        `/api/accounts/${encodeURIComponent(username)}/device-fingerprint${
+          format === "txt" ? "?format=txt" : ""
+        }`,
+        `device_${username}.${format === "txt" ? "txt" : "json"}`
       ),
     importCookiesFile: (username: string, file: File) => {
       const fd = new FormData();
       fd.append("file", file);
       return request<CookiesImportOut>(
         `/api/accounts/${encodeURIComponent(username)}/cookies/import`,
+        { method: "POST", formData: fd }
+      );
+    },
+    importDeviceFingerprint: (username: string, file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      return request<DeviceFingerprintImportOut>(
+        `/api/accounts/${encodeURIComponent(username)}/device-fingerprint`,
         { method: "POST", formData: fd }
       );
     },
@@ -550,7 +565,103 @@ export const api = {
       request<JobOut>("/api/jobs", { method: "POST", body: payload }),
     cancel: (id: number) =>
       request<JobOut>(`/api/jobs/${id}/cancel`, { method: "POST" }),
+    approve: (id: number) =>
+      request<JobOut>(`/api/jobs/${id}/approve`, { method: "POST" }),
+    retry: (id: number) =>
+      request<JobOut>(`/api/jobs/${id}/retry`, { method: "POST" }),
+    reschedule: (id: number, when: string) =>
+      request<JobOut>(`/api/jobs/${id}`, { method: "PATCH", body: { when } }),
     logs: (id: number) => request<DiagnosticRunOut[]>(`/api/jobs/${id}/logs`),
+  },
+
+  factory: {
+    plan: (accountId: number, body?: { count?: number; duration_s?: number; auto_schedule?: boolean; spread_over_days?: number }) =>
+      request<{ id: number; status: string }>(`/api/accounts/${accountId}/plan`, {
+        method: "POST",
+        body: body ?? { count: 5 },
+      }),
+    week: (accountId: number, body?: { count?: number; duration_s?: number; auto_schedule?: boolean }) =>
+      request<{ id: number; status: string }>(`/api/accounts/${accountId}/week`, {
+        method: "POST",
+        body: body ?? { count: 5 },
+      }),
+    preview: (accountId: number, body?: { count?: number; duration_s?: number }) =>
+      request<{ planned: number }>(`/api/accounts/${accountId}/preview`, {
+        method: "POST",
+        body: body ?? { count: 3 },
+      }),
+    updateBrief: (accountId: number, brief: string) =>
+      request<{ brief: string }>(`/api/accounts/${accountId}/brief`, {
+        method: "PATCH",
+        body: { brief },
+      }),
+    updateAgentSettings: (
+      accountId: number,
+      body: { brief?: string; hold_for_review?: boolean; daily_spend_cap_usd?: number }
+    ) =>
+      request<{ id: number; brief: string; hold_for_review: boolean; daily_spend_cap_usd: number }>(
+        `/api/accounts/${accountId}/agent-settings`,
+        { method: "PATCH", body }
+      ),
+    sources: (accountId: number) =>
+      request<Array<{ id: number; kind: string; value: string; label: string; enabled: boolean; last_status: string }>>(
+        `/api/accounts/${accountId}/sources`
+      ),
+    addSource: (accountId: number, body: { kind: string; value: string; label?: string }) =>
+      request<{ id: number }>(`/api/accounts/${accountId}/sources`, { method: "POST", body }),
+    patchSource: (sourceId: number, body: { enabled?: boolean; label?: string }) =>
+      request<{ id: number; enabled: boolean }>(`/api/sources/${sourceId}`, { method: "PATCH", body }),
+    checkSource: (sourceId: number) =>
+      request<{ id: number; last_status: string }>(`/api/sources/${sourceId}/check`, { method: "POST" }),
+    readSource: (sourceId: number) =>
+      request<{ text: string; characters: number }>(`/api/sources/${sourceId}/read`, { method: "POST" }),
+    questions: (accountId: number) =>
+      request<Array<{ id: number; question: string; why: string; assumed: string; open: boolean }>>(
+        `/api/accounts/${accountId}/questions`
+      ),
+    answerQuestion: (questionId: number, answer: string) =>
+      request<{ id: number }>(`/api/questions/${questionId}/answer`, { method: "POST", body: { answer } }),
+    presets: () => request<Array<{ id: number; name: string; brief: string }>>("/api/presets"),
+    assets: (params?: { kind?: string; q?: string; limit?: number }) =>
+      request<import("./types").MediaAssetOut[]>("/api/assets", { query: params }),
+    agentRuns: (accountId?: number) =>
+      request<Array<{ id: number; account_username: string | null; ok: boolean; model: string; requested: number; returned: number; cost_usd: number; error: string | null; created_at: string }>>(
+        "/api/agent-runs",
+        { query: accountId ? { account_id: accountId } : undefined }
+      ),
+    agentRun: (id: number) =>
+      request<{
+        id: number;
+        ok: boolean;
+        prompt: string;
+        raw: string;
+        ideas: unknown;
+        questions: unknown;
+        sources: unknown;
+        error: string | null;
+        cost_usd: number;
+        duration_ms: number;
+      }>(`/api/agent-runs/${id}`),
+    generations: () =>
+      request<Array<{ id: number; status: string; prompt: string; stage: string; post_title: string; last_error: string | null; cost_usd: number }>>(
+        "/api/generations"
+      ),
+    createGeneration: (body: { prompt: string; account_id?: number; duration_s?: number }) =>
+      request<{ id: number; status: string }>("/api/generations", { method: "POST", body }),
+    cancelGeneration: (id: number) =>
+      request<{ id: number; status: string }>(`/api/generations/${id}/cancel`, { method: "POST" }),
+    retryGeneration: (id: number) =>
+      request<{ id: number; status: string }>(`/api/generations/${id}/retry`, { method: "POST" }),
+    compositions: () =>
+      request<Array<{ id: number; status: string; post_title: string; last_error: string | null; clips: number }>>(
+        "/api/compositions"
+      ),
+    createComposition: (body: { clip_ids: number[]; audio_asset_id?: number; account_id?: number; post_title?: string }) =>
+      request<{ id: number; status: string }>("/api/compositions", { method: "POST", body }),
+    cancelComposition: (id: number) =>
+      request<{ id: number; status: string }>(`/api/compositions/${id}/cancel`, { method: "POST" }),
+    retryComposition: (id: number) =>
+      request<{ id: number; status: string }>(`/api/compositions/${id}/retry`, { method: "POST" }),
   },
 
   diagnostics: {
@@ -620,5 +731,23 @@ export const api = {
       request<import("./types").PanelOperatorOut>(`/api/operators/${id}/revoke`, {
         method: "POST",
       }),
+  },
+
+  worker: {
+    status: () => request<import("./types").WorkerProcessOut>("/api/worker"),
+    start: () => request<import("./types").WorkerProcessOut>("/api/worker/start", { method: "POST" }),
+    stop: () => request<import("./types").WorkerProcessOut>("/api/worker/stop", { method: "POST" }),
+  },
+
+  maintenance: {
+    runtime: () => request<import("./types").RuntimeOut>("/api/maintenance/runtime"),
+    setContext: (context: number, model?: string) =>
+      request<import("./types").RuntimeOut>("/api/maintenance/runtime/context", {
+        method: "POST",
+        body: { context, model },
+      }),
+    backups: () => request<import("./types").BackupOut[]>("/api/maintenance/backups"),
+    takeBackup: () =>
+      request<import("./types").BackupOut>("/api/maintenance/backups", { method: "POST" }),
   },
 };

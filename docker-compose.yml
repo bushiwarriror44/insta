@@ -1,4 +1,31 @@
 services:
+  reels-ollama:
+    image: ollama/ollama:latest
+    container_name: insta-reels-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  reels-ollama-pull:
+    image: ollama/ollama:latest
+    container_name: insta-reels-ollama-pull
+    depends_on:
+      reels-ollama:
+        condition: service_started
+    environment:
+      OLLAMA_HOST: http://reels-ollama:11434
+      AGENT_MODEL: ${AGENT_MODEL:-qwen3:8b}
+    volumes:
+      - ./docker/ollama-pull.sh:/pull.sh:ro
+    entrypoint: ["sh", "/pull.sh"]
+    restart: "no"
+
   reels-worker:
     build:
       context: .
@@ -12,7 +39,17 @@ services:
       - ./data:/app/data
       - ./.env:/app/.env:ro
       - playwright-browsers:/ms-playwright
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      AGENT_BASE_URL: http://reels-ollama:11434/v1
+      PANEL_BASE_URL: http://reels-frontend:80
+      OLLAMA_AUTOSTART: "false"
+      WORKER_AUTOSTART: "false"
     command: ["run-worker"]
+    depends_on:
+      reels-ollama:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "python -m app.cli status > /tmp/healthcheck.log 2>&1 || exit 1"]
       interval: 45s
@@ -31,17 +68,25 @@ services:
     environment:
       DISPLAY: ":99"
       BROWSER_VNC_ENABLED: "true"
+      AGENT_BASE_URL: http://reels-ollama:11434/v1
+      PANEL_BASE_URL: http://reels-frontend:80
+      OLLAMA_AUTOSTART: "false"
+      WORKER_AUTOSTART: "false"
     env_file:
       - .env
     volumes:
       - ./data:/app/data
       - ./.env:/app/.env:ro
       - playwright-browsers:/ms-playwright
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: ["run-api"]
     ports:
       - "8000:8000"
     depends_on:
       reels-worker:
+        condition: service_started
+      reels-ollama:
         condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5); sys.exit(0 if r.status==200 else 1)\""]
@@ -65,3 +110,4 @@ services:
 
 volumes:
   playwright-browsers:
+  ollama-data:

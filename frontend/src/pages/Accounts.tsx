@@ -17,7 +17,8 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import { api } from "../api/client";
 import { Card } from "../components/Card";
@@ -35,6 +36,8 @@ import { InstagramBrowserPanel } from "../components/InstagramBrowserPanel";
 import { StatusBadge } from "../components/StatusBadge";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
+import { usePollWhenVisible } from "../hooks/usePollWhenVisible";
+import { useAssistantMutate } from "../lib/assistantMutate";
 import type {
   AccountConnectionTestOut,
   AccountIn,
@@ -57,9 +60,14 @@ function proxyOptionLabel(p: ProxyOut): string {
   return `${prefix}${p.label}${p.country ? ` (${p.country})` : ""}`;
 }
 
+function isInstagram(account: AccountOut | null | undefined): boolean {
+  return (account?.platform || "instagram") === "instagram";
+}
+
 function sessionSourceLabel(source: AccountOut["session_source"]): string {
   if (source === "database") return "sessionid в БД";
   if (source === "session_file") return "Файл cookies";
+  if (source === "playwright") return "Playwright state";
   return "Нет сессии";
 }
 
@@ -95,6 +103,35 @@ function ConnectionStepRow({
   );
 }
 
+function RowIconButton({
+  label,
+  onClick,
+  disabled,
+  title,
+  danger,
+  children,
+}: {
+  label: string;
+  onClick: () => void | Promise<void>;
+  disabled?: boolean;
+  title?: string;
+  danger?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className={`btn-ghost btn-compact ${danger ? "text-rose-300 disabled:opacity-40" : ""}`}
+      aria-label={label}
+      title={title ?? label}
+      disabled={disabled}
+      onClick={() => void onClick()}
+    >
+      {children}
+    </button>
+  );
+}
+
 export function Accounts() {
   const { push } = useToast();
   const { state: authState } = useAuth();
@@ -112,6 +149,17 @@ export function Accounts() {
   const [connectionAccount, setConnectionAccount] = useState<AccountOut | null>(null);
   const [testingAll, setTestingAll] = useState(false);
   const [testAllProgress, setTestAllProgress] = useState({ done: 0, total: 0, ok: 0 });
+  const [flashAccountIds, setFlashAccountIds] = useState<number[]>([]);
+  const [flashProxyIds, setFlashProxyIds] = useState<number[]>([]);
+  const [accountQuery, setAccountQuery] = useState("");
+  const downloadStarted = useRef<string | null>(null);
+  const loadingRef = useRef(true);
+  const [searchParams] = useSearchParams();
+  const askedId = Number(searchParams.get("id") || 0);
+  const askedUser = searchParams.get("username");
+  const askedQ = searchParams.get("q");
+  const download = searchParams.get("download");
+  const downloadFormat = searchParams.get("format") === "txt" ? "txt" : "json";
 
   const reload = useCallback(async () => {
     const [a, p] = await Promise.all([api.accounts.list(), api.proxies.list()]);
@@ -120,26 +168,93 @@ export function Accounts() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    let initial = true;
-    async function tick() {
-      try {
-        await reload();
-      } catch (err) {
-        if (initial) push((err as Error).message, "error");
-      } finally {
-        if (initial) setLoading(false);
-        initial = false;
-      }
-      if (cancelled) return;
+    if (askedQ) setAccountQuery(askedQ);
+    else if (askedUser) setAccountQuery(askedUser);
+  }, [askedQ, askedUser]);
+
+  const shownAccounts = useMemo(() => {
+    const needle = accountQuery.trim().toLowerCase();
+    if (!needle) return accounts;
+    return accounts.filter((a) => {
+      const hay = `${a.username} ${a.platform || ""} ${a.status} ${a.proxy_label ?? ""}`.toLowerCase();
+      return hay.includes(needle);
+    });
+  }, [accountQuery, accounts]);
+
+  useAssistantMutate(async (detail) => {
+    await reload();
+    setFlashAccountIds(detail?.accounts ?? []);
+    setFlashProxyIds(detail?.proxies ?? []);
+  });
+
+  const tick = useCallback(async () => {
+    try {
+      await reload();
+    } catch (err) {
+      if (loadingRef.current) push((err as Error).message, "error");
+    } finally {
+      loadingRef.current = false;
+      setLoading(false);
     }
-    tick();
-    const id = window.setInterval(tick, POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [reload, push]);
+  }, [push, reload]);
+  usePollWhenVisible(tick, POLL_INTERVAL_MS);
+
+  useEffect(() => {
+    const byName = askedUser
+      ? accounts.find((a) => a.username === askedUser)?.id
+      : 0;
+    const target = askedId || byName;
+    if (!target || !accounts.some((a) => a.id === target)) return;
+    setFlashAccountIds((ids) => (ids.includes(target) ? ids : [target, ...ids]));
+  }, [accounts, askedId, askedUser]);
+
+  useEffect(() => {
+    const byName = askedUser
+      ? accounts.find((a) => a.username === askedUser)?.id
+      : 0;
+    const scrollAccount = flashAccountIds[0] || askedId || byName;
+    if (scrollAccount) {
+      document.getElementById(`account-${scrollAccount}`)?.scrollIntoView({ block: "center" });
+    } else if (flashProxyIds[0]) {
+      document.getElementById(`proxy-${flashProxyIds[0]}`)?.scrollIntoView({ block: "center" });
+    }
+  }, [accounts, flashAccountIds, flashProxyIds, askedId, askedUser]);
+
+  useEffect(() => {
+    if (!download || !askedId || accounts.length === 0) return;
+    const account = accounts.find((a) => a.id === askedId);
+    if (!account) return;
+    const key = `${askedId}:${download}:${downloadFormat}`;
+    if (downloadStarted.current === key) return;
+    downloadStarted.current = key;
+    void (async () => {
+      try {
+        if (download === "cookies") {
+          await api.accounts.exportCookies(account.username, downloadFormat);
+        } else if (download === "fingerprint") {
+          await api.accounts.exportDeviceFingerprint(account.username, downloadFormat);
+        } else if (download === "playwright") {
+          await api.accounts.exportPlaywrightState(account.username, downloadFormat);
+        } else {
+          downloadStarted.current = null;
+          return;
+        }
+        push("Файл скачан", "success");
+      } catch (err) {
+        push((err as Error).message, "error");
+      } finally {
+        const next = new URLSearchParams(window.location.search);
+        next.delete("download");
+        next.delete("format");
+        const qs = next.toString();
+        window.history.replaceState(
+          null,
+          "",
+          `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`
+        );
+      }
+    })();
+  }, [accounts, askedId, download, downloadFormat, push]);
 
   const onCreatedAccount = async () => {
     setOpenAccount(false);
@@ -242,7 +357,7 @@ export function Accounts() {
         setTestAllProgress({ done: i + 1, total: targets.length, ok: okCount });
       }
       push(
-        `Проверено ${targets.length} акк.: ${okCount} готовы к автопостингу`,
+        `Проверено ${targets.length} акк.: ${okCount} с cookies`,
         okCount === targets.length ? "success" : "info"
       );
     } finally {
@@ -296,133 +411,129 @@ export function Accounts() {
         {proxies.length === 0 ? (
           <div className="text-sm text-slate-500">Прокси пока нет.</div>
         ) : (
-          <div className="overflow-x-auto -mx-5">
-            <table className="table-base">
-              <thead>
-                <tr>
-                  <th>Метка</th>
-                  <th>URL</th>
-                  <th>Страна / TZ</th>
-                  <th>Аккаунты</th>
-                  <th>Последний IP</th>
-                  <th>Гео (факт)</th>
-                  <th>Статус</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {proxies.map((p) => (
-                  <tr key={p.id} className="hover:bg-slate-900/40">
-                    <td className="font-medium">{p.label}</td>
-                    <td
-                      className="max-w-[18rem] truncate font-mono text-xs text-slate-400"
-                      title={p.url}
-                    >
-                      {p.url}
-                    </td>
-                    <td className="text-slate-400">
-                      <span className="inline-flex items-center gap-1.5">
+          <table className="table-base">
+            <colgroup>
+              <col className="w-[16%]" />
+              <col className="w-[28%]" />
+              <col className="w-[24%]" />
+              <col className="w-[10%]" />
+              <col className="w-[22%]" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Метка</th>
+                <th>URL</th>
+                <th>Страна / IP</th>
+                <th>Статус</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {proxies.map((p) => (
+                <tr
+                  id={`proxy-${p.id}`}
+                  key={p.id}
+                  className={`hover:bg-slate-900/40 ${flashProxyIds.includes(p.id) ? "flash-row" : ""}`}
+                >
+                  <td className="font-medium">
+                    <div className="truncate" title={p.label}>
+                      {p.label}
+                    </div>
+                    <div className="text-[11px] text-slate-500 tabular-nums">
+                      {p.accounts_count ?? 0} акк.
+                    </div>
+                  </td>
+                  <td className="min-w-0 truncate font-mono text-[11px] text-slate-400" title={p.url}>
+                    {p.url}
+                  </td>
+                  <td
+                    className="min-w-0 text-slate-400"
+                    title={
+                      p.geo_mismatch_warning
+                        ? `Не совпадает с заявленной страной (${p.country})`
+                        : undefined
+                    }
+                  >
+                    <div className="truncate">
+                      <span className="inline-flex items-center gap-1">
                         <CountryFlag code={p.country} />
                         {p.country ?? "—"}
                         {p.timezone ? ` · ${p.timezone}` : ""}
                       </span>
-                    </td>
-                    <td className="tabular-nums text-slate-400">{p.accounts_count ?? 0}</td>
-                    <td className="text-slate-300 tabular-nums">
+                    </div>
+                    <div className="truncate font-mono text-[11px] text-slate-300 tabular-nums">
                       {p.last_known_ip ?? "—"}
-                    </td>
-                    <td
+                    </div>
+                    <span
                       className={
-                        p.geo_mismatch_warning ? "text-amber-300" : "text-slate-400"
-                      }
-                      title={
                         p.geo_mismatch_warning
-                          ? `Не совпадает с заявленной страной (${p.country})`
-                          : undefined
+                          ? "inline-flex items-center gap-1 text-amber-300"
+                          : "inline-flex items-center gap-1 text-slate-400"
                       }
                     >
-                      <span
-                        className={
-                          p.geo_mismatch_warning
-                            ? "inline-flex items-center gap-1.5 text-amber-300"
-                            : "inline-flex items-center gap-1.5"
-                        }
+                      <CountryFlag code={p.last_geo_country} />
+                      {p.last_geo_country ?? "—"}
+                    </span>
+                  </td>
+                  <td>
+                    <StatusBadge value={p.is_healthy ? "ok" : "bad"} />
+                  </td>
+                  <td className="text-right">
+                    <div className="flex items-center justify-end gap-1 flex-wrap">
+                      <RowIconButton
+                        label={`Изменить прокси ${p.label}`}
+                        onClick={() => setEditingProxy(p)}
                       >
-                        <CountryFlag code={p.last_geo_country} />
-                        {p.last_geo_country ?? "—"}
-                      </span>
-                    </td>
-                    <td>
-                      <StatusBadge value={p.is_healthy ? "ok" : "bad"} />
-                    </td>
-                    <td className="text-right whitespace-nowrap">
-                      <div className="flex items-center justify-end gap-1 flex-wrap">
-                        <button
-                          type="button"
-                          className="btn-ghost text-xs"
-                          aria-label={`Изменить прокси ${p.label}`}
-                          onClick={() => setEditingProxy(p)}
-                        >
-                          <Pencil size={14} />
-                          Изменить
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-ghost text-xs text-rose-300 disabled:opacity-40"
-                          aria-label={`Удалить прокси ${p.label}`}
-                          disabled={(p.accounts_count ?? 0) > 0}
-                          title={
-                            (p.accounts_count ?? 0) > 0
-                              ? `${p.accounts_count} акк. используют этот прокси — сначала переназначьте их`
-                              : "Удалить этот прокси"
+                        <Pencil size={14} />
+                      </RowIconButton>
+                      <RowIconButton
+                        label={`Удалить прокси ${p.label}`}
+                        danger
+                        disabled={(p.accounts_count ?? 0) > 0}
+                        title={
+                          (p.accounts_count ?? 0) > 0
+                            ? `${p.accounts_count} акк. используют этот прокси — сначала переназначьте их`
+                            : "Удалить этот прокси"
+                        }
+                        onClick={async () => {
+                          if ((p.accounts_count ?? 0) > 0) return;
+                          if (!window.confirm(`Удалить прокси «${p.label}» навсегда?`)) return;
+                          try {
+                            await api.proxies.remove(p.label);
+                            await reload();
+                            push(`Прокси ${p.label} удалён`, "info");
+                          } catch (err) {
+                            push((err as Error).message, "error");
                           }
-                          onClick={async () => {
-                            if ((p.accounts_count ?? 0) > 0) return;
-                            if (
-                              !window.confirm(`Удалить прокси «${p.label}» навсегда?`)
-                            )
-                              return;
-                            try {
-                              await api.proxies.remove(p.label);
-                              await reload();
-                              push(`Прокси ${p.label} удалён`, "info");
-                            } catch (err) {
-                              push((err as Error).message, "error");
-                            }
-                          }}
-                        >
-                          <Trash2 size={14} />
-                          Удалить
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-ghost text-xs"
-                          aria-label={`Проверка прокси ${p.label}`}
-                          onClick={async () => {
-                            try {
-                              const updated = await api.proxies.check(p.label);
-                              setProxies((arr) =>
-                                arr.map((x) => (x.id === updated.id ? updated : x))
-                              );
-                              push(
-                                `Прокси ${p.label}: ${updated.is_healthy ? "работает" : "недоступен"}`,
-                                updated.is_healthy ? "success" : "error"
-                              );
-                            } catch (err) {
-                              push((err as Error).message, "error");
-                            }
-                          }}
-                        >
-                          <RefreshCw size={14} />
-                          Проверить
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                        }}
+                      >
+                        <Trash2 size={14} />
+                      </RowIconButton>
+                      <RowIconButton
+                        label={`Проверка прокси ${p.label}`}
+                        onClick={async () => {
+                          try {
+                            const updated = await api.proxies.check(p.label);
+                            setProxies((arr) =>
+                              arr.map((x) => (x.id === updated.id ? updated : x))
+                            );
+                            push(
+                              `Прокси ${p.label}: ${updated.is_healthy ? "работает" : "недоступен"}`,
+                              updated.is_healthy ? "success" : "error"
+                            );
+                          } catch (err) {
+                            push((err as Error).message, "error");
+                          }
+                        }}
+                      >
+                        <RefreshCw size={14} />
+                      </RowIconButton>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </Card>
 
@@ -430,7 +541,16 @@ export function Accounts() {
         title="Аккаунты"
         description={`${accounts.length} настроено`}
         actions={
-          accounts.length > 0 ? (
+          <div className="flex items-center gap-2">
+            <input
+              className="input max-w-[12rem] py-1.5 text-xs"
+              data-page-search
+              aria-label="Поиск аккаунтов"
+              placeholder="Имя, площадка, статус…"
+              value={accountQuery}
+              onChange={(e) => setAccountQuery(e.target.value)}
+            />
+            {accounts.length > 0 ? (
             <button
               type="button"
               className="btn-ghost text-xs"
@@ -442,45 +562,60 @@ export function Accounts() {
                 ? `Проверка ${testAllProgress.done}/${testAllProgress.total}…`
                 : "Проверить все"}
             </button>
-          ) : undefined
+            ) : null}
+          </div>
         }
       >
         {accounts.length === 0 ? (
           <div className="text-sm text-slate-500">Аккаунтов пока нет.</div>
+        ) : shownAccounts.length === 0 ? (
+          <div className="text-sm text-slate-500">Никого не нашлось.</div>
         ) : (
-          <div className="overflow-x-auto -mx-5">
-            <table className="table-base">
-              <thead>
-                <tr>
-                  <th>Имя пользователя</th>
-                  <th>Статус</th>
-                  <th>Прокси</th>
-                  <th>TZ</th>
-                  <th>Профиль</th>
-                  <th>Лимит / Пауза</th>
-                  <th>Сегодня</th>
-                  <th>Последняя публикация</th>
-                  <th>Кулдаун до</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {accounts.map((a) => (
-                  <tr key={a.id} className="hover:bg-slate-900/40">
-                    <td className="font-medium">
-                      <div>
+          <table className="table-base">
+            <colgroup>
+              <col className="w-[22%]" />
+              <col className="w-[14%]" />
+              <col className="w-[18%]" />
+              <col className="w-[24%]" />
+              <col className="w-[22%]" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Имя</th>
+                <th>Площадка</th>
+                <th>Прокси</th>
+                <th>Активность</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {shownAccounts.map((a) => {
+                const lastPublish = a.last_publish_at
+                  ? new Date(a.last_publish_at).toLocaleString()
+                  : "—";
+                const cooldown = a.cooldown_until
+                  ? new Date(a.cooldown_until).toLocaleString()
+                  : "—";
+                return (
+                  <tr
+                    id={`account-${a.id}`}
+                    key={a.id}
+                    className={`hover:bg-slate-900/40 ${flashAccountIds.includes(a.id) ? "flash-row" : ""}`}
+                  >
+                    <td className="font-medium min-w-0">
+                      <div className="truncate" title={`@${a.username}`}>
                         @{a.username}
                         {a.has_totp ? (
                           <span
-                            className="ml-2 text-[10px] uppercase tracking-wide text-emerald-400"
+                            className="ml-1 text-[10px] uppercase tracking-wide text-emerald-400"
                             title="Настроен TOTP seed"
                           >
                             2FA
                           </span>
                         ) : null}
-                        {a.has_session_id ? (
+                        {isInstagram(a) && a.has_session_id ? (
                           <span
-                            className="ml-2 text-[10px] uppercase tracking-wide text-brand-300"
+                            className="ml-1 text-[10px] uppercase tracking-wide text-brand-300"
                             title="Сессия сохранена — используется для автопостинга"
                           >
                             Сессия
@@ -488,7 +623,7 @@ export function Accounts() {
                         ) : null}
                         {a.session_file_exists ? (
                           <span
-                            className="ml-2 text-[10px] uppercase tracking-wide text-sky-300"
+                            className="ml-1 text-[10px] uppercase tracking-wide text-sky-300"
                             title={
                               a.session_file_updated_at
                                 ? `Cookies на диске · ${new Date(a.session_file_updated_at).toLocaleString()}`
@@ -499,89 +634,118 @@ export function Accounts() {
                           </span>
                         ) : null}
                       </div>
-                      <div className="flex flex-col items-start gap-1">
+                      {a.caption_profile ? (
+                        <div className="capitalize text-[11px] text-slate-400 truncate">
+                          {a.caption_profile}
+                        </div>
+                      ) : null}
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                         <a
-                          href={`https://www.instagram.com/${encodeURIComponent(a.username)}/`}
+                          href={
+                            a.platform === "youtube"
+                              ? `https://www.youtube.com/@${encodeURIComponent(a.username)}`
+                              : a.platform === "tiktok"
+                                ? `https://www.tiktok.com/@${encodeURIComponent(a.username)}`
+                                : `https://www.instagram.com/${encodeURIComponent(a.username)}/`
+                          }
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-xs font-normal text-brand-300 hover:text-brand-200"
+                          className="inline-flex items-center gap-1 text-[11px] font-normal text-brand-300 hover:text-brand-200"
                         >
                           <ExternalLink size={12} />
                           Профиль
                         </a>
                         <button
                           type="button"
-                          className="inline-flex items-center gap-1 text-xs font-normal text-sky-300 hover:text-sky-200 disabled:opacity-40 disabled:pointer-events-none"
+                          className="inline-flex items-center gap-1 text-[11px] font-normal text-sky-300 hover:text-sky-200 disabled:opacity-40 disabled:pointer-events-none"
                           disabled={!a.proxy_label}
                           title={
                             a.proxy_label
-                              ? "Открыть браузер Instagram через прокси аккаунта"
+                              ? "Открыть браузер через прокси аккаунта"
                               : "Сначала назначьте прокси"
                           }
                           onClick={() => setBrowserAccount(a)}
                         >
                           <MonitorPlay size={12} />
-                          Браузер Instagram
+                          Браузер
                         </button>
                       </div>
                     </td>
-                    <td>
+                    <td className="min-w-0">
+                      <div className="truncate text-[11px] uppercase text-slate-400">
+                        {a.platform || "instagram"}
+                      </div>
                       <StatusBadge value={a.status} />
                     </td>
-                    <td className="text-slate-400">
-                      <div className="flex items-center gap-1.5 flex-wrap">
+                    <td
+                      className="min-w-0 text-slate-400"
+                      title={
+                        a.proxy_country &&
+                        a.proxy_geo_country &&
+                        a.proxy_country.toUpperCase() !== a.proxy_geo_country.toUpperCase()
+                          ? `Не совпадает с заявленной страной (${a.proxy_country})`
+                          : (a.proxy_label ?? "")
+                      }
+                    >
+                      <div className="flex items-center gap-1 truncate">
                         <CountryFlag code={a.proxy_country} />
-                        <span>{a.proxy_label ?? "—"}</span>
+                        <span className="truncate">{a.proxy_label ?? "—"}</span>
                         {a.proxy_is_healthy != null ? (
                           <StatusBadge value={a.proxy_is_healthy ? "ok" : "bad"} />
                         ) : null}
-                        {a.proxy_label ? (
-                          <button
-                            type="button"
-                            className="btn-ghost text-[10px] px-1 py-0"
-                            aria-label={`Проверка подключения для ${a.username}`}
-                            title={
-                              a.proxy_last_ip
-                                ? `Последний IP прокси: ${a.proxy_last_ip}`
-                                : "Полная проверка подключения"
-                            }
-                            onClick={() => setConnectionAccount(a)}
-                          >
-                            <Network size={12} /> Подключение
-                          </button>
-                        ) : null}
+                      </div>
+                      {a.proxy_geo_country ? (
+                        <span
+                          className={
+                            a.proxy_country &&
+                            a.proxy_country.toUpperCase() !== a.proxy_geo_country.toUpperCase()
+                              ? "inline-flex items-center gap-1 text-amber-300"
+                              : "inline-flex items-center gap-1 text-slate-400"
+                          }
+                        >
+                          <CountryFlag code={a.proxy_geo_country} />
+                          {a.proxy_geo_country}
+                        </span>
+                      ) : null}
+                      <div className="truncate text-[11px]" title={a.timezone}>
+                        {a.timezone}
                       </div>
                     </td>
-                    <td className="text-slate-400">{a.timezone}</td>
-                    <td className="text-slate-400 capitalize">
-                      {a.caption_profile ?? "—"}
+                    <td className="min-w-0 text-slate-300 tabular-nums">
+                      <div>
+                        {a.daily_post_cap} · {a.min_gap_hours}h
+                        <span className="ml-1 text-emerald-300">{a.posts_today}</span>
+                        <span className="text-slate-500">/</span>
+                        <span className={a.failures_today ? "text-rose-300" : "text-slate-500"}>
+                          {a.failures_today}
+                        </span>
+                      </div>
+                      <div className="truncate text-[11px] text-slate-400" title={lastPublish}>
+                        {lastPublish}
+                      </div>
+                      <div className="truncate text-[11px] text-orange-300" title={cooldown}>
+                        {cooldown}
+                      </div>
+                      <label className="mt-0.5 flex items-center gap-1 text-[10px] text-slate-500">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(a.hold_for_review)}
+                          onChange={async (e) => {
+                            try {
+                              await api.factory.updateAgentSettings(a.id, { hold_for_review: e.target.checked });
+                              await reload();
+                            } catch (err) {
+                              push((err as Error).message, "error");
+                            }
+                          }}
+                        />
+                        проверка
+                      </label>
                     </td>
-                    <td className="text-slate-300 tabular-nums">
-                      {a.daily_post_cap} · {a.min_gap_hours}h
-                    </td>
-                    <td className="tabular-nums">
-                      <span className="text-emerald-300">{a.posts_today}</span>
-                      <span className="text-slate-500"> / </span>
-                      <span className={a.failures_today ? "text-rose-300" : "text-slate-500"}>
-                        {a.failures_today}
-                      </span>
-                    </td>
-                    <td className="text-slate-400 text-xs">
-                      {a.last_publish_at
-                        ? new Date(a.last_publish_at).toLocaleString()
-                        : "—"}
-                    </td>
-                    <td className="text-orange-300 text-xs tabular-nums">
-                      {a.cooldown_until
-                        ? new Date(a.cooldown_until).toLocaleString()
-                        : "—"}
-                    </td>
-                    <td className="text-right whitespace-nowrap">
+                    <td className="text-right">
                       <div className="flex items-center justify-end gap-1 flex-wrap">
-                        <button
-                          type="button"
-                          className="btn-ghost text-xs"
-                          aria-label={`Подключение для ${a.username}`}
+                        <RowIconButton
+                          label={`Подключение для ${a.username}`}
                           disabled={!a.proxy_label}
                           title={
                             a.proxy_label
@@ -590,21 +754,17 @@ export function Accounts() {
                           }
                           onClick={() => setConnectionAccount(a)}
                         >
-                          <Network size={14} /> Подключение
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-ghost text-xs"
-                          aria-label={`Сессия для ${a.username}`}
+                          <Network size={14} />
+                        </RowIconButton>
+                        <RowIconButton
+                          label={`Сессия для ${a.username}`}
                           onClick={() => setSessionAccount(a)}
                         >
-                          <KeyRound size={14} /> Сессия
-                        </button>
+                          <KeyRound size={14} />
+                        </RowIconButton>
                         {a.has_totp ? (
-                          <button
-                            type="button"
-                            className="btn-ghost text-xs"
-                            aria-label={`Копировать TOTP для ${a.username}`}
+                          <RowIconButton
+                            label={`Копировать TOTP для ${a.username}`}
                             onClick={async () => {
                               try {
                                 const data = await api.accounts.getTotp(a.username);
@@ -620,20 +780,18 @@ export function Accounts() {
                               }
                             }}
                           >
-                            <Copy size={14} /> TOTP
-                          </button>
+                            <Copy size={14} />
+                          </RowIconButton>
                         ) : null}
-                        <button
-                          type="button"
-                          className="btn-ghost text-xs"
-                          aria-label={`Сменить прокси для ${a.username}`}
+                        <RowIconButton
+                          label={`Сменить прокси для ${a.username}`}
                           onClick={() => setAssigningAccount(a)}
                         >
-                          <Server size={14} /> Сменить прокси
-                        </button>
+                          <Server size={14} />
+                        </RowIconButton>
                         {a.status === "active" ? (
-                          <button
-                            className="btn-ghost text-xs"
+                          <RowIconButton
+                            label="Пауза"
                             onClick={async () => {
                               try {
                                 const updated = await api.accounts.pause(a.username);
@@ -646,11 +804,11 @@ export function Accounts() {
                               }
                             }}
                           >
-                            <Pause size={14} /> Пауза
-                          </button>
+                            <Pause size={14} />
+                          </RowIconButton>
                         ) : (
-                          <button
-                            className="btn-ghost text-xs"
+                          <RowIconButton
+                            label="Возобновить"
                             onClick={async () => {
                               try {
                                 const updated = await api.accounts.resume(a.username);
@@ -663,16 +821,16 @@ export function Accounts() {
                               }
                             }}
                           >
-                            <Play size={14} /> Возобновить
-                          </button>
+                            <Play size={14} />
+                          </RowIconButton>
                         )}
                       </div>
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                );
+              })}
+            </tbody>
+          </table>
         )}
       </Card>
 
@@ -797,6 +955,7 @@ function AddAccountModal({
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState<AccountIn>({
     username: "",
+    platform: "instagram",
     password: "",
     proxy_label: "",
     timezone: "UTC",
@@ -837,7 +996,8 @@ function AddAccountModal({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.username || !form.password || !form.proxy_label) {
+    const isIgSubmit = (form.platform || "instagram") === "instagram";
+    if (!form.username || !form.proxy_label || (isIgSubmit && !form.password)) {
       push("Заполните имя пользователя, пароль и прокси", "error");
       return;
     }
@@ -858,6 +1018,7 @@ function AddAccountModal({
       await onSaved();
       setForm({
         username: "",
+        platform: "instagram",
         password: "",
         proxy_label: proxies[0]?.label ?? "",
         timezone: proxies[0]?.timezone?.trim() || "UTC",
@@ -881,6 +1042,8 @@ function AddAccountModal({
     }
   }
 
+  const isIg = (form.platform || "instagram") === "instagram";
+
   return (
     <Modal
       open={open}
@@ -901,6 +1064,23 @@ function AddAccountModal({
       <form id="add-account-form" onSubmit={submit} className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
+            <label className="label">Площадка</label>
+            <select
+              className="input"
+              value={form.platform || "instagram"}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  platform: e.target.value as AccountIn["platform"],
+                })
+              }
+            >
+              <option value="instagram">Instagram</option>
+              <option value="youtube">YouTube Shorts</option>
+              <option value="tiktok">TikTok</option>
+            </select>
+          </div>
+          <div>
             <label className="label">Имя пользователя</label>
             <input
               className="input"
@@ -910,7 +1090,7 @@ function AddAccountModal({
             />
           </div>
           <div>
-            <label className="label">Пароль</label>
+            <label className="label">{isIg ? "Пароль" : "Пароль (не нужен)"}</label>
             <input
               className="input"
               type="password"
@@ -918,8 +1098,15 @@ function AddAccountModal({
               onChange={(e) => setForm({ ...form, password: e.target.value })}
               autoComplete="new-password"
             />
+            {!isIg ? (
+              <p className="text-xs text-slate-500 mt-1">
+                YouTube и TikTok входят через браузер и cookies.
+              </p>
+            ) : null}
           </div>
         </div>
+        {isIg ? (
+        <>
         <div>
           <label className="label">Логин Instagram (необязательно)</label>
           <input
@@ -951,6 +1138,8 @@ function AddAccountModal({
             placeholder="JUJW WLWP QGPU …"
           />
         </div>
+        </>
+        ) : null}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
             <label className="label">Прокси</label>
@@ -1033,6 +1222,7 @@ function AddAccountModal({
             />
           </div>
         </div>
+        {isIg ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
             <label className="label">Профиль подписей</label>
@@ -1094,7 +1284,10 @@ function AddAccountModal({
             </p>
           </div>
         </div>
+        ) : null}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {isIg ? (
+          <>
           <div>
             <label className="label">Резервный email (необязательно)</label>
             <input
@@ -1118,6 +1311,8 @@ function AddAccountModal({
               Используется для получения кода подтверждения через IMAP.
             </p>
           </div>
+          </>
+          ) : null}
           <div>
             <label className="label">Заметки</label>
             <textarea
@@ -1203,8 +1398,10 @@ function ConnectionModal({
       setResult(data);
       onResult?.(account, data);
       if (!data.instagram_auth.ok && isSessionMissing(data.instagram_auth)) {
-        onOpenSessionSetup(account);
-        return;
+        if (isInstagram(account)) {
+          onOpenSessionSetup(account);
+          return;
+        }
       }
       push(
         data.overall_ok
@@ -1237,8 +1434,10 @@ function ConnectionModal({
       setResult(data);
       onResult?.(account, data);
       if (!data.instagram_auth.ok && isSessionMissing(data.instagram_auth)) {
-        onOpenSessionSetup(account);
-        return;
+        if (isInstagram(account)) {
+          onOpenSessionSetup(account);
+          return;
+        }
       }
       push(
         data.overall_ok
@@ -1394,15 +1593,21 @@ function ConnectionModal({
           ok: result.overall_ok,
           title: result.overall_ok
             ? cookiesOnlyOk
-              ? "Cookies установлены"
+              ? isInstagram(account)
+                ? "Cookies установлены"
+                : "Cookies Studio на диске"
               : mobileOk
                 ? "Готов к автопостингу"
                 : "Подключение OK"
-            : "Не готов к автопостингу",
+            : isInstagram(account)
+              ? "Не готов к автопостингу"
+              : "Проверка не пройдена",
           detail: !result.overall_ok
             ? result.instagram_auth.error
             : cookiesOnlyOk
-              ? "Mobile API не проверялась — для автопостинга нажмите «Проверить mobile API»"
+              ? isInstagram(account)
+                ? "Mobile API не проверялась — для автопостинга нажмите «Проверить mobile API»"
+                : "Живость сессии на сервере не проверялась"
               : null,
           checkedAt: result.checked_at,
         }
@@ -1430,6 +1635,7 @@ function ConnectionModal({
           <button type="button" onClick={onClose} className="btn-ghost">
             <XCircle size={16} /> Закрыть
           </button>
+          {isInstagram(account) ? (
           <button
             type="button"
             className="btn-ghost"
@@ -1444,6 +1650,7 @@ function ConnectionModal({
             <ShieldOff size={16} className={running && lastCheckMode === "mobile" ? "animate-pulse" : ""} />
             {running && lastCheckMode === "mobile" ? "Mobile…" : "Проверить mobile API"}
           </button>
+          ) : null}
           <button
             type="button"
             className="btn-primary"
@@ -1473,7 +1680,7 @@ function ConnectionModal({
             ) : null}
           </div>
           <div className="flex flex-wrap gap-2 text-[10px] uppercase tracking-wide">
-            {account?.has_session_id ? (
+            {isInstagram(account) && account?.has_session_id ? (
               <span className="text-brand-300">sessionid в БД</span>
             ) : null}
             {account?.session_file_exists ? (
@@ -1484,8 +1691,9 @@ function ConnectionModal({
             ) : null}
           </div>
           <p className="text-xs text-slate-500">
-            «Запустить проверку» смотрит прокси и наличие cookies (без mobile API).
-            «Проверить mobile API» нужно только для автопостинга и может сжечь web-cookie.
+            {isInstagram(account)
+              ? "«Запустить проверку» смотрит прокси и наличие cookies (без mobile API). «Проверить mobile API» нужно только для автопостинга Instagram и может сжечь web-cookie."
+              : "«Запустить проверку» смотрит прокси и наличие Playwright cookies Studio на диске. Живость сессии на сервере не проверяется."}
           </p>
         </div>
 
@@ -1507,9 +1715,13 @@ function ConnectionModal({
                 <span className="inline-flex items-center gap-2 flex-wrap">
                   IP: {result.proxy_health.ip ?? "—"}
                   <CountryFlag code={result.proxy_health.geo_country} showCode />
-                  {result.proxy_health.instagram_reachable
-                    ? "· Instagram доступен"
-                    : "· Instagram недоступен"}
+                  {isInstagram(account) ? (
+                    result.proxy_health.instagram_reachable
+                      ? "· Instagram доступен"
+                      : "· Instagram недоступен"
+                  ) : (
+                    "· IP прокси"
+                  )}
                   {result.proxy_health.geo_mismatch ? (
                     <span className="text-amber-300">Гео не совпадает с заявленной страной</span>
                   ) : null}
@@ -1531,7 +1743,7 @@ function ConnectionModal({
               result ? (
                 <span className="inline-flex items-center gap-2 flex-wrap">
                   {sessionSourceLabel(result.session_storage.session_source)}
-                  {result.session_storage.has_session_id ? (
+                  {isInstagram(account) && result.session_storage.has_session_id ? (
                     <span className="text-brand-300">sessionid</span>
                   ) : null}
                   {result.session_storage.session_file_exists ? (
@@ -1554,15 +1766,21 @@ function ConnectionModal({
           />
           <ConnectionStepRow
             label={
-              result?.instagram_auth.ok
-                ? lastCheckMode === "cookies"
-                  ? "4. Instagram auth (cookies)"
-                  : "4. Instagram auth OK"
-                : result
-                  ? lastCheckMode === "mobile"
-                    ? "4. Instagram auth недействительна"
+              isInstagram(account)
+                ? result?.instagram_auth.ok
+                  ? lastCheckMode === "cookies"
+                    ? "4. Instagram auth (cookies)"
+                    : "4. Instagram auth OK"
+                  : result
+                    ? lastCheckMode === "mobile"
+                      ? "4. Instagram auth недействительна"
+                      : "4. Instagram auth"
                     : "4. Instagram auth"
-                  : "4. Instagram auth"
+                : result?.instagram_auth.ok
+                  ? "4. Cookies Studio на диске"
+                  : result
+                    ? "4. Cookies Studio"
+                    : "4. Cookies Studio"
             }
             state={step4}
             detail={
@@ -1612,16 +1830,19 @@ function ConnectionModal({
         {missingSession ? (
           <div className="rounded-xl border border-amber-500/50 bg-amber-950/40 p-4 text-sm text-amber-100">
             <div className="font-semibold text-amber-200">
-              Сессия не найдена — импортируйте sessionid
+              {isInstagram(account)
+                ? "Сессия не найдена — импортируйте sessionid"
+                : "Нет Playwright cookies — импортируйте файл или сохраните сессию в браузере"}
             </div>
             <p className="mt-1 text-xs text-amber-100/90">
-              Для автопостинга нужна cookie sessionid из Dolphin или браузера. Нажмите кнопку ниже,
-              чтобы вставить сессию.
+              {isInstagram(account)
+                ? "Для автопостинга нужна cookie sessionid из Dolphin или браузера. Нажмите кнопку ниже, чтобы вставить сессию."
+                : "YouTube и TikTok публикуют через Studio. Импортируйте cookies или откройте браузер и нажмите «Сохранить»."}
             </p>
           </div>
         ) : null}
 
-        {sessionExpired && !missingSession ? (
+        {isInstagram(account) && sessionExpired && !missingSession ? (
           <div className="rounded-xl border border-amber-500/50 bg-amber-950/40 p-4 text-sm text-amber-100">
             <div className="font-semibold text-amber-200">
               Автопостинг: пароль или mobile-сессия
@@ -1670,6 +1891,7 @@ function ConnectionModal({
           <button type="button" className="btn-ghost text-xs" onClick={onOpenProxy}>
             <Server size={14} /> Сменить прокси
           </button>
+          {isInstagram(account) ? (
           <button
             type="button"
             className={
@@ -1681,7 +1903,8 @@ function ConnectionModal({
           >
             <KeyRound size={14} /> Настроить сессию
           </button>
-          {sessionExpired && !missingSession ? (
+          ) : null}
+          {isInstagram(account) && sessionExpired && !missingSession ? (
             <button
               type="button"
               className="btn-primary text-sm shadow-lg shadow-brand-500/20"
@@ -1719,10 +1942,13 @@ function SessionModal({
   const [exportLoading, setExportLoading] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
+  const [fingerprintFile, setFingerprintFile] = useState<File | null>(null);
   const [fileImportBusy, setFileImportBusy] = useState(false);
+  const [fpImportBusy, setFpImportBusy] = useState(false);
   const [downloadBusy, setDownloadBusy] = useState<
     "cookies" | "playwright" | "fingerprint" | null
   >(null);
+  const ig = isInstagram(account);
 
   useEffect(() => {
     if (!open) return;
@@ -1732,11 +1958,18 @@ function SessionModal({
     setExportError(null);
     setVerifyResult(null);
     setImportFile(null);
+    setFingerprintFile(null);
     setDownloadBusy(null);
   }, [open, account?.username]);
 
   useEffect(() => {
     if (!open || !account || tab !== "export") return;
+    if (!isInstagram(account)) {
+      setExportLoading(false);
+      setExportData(null);
+      setExportError(null);
+      return;
+    }
     let cancelled = false;
     setExportLoading(true);
     setExportError(null);
@@ -1765,11 +1998,17 @@ function SessionModal({
       await submitFileImport();
       return;
     }
+    if (!ig) {
+      push("Выберите JSON cookies YouTube/TikTok или Playwright state.json", "error");
+      return;
+    }
     // Decode %3A → : (Dolphin / browser often export URL-encoded sessionid).
     const trimmed = decodeURIComponent(sessionId.trim().replace(/\+/g, " "));
     if (trimmed.length < 31) {
       push(
-        "Вставьте sessionid (31+ символов) или выберите JSON/TXT cookies из Dolphin",
+        ig
+          ? "Вставьте sessionid (31+ символов) или выберите JSON/TXT cookies из Dolphin"
+          : "Выберите JSON cookies YouTube/TikTok или Playwright state.json",
         "error"
       );
       return;
@@ -1801,7 +2040,7 @@ function SessionModal({
     setVerifyResult(null);
     try {
       const data = await api.accounts.testConnection(account.username, {
-        probeMobile: true,
+        probeMobile: isInstagram(account),
       });
       setVerifyResult(data);
       push(
@@ -1836,6 +2075,21 @@ function SessionModal({
     }
   }
 
+  async function submitFingerprintImport() {
+    if (!account || !fingerprintFile) return;
+    setFpImportBusy(true);
+    try {
+      await api.accounts.importDeviceFingerprint(account.username, fingerprintFile);
+      push("Device fingerprint сохранён", "success");
+      setFingerprintFile(null);
+      await onSaved();
+    } catch (err) {
+      push((err as Error).message, "error");
+    } finally {
+      setFpImportBusy(false);
+    }
+  }
+
   async function downloadExport(
     kind: "cookies" | "playwright" | "fingerprint",
     fn: (username: string) => Promise<void>
@@ -1850,7 +2104,9 @@ function SessionModal({
       if (msg.includes("404") || msg.toLowerCase().includes("не найден")) {
         push(
           kind === "playwright"
-            ? "Playwright state.json ещё не создан — сначала выполните автовход"
+            ? ig
+              ? "Playwright state.json ещё не создан — сначала выполните автовход"
+              : "Playwright state.json не найден — импортируйте cookies или сохраните сессию в браузере"
             : kind === "fingerprint"
               ? "Device fingerprint не найден для этого аккаунта"
               : "Сессия не найдена — импортируйте cookies или войдите в аккаунт",
@@ -1924,9 +2180,11 @@ function SessionModal({
       <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-sm mb-4 space-y-2">
         <div className="text-slate-400">Хранение сессии (на аккаунт)</div>
         <div className="flex flex-wrap gap-2 text-xs">
+          {ig ? (
           <span className={account?.has_session_id ? "text-brand-300" : "text-slate-500"}>
             sessionid в БД: {account?.has_session_id ? "да" : "нет"}
           </span>
+          ) : null}
           <span className={account?.session_file_exists ? "text-sky-300" : "text-slate-500"}>
             Файл cookies: {account?.session_file_exists ? "да" : "нет"}
           </span>
@@ -1948,10 +2206,16 @@ function SessionModal({
           <RefreshCw size={14} className={verifying ? "animate-spin" : ""} />
           {verifying ? "Проверка…" : "Проверить сессию"}
         </button>
+        {ig ? (
         <p className="text-xs text-amber-200/90">
           Mobile-проверка может инвалидировать web-cookie. Не запускайте сразу после
           импорта, если нужен экспорт в Dolphin.
         </p>
+        ) : (
+        <p className="text-xs text-slate-500">
+          Проверка смотрит прокси и наличие Playwright cookies Studio на диске.
+        </p>
+        )}
         {verifyResult ? (
           <div
             className={`text-xs rounded-lg p-2 space-y-1 ${
@@ -1981,17 +2245,22 @@ function SessionModal({
         <div className="space-y-4">
           <form id="import-session-form" onSubmit={submitImport} className="space-y-4">
             <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-sm">
-              <div className="text-slate-400">Аккаунт Instagram</div>
+              <div className="text-slate-400">
+                {ig ? "Аккаунт Instagram" : `Аккаунт ${account?.platform === "youtube" ? "YouTube" : "TikTok"}`}
+              </div>
               <div className="font-medium">@{account?.username ?? "—"}</div>
               <div className="mt-2 text-slate-400">Текущий статус</div>
               <div className="text-xs">
-                {account?.has_session_id ? (
+                {ig && account?.has_session_id ? (
                   <span className="text-brand-300">Cookie сессии сохранена — вставьте новую для замены</span>
+                ) : account?.session_file_exists ? (
+                  <span className="text-sky-300">Playwright cookies на диске — импортируйте файл для замены</span>
                 ) : (
                   <span className="text-slate-500">Сессия ещё не импортирована</span>
                 )}
               </div>
             </div>
+            {ig ? (
             <div>
               <label className="label" htmlFor="import-session-id">
                 cookie sessionid
@@ -2013,12 +2282,15 @@ function SessionModal({
                 mobile API часто отклоняет web-cookie из Dolphin.
               </p>
             </div>
+            ) : null}
           </form>
           <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 space-y-3">
             <div className="text-sm text-slate-400">Импорт из файла</div>
             <p className="text-xs text-slate-500">
-              JSON cookies Dolphin (.json / .txt) или Playwright state.json. Лишние
-              cookies (Google, реклама) отфильтруются — нужен sessionid Instagram.
+              JSON cookies Dolphin (.json / .txt) или Playwright state.json.
+              {ig
+                ? " Лишние cookies (Google, реклама) отфильтруются — нужен sessionid Instagram."
+                : " Останутся cookies YouTube/Google или TikTok."}{" "}
               После выбора файла нажмите «Импортировать файл» внизу.
             </p>
             <input
@@ -2032,21 +2304,48 @@ function SessionModal({
               <p className="text-xs text-brand-300">Выбран: {importFile.name}</p>
             ) : null}
           </div>
+          {ig ? (
+          <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 space-y-3">
+            <div className="text-sm text-slate-400">Импорт device fingerprint</div>
+            <p className="text-xs text-slate-500">
+              JSON с диска (`device_имя.json`). Импортируйте только тот же отпечаток, с которым
+              жила сессия — чужой fingerprint на живой сессии повышает риск детекта.
+            </p>
+            <input
+              type="file"
+              accept=".json,.txt,application/json,text/plain"
+              aria-label="Импорт fingerprint из файла"
+              className="block w-full text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:bg-slate-800 file:text-slate-200"
+              onChange={(e) => setFingerprintFile(e.target.files?.[0] ?? null)}
+            />
+            {fingerprintFile ? (
+              <p className="text-xs text-brand-300">Выбран: {fingerprintFile.name}</p>
+            ) : null}
+            <button
+              type="button"
+              className="btn-ghost text-sm"
+              disabled={!fingerprintFile || fpImportBusy || !account}
+              onClick={() => void submitFingerprintImport()}
+            >
+              {fpImportBusy ? "Импорт…" : "Импортировать fingerprint"}
+            </button>
+          </div>
+          ) : null}
         </div>
       ) : (
         <div className="space-y-4">
           <p className="text-xs text-amber-300/90">
             Конфиденциальные данные — копируйте только в доверенные инструменты (Dolphin, бэкап).
           </p>
-          {exportLoading ? (
+          {ig && exportLoading ? (
             <div className="text-sm text-slate-400">Загрузка сессии…</div>
-          ) : exportError ? (
+          ) : ig && exportError ? (
             <div className="text-sm text-slate-400 rounded-xl border border-slate-800 p-3">
               {exportError.includes("404") || exportError.toLowerCase().includes("not found")
                 ? "Сессия не найдена — импортируйте sessionid или сначала войдите в аккаунт."
                 : exportError}
             </div>
-          ) : exportData ? (
+          ) : ig && exportData ? (
             <>
               <div className="text-xs text-slate-500">
                 Источник:{" "}
@@ -2068,8 +2367,9 @@ function SessionModal({
           <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 space-y-2">
             <div className="text-sm text-slate-300">Для Dolphin / миграции</div>
             <p className="text-xs text-slate-500">
-              Скачайте полный набор cookies, Playwright state или device fingerprint для переноса
-              в Dolphin.
+              {ig
+                ? "Скачайте cookies, Playwright state или device fingerprint."
+                : "Скачайте cookies площадки или Playwright state.json (сессия Studio)."}
             </p>
             <div className="flex flex-col gap-2">
               <button
@@ -2097,6 +2397,7 @@ function SessionModal({
                   ? "Скачивание…"
                   : "Скачать Playwright state.json"}
               </button>
+              {ig ? (
               <button
                 type="button"
                 className="btn-ghost text-sm justify-start"
@@ -2113,6 +2414,7 @@ function SessionModal({
                   ? "Скачивание…"
                   : "Скачать device fingerprint"}
               </button>
+              ) : null}
             </div>
           </div>
         </div>

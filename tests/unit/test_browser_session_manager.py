@@ -337,6 +337,47 @@ async def test_save_session_rejects_when_not_logged_in(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_save_session_youtube_without_instagram_sessionid(tmp_path, monkeypatch, app_env):
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    import app.browser.session_manager as sm
+    from app.accounts.playwright_session import playwright_state_path
+    from app.browser.session_manager import BrowserSessionManager, BrowserSessionState, BrowserSessionStatus
+
+    mgr = BrowserSessionManager()
+    saved = {}
+
+    async def fake_storage_state(*, path):
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text(
+            json.dumps(
+                {"cookies": [{"name": "SID", "value": "x", "domain": ".youtube.com"}], "origins": []}
+            ),
+            encoding="utf-8",
+        )
+        saved["path"] = path
+
+    context = MagicMock()
+    context.storage_state = fake_storage_state
+    context.cookies = AsyncMock(
+        return_value=[{"name": "SID", "value": "x", "domain": ".youtube.com"}]
+    )
+    session = BrowserSessionState(
+        username="ytuser",
+        context=context,
+        page=MagicMock(),
+        status=BrowserSessionStatus.running,
+    )
+    mgr._sessions["ytuser"] = session
+    account = SimpleNamespace(username="ytuser", platform="youtube")
+    out = await mgr.save_session(MagicMock(), account)
+    assert out["playwright_state_saved"] is True
+    assert playwright_state_path("ytuser").exists()
+
+
+@pytest.mark.asyncio
 async def test_start_session_uses_mobile_surface(monkeypatch):
     from app.config import settings
     import app.browser.session_manager as sm
@@ -374,6 +415,45 @@ async def test_start_session_uses_mobile_surface(monkeypatch):
     assert captured["surface"] == "mobile"
     assert captured["vnc_screen"] == "430x932x24"
     assert captured["lightweight"] is True
+
+
+@pytest.mark.asyncio
+async def test_start_session_youtube_forces_desktop(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.config import settings
+    import app.browser.session_manager as sm
+
+    monkeypatch.setattr(settings, "browser_vnc_enabled", True)
+    monkeypatch.setattr(settings, "browser_lightweight", True)
+    monkeypatch.setattr(sm, "vnc_stack_available", lambda: True)
+    monkeypatch.setattr(sm, "playwright_browsers_available", lambda: True)
+    monkeypatch.setattr(sm, "health_check_cached", lambda *a, **k: None)
+
+    captured: dict = {}
+
+    class FakeVnc:
+        def __init__(self, **kwargs):
+            captured["vnc_screen"] = kwargs.get("screen")
+
+        async def start(self):
+            return None
+
+    monkeypatch.setattr(sm, "VncStack", FakeVnc)
+
+    async def fake_launch(session, account, proxy, *, autofill_login, surface):
+        captured["surface"] = surface
+
+    mgr = BrowserSessionManager()
+    account = SimpleNamespace(username="ytuser", platform="youtube", login_surface="mobile")
+    proxy = MagicMock(url="http://u:p@1.2.3.4:8080", timezone="UTC", country="US")
+
+    monkeypatch.setattr(mgr, "_launch_browser", fake_launch)
+    monkeypatch.setattr(mgr, "_poll_session", AsyncMock())
+    monkeypatch.setattr(mgr, "_auto_stop", AsyncMock())
+
+    await mgr.start_session(account, proxy, surface="mobile")
+    assert captured["surface"] == "desktop"
 
 
 @pytest.mark.asyncio

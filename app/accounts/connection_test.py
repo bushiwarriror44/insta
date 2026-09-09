@@ -7,6 +7,8 @@ from typing import Literal
 from sqlalchemy.orm import Session
 
 from app.accounts.account_diagnostics import log_account_credentials
+from app.accounts.cookie_formats import STUDIO_PLATFORMS, studio_session_ready
+from app.accounts.playwright_session import playwright_state_path
 from app.accounts.device_factory import device_path
 from app.accounts.session_cookie import normalize_sessionid, sessionid_diag_label
 from app.accounts.session_export import export_sessionid
@@ -31,8 +33,16 @@ from app.proxies.pool import ProxyError, health_check_record
 _SESSION_SOURCE_LABEL: dict[str, str] = {
     "database": "БД",
     "session_file": "файл",
+    "playwright": "Playwright",
     "none": "нет",
 }
+
+
+def _platform_value(account: Account) -> str:
+    value = getattr(account, "platform", None)
+    if hasattr(value, "value"):
+        return value.value
+    return value or "instagram"
 
 
 def _session_source(
@@ -104,15 +114,29 @@ def run_account_connection_test(
 
     file_exists = session_path(username).exists()
     device_exists = device_path(username).exists()
-    source = _session_source(username, account.session_id)
-    has_cookies = bool((account.session_id or "").strip()) or file_exists
-
-    session_storage = SessionStorageStepOut(
-        has_session_id=bool(account.session_id),
-        session_file_exists=file_exists,
-        device_file_exists=device_exists,
-        session_source=source,
-    )
+    platform = _platform_value(account)
+    if platform in STUDIO_PLATFORMS:
+        pw_exists = playwright_state_path(username).exists()
+        ready = studio_session_ready(username, platform)
+        source: Literal["database", "session_file", "playwright", "none"] = (
+            "playwright" if ready else "none"
+        )
+        has_cookies = ready
+        session_storage = SessionStorageStepOut(
+            has_session_id=False,
+            session_file_exists=pw_exists,
+            device_file_exists=device_exists,
+            session_source=source,
+        )
+    else:
+        source = _session_source(username, account.session_id)
+        has_cookies = bool((account.session_id or "").strip()) or file_exists
+        session_storage = SessionStorageStepOut(
+            has_session_id=bool(account.session_id),
+            session_file_exists=file_exists,
+            device_file_exists=device_exists,
+            session_source=source,
+        )
     collector.info(
         "storage",
         f"источник сессии={_SESSION_SOURCE_LABEL.get(source, source)}, "
@@ -222,6 +246,62 @@ def run_account_connection_test(
         collector.warn(
             "proxy_health",
             f"Несовпадение гео: указано {adv}, фактически {act}",
+        )
+
+    if platform in STUDIO_PLATFORMS:
+        if probe_mobile:
+            err = "probe_mobile только для Instagram"
+            collector.error("session_probe", err)
+            return _finish(
+                collector,
+                overall_ok=False,
+                summary=err,
+                username=username,
+                proxy_assigned=True,
+                proxy_label=proxy_label,
+                proxy_health=proxy_health,
+                session_storage=session_storage,
+                instagram_auth=InstagramAuthStepOut(ok=False, method="none", error=err),
+                now=now,
+            )
+        collector.info(
+            "session_probe",
+            f"Площадка={platform}, Playwright state="
+            f"{_yes_no(playwright_state_path(username).exists())}, "
+            f"cookies площадки={_yes_no(has_cookies)}",
+        )
+        if has_cookies:
+            collector.info(
+                "session_probe",
+                "Cookies Studio на диске — живость на сервере не проверялась",
+            )
+            instagram_auth = InstagramAuthStepOut(ok=True, method="playwright")
+            overall_ok = True
+            summary = "Cookies Studio на диске (живость на сервере не проверялась)"
+        else:
+            err = (
+                "Playwright state не найден — импортируйте cookies или сохраните сессию в браузере"
+            )
+            collector.error("session_probe", err)
+            instagram_auth = InstagramAuthStepOut(
+                ok=False,
+                method="none",
+                error=err,
+                error_code="session_missing",
+            )
+            overall_ok = False
+            summary = err
+        return _finish(
+            collector,
+            overall_ok=overall_ok,
+            summary=summary,
+            username=username,
+            proxy_assigned=True,
+            proxy_label=proxy_label,
+            proxy_health=proxy_health,
+            session_storage=session_storage,
+            instagram_auth=instagram_auth,
+            now=now,
         )
 
     if health_error or not snapshot.instagram_reachable:

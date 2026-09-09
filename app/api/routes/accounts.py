@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.accounts.backup_codes import parse_account_line, serialize_backup_codes
 from app.accounts.connection_test import run_account_connection_test
 from app.accounts.cookie_formats import CookieFormatError, import_cookies_data, write_dolphin_cookies_export
-from app.accounts.device_factory import device_path, load_fingerprint
+from app.accounts.device_factory import DeviceFingerprint, device_path, load_fingerprint, save_fingerprint
 from app.accounts.login_identifier import resolve_login_identifier
 from app.accounts.first_login_service import run_account_first_login
 from app.accounts.mint_mobile_session import mint_mobile_session
@@ -41,10 +41,11 @@ from app.api.schemas import (
     AccountSessionUpdate,
     AccountTotpOut,
     CookiesImportOut,
+    DeviceFingerprintImportOut,
     FirstLoginOut,
     MintMobileSessionOut,
 )
-from app.db import Account, AccountStatus, DailyStat, Proxy
+from app.db import Account, AccountStatus, DailyStat, Platform, Proxy
 from app.geo.country_codes import normalize_country_code
 from app.geo.timezone_normalize import (
     is_placeholder_timezone,
@@ -55,7 +56,17 @@ from app.geo.timezone_normalize import (
 router = APIRouter(prefix="/api/accounts", tags=["accounts"], dependencies=[AuthDep])
 
 
-def _account_session_fields(username: str, db_session_id: str | None):
+def _account_session_fields(username: str, db_session_id: str | None, platform: str = "instagram"):
+    if platform in ("youtube", "tiktok"):
+        from app.accounts.cookie_formats import studio_session_ready
+
+        path = playwright_state_path(username)
+        file_exists = path.exists()
+        updated_at = None
+        if file_exists:
+            updated_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+        source = "playwright" if studio_session_ready(username, platform) else "none"
+        return file_exists, updated_at, source
     path = session_path(username)
     file_exists = path.exists()
     updated_at = None
@@ -73,6 +84,13 @@ def _account_local_today(account: Account) -> str:
     except Exception:
         tz = ZoneInfo("UTC")
     return datetime.now(tz).date().isoformat()
+
+
+def _account_platform_value(account: Account) -> str:
+    value = getattr(account, "platform", None)
+    if hasattr(value, "value"):
+        return value.value
+    return value or "instagram"
 
 
 def _serialize(account: Account, *, db: Session) -> AccountOut:
@@ -103,6 +121,7 @@ def _serialize(account: Account, *, db: Session) -> AccountOut:
     file_exists, file_updated_at, session_source = _account_session_fields(
         account.username,
         account.session_id,
+        platform=_account_platform_value(account),
     )
 
     return AccountOut(
@@ -135,6 +154,14 @@ def _serialize(account: Account, *, db: Session) -> AccountOut:
         posts_today=posts_today,
         failures_today=failures_today,
         notes=account.notes,
+        brief=getattr(account, "brief", None) or "",
+        hold_for_review=bool(getattr(account, "hold_for_review", False)),
+        daily_spend_cap_usd=float(getattr(account, "daily_spend_cap_usd", 0) or 0),
+        platform=(
+            account.platform.value
+            if hasattr(getattr(account, "platform", None), "value")
+            else (getattr(account, "platform", None) or "instagram")
+        ),
     )
 
 
@@ -150,13 +177,17 @@ def create_account(payload: AccountIn, db: Session = Depends(get_db)) -> Account
     if proxy is None:
         raise HTTPException(status_code=400, detail=f"Proxy '{payload.proxy_label}' not found")
 
-    existing = db.scalar(select(Account).where(Account.username == payload.username))
+    platform = Platform(payload.platform)
+    existing = db.scalar(
+        select(Account).where(Account.username == payload.username, Account.platform == platform)
+    )
     if existing is not None:
         account = existing
     else:
-        account = Account(username=payload.username)
+        account = Account(username=payload.username, platform=platform)
         db.add(account)
 
+    account.platform = platform
     account.password = payload.password
     account.proxy_id = proxy.id
     if is_placeholder_timezone(payload.timezone):
@@ -206,11 +237,12 @@ def create_account(payload: AccountIn, db: Session = Depends(get_db)) -> Account
     db.commit()
     db.refresh(account)
 
-    ensure_fingerprint_and_proxy(
-        account.username,
-        country=normalize_country_code(proxy.country) or proxy.country or "US",
-        timezone_id=timezone_from_proxy(proxy.timezone, proxy.country),
-    )
+    if _account_platform_value(account) == "instagram":
+        ensure_fingerprint_and_proxy(
+            account.username,
+            country=normalize_country_code(proxy.country) or proxy.country or "US",
+            timezone_id=timezone_from_proxy(proxy.timezone, proxy.country),
+        )
 
     return _serialize(account, db=db)
 
@@ -234,11 +266,12 @@ def update_account_proxy(
     db.commit()
     db.refresh(account)
 
-    ensure_fingerprint_and_proxy(
-        account.username,
-        country=normalize_country_code(proxy.country) or proxy.country or "US",
-        timezone_id=account.timezone,
-    )
+    if _account_platform_value(account) == "instagram":
+        ensure_fingerprint_and_proxy(
+            account.username,
+            country=normalize_country_code(proxy.country) or proxy.country or "US",
+            timezone_id=account.timezone,
+        )
 
     return _serialize(account, db=db)
 
@@ -338,18 +371,28 @@ def get_account_session(username: str, db: Session = Depends(get_db)) -> Account
 
 
 @router.get("/{username}/cookies/export")
-def export_account_cookies(username: str, db: Session = Depends(get_db)) -> FileResponse:
+def export_account_cookies(
+    username: str,
+    format: str = Query(default="json"),
+    db: Session = Depends(get_db),
+) -> FileResponse:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
         raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+    as_txt = (format or "json").strip().lower() == "txt"
     try:
-        export_path = write_dolphin_cookies_export(username, db_session_id=account.session_id)
+        export_path = write_dolphin_cookies_export(
+            username,
+            db_session_id=account.session_id,
+            as_txt=as_txt,
+            platform=_account_platform_value(account),
+        )
     except CookieFormatError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return FileResponse(
         path=export_path,
-        media_type="application/json",
-        filename=f"cookies_{username}.json",
+        media_type="text/plain" if as_txt else "application/json",
+        filename=f"cookies_{username}.txt" if as_txt else f"cookies_{username}.json",
     )
 
 
@@ -373,7 +416,11 @@ def export_login_debug_screenshot(username: str, db: Session = Depends(get_db)) 
 
 
 @router.get("/{username}/playwright-state")
-def export_playwright_state(username: str, db: Session = Depends(get_db)) -> FileResponse:
+def export_playwright_state(
+    username: str,
+    format: str = Query(default="json"),
+    db: Session = Depends(get_db),
+) -> FileResponse:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
         raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
@@ -381,17 +428,22 @@ def export_playwright_state(username: str, db: Session = Depends(get_db)) -> Fil
     if not path.exists():
         raise HTTPException(
             status_code=404,
-            detail="Playwright state.json не найден — сначала выполните автовход",
+            detail="Playwright state.json не найден — импортируйте cookies или сохраните сессию в браузере",
         )
+    as_txt = (format or "json").strip().lower() == "txt"
     return FileResponse(
         path=path,
-        media_type="application/json",
-        filename=f"state_{username}.json",
+        media_type="text/plain" if as_txt else "application/json",
+        filename=f"state_{username}.txt" if as_txt else f"state_{username}.json",
     )
 
 
 @router.get("/{username}/device-fingerprint")
-def export_device_fingerprint(username: str, db: Session = Depends(get_db)) -> FileResponse:
+def export_device_fingerprint(
+    username: str,
+    format: str = Query(default="json"),
+    db: Session = Depends(get_db),
+) -> FileResponse:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
         raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
@@ -403,11 +455,38 @@ def export_device_fingerprint(username: str, db: Session = Depends(get_db)) -> F
                 status_code=404,
                 detail="Device fingerprint не найден для этого аккаунта",
             )
+    as_txt = (format or "json").strip().lower() == "txt"
     return FileResponse(
         path=path,
-        media_type="application/json",
-        filename=f"device_{username}.json",
+        media_type="text/plain" if as_txt else "application/json",
+        filename=f"device_{username}.txt" if as_txt else f"device_{username}.json",
     )
+
+
+@router.post("/{username}/device-fingerprint", response_model=DeviceFingerprintImportOut)
+async def import_device_fingerprint(
+    username: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> DeviceFingerprintImportOut:
+    account = db.scalar(select(Account).where(Account.username == username))
+    if account is None:
+        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Файл пуст")
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="Некорректный JSON") from exc
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="ожидается JSON-объект fingerprint")
+    try:
+        fp = DeviceFingerprint.from_dict(data)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"некорректный fingerprint: {exc}") from exc
+    save_fingerprint(username, fp)
+    return DeviceFingerprintImportOut(username=username, saved=True)
 
 
 @router.post("/{username}/cookies/import", response_model=CookiesImportOut)
@@ -430,17 +509,18 @@ async def import_account_cookies(
         raise HTTPException(status_code=400, detail="Некорректный JSON") from exc
 
     try:
-        result = import_cookies_data(username, data)
+        result = import_cookies_data(username, data, platform=_account_platform_value(account))
     except CookieFormatError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    account.session_id = result.session_id
+    if result.session_id:
+        account.session_id = result.session_id
     db.commit()
 
     return CookiesImportOut(
         format=result.format,
         session_id=result.session_id,
-        session_id_imported=True,
+        session_id_imported=bool(result.session_id),
         playwright_state_saved=result.playwright_state_saved,
         session_file_cleared=result.session_file_cleared,
     )
@@ -494,6 +574,11 @@ def account_first_login(
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
         raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+    if _account_platform_value(account) != "instagram":
+        raise HTTPException(
+            status_code=400,
+            detail="first_login только для Instagram — YouTube и TikTok входят через cookies / браузер",
+        )
     from app.behavior.warmup_playwright import playwright_browsers_available
 
     if not playwright_browsers_available():
@@ -511,4 +596,9 @@ def account_mint_mobile_session(
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
         raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+    if _account_platform_value(account) != "instagram":
+        raise HTTPException(
+            status_code=400,
+            detail="mint_mobile_session только для Instagram",
+        )
     return mint_mobile_session(account, db)

@@ -341,3 +341,59 @@ def test_probe_session_auth_none_without_credentials(app_env, fingerprint, fake_
     )
     assert result.ok is False
     assert result.method == "none"
+
+
+def test_youtube_connection_ok_without_instagram_reach(db_session, make_account, monkeypatch, app_env):
+    from datetime import datetime, timezone
+
+    from app.accounts.connection_test import run_account_connection_test
+    from app.accounts.playwright_session import save_playwright_state
+    from app.db.models import Platform
+    from app.proxies.pool import HealthSnapshot
+
+    account = make_account(username="ytconn", platform=Platform.youtube)
+    save_playwright_state(
+        "ytconn",
+        {"cookies": [{"name": "SID", "value": "x", "domain": ".youtube.com"}], "origins": []},
+    )
+    snapshot = HealthSnapshot(
+        ok=True,
+        ip="1.2.3.4",
+        country="US",
+        instagram_reachable=False,
+        instagram_login_reachable=False,
+        checked_at=datetime.now(timezone.utc),
+    )
+    monkeypatch.setattr(
+        "app.accounts.connection_test.health_check_record",
+        lambda db, proxy: (True, snapshot, None),
+    )
+    out = run_account_connection_test(account, db_session)
+    assert out.overall_ok is True
+    assert out.instagram_auth.method == "playwright"
+    assert out.session_storage.session_source == "playwright"
+
+
+def test_youtube_connection_fails_without_state(db_session, make_account, monkeypatch):
+    from datetime import datetime, timezone
+
+    from app.accounts.connection_test import run_account_connection_test
+    from app.db.models import Platform
+    from app.proxies.pool import HealthSnapshot
+
+    account = make_account(username="ytnone", platform=Platform.youtube)
+    snapshot = HealthSnapshot(
+        ok=True,
+        ip="1.2.3.4",
+        country="US",
+        instagram_reachable=False,
+        instagram_login_reachable=False,
+        checked_at=datetime.now(timezone.utc),
+    )
+    monkeypatch.setattr(
+        "app.accounts.connection_test.health_check_record",
+        lambda db, proxy: (True, snapshot, None),
+    )
+    out = run_account_connection_test(account, db_session)
+    assert out.overall_ok is False
+    assert out.instagram_auth.error_code == "session_missing"

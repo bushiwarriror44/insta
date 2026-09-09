@@ -1,5 +1,6 @@
 import clsx from "clsx";
 import type { LucideIcon } from "lucide-react";
+import { Link } from "react-router-dom";
 
 interface Props {
   label: string;
@@ -7,6 +8,7 @@ interface Props {
   icon: LucideIcon;
   hint?: string;
   tone?: "default" | "success" | "warn" | "danger" | "info";
+  to?: string;
 }
 
 const TONE_BG: Record<NonNullable<Props["tone"]>, string> = {
@@ -17,9 +19,9 @@ const TONE_BG: Record<NonNullable<Props["tone"]>, string> = {
   info: "bg-sky-900/40 text-sky-300",
 };
 
-export function StatCard({ label, value, icon: Icon, hint, tone = "default" }: Props) {
-  return (
-    <div className="card p-5 flex items-start gap-4">
+export function StatCard({ label, value, icon: Icon, hint, tone = "default", to }: Props) {
+  const inner = (
+    <>
       <div className={clsx("rounded-xl p-3", TONE_BG[tone])}>
         <Icon size={22} />
       </div>
@@ -28,6 +30,18 @@ export function StatCard({ label, value, icon: Icon, hint, tone = "default" }: P
         <div className="text-2xl font-semibold tabular-nums mt-0.5">{value}</div>
         {hint && <div className="text-xs text-slate-500 mt-1">{hint}</div>}
       </div>
-    </div>
+    </>
   );
+  const className = clsx(
+    "card p-5 flex items-start gap-4",
+    to && "hover:border-brand-500/40 hover:bg-slate-900/40 transition-colors"
+  );
+  if (to) {
+    return (
+      <Link to={to} className={className} aria-label={label}>
+        {inner}
+      </Link>
+    );
+  }
+  return <div className={className}>{inner}</div>;
 }

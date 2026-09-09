@@ -84,4 +84,25 @@ describe("MediaLibraryGrid", () => {
     fireEvent.click(screen.getByRole("button", { name: /скачать zip/i }));
     expect(onDownloadArchive).toHaveBeenCalled();
   });
+
+  it("moves selection to the next video on j", () => {
+    const onSelect = vi.fn();
+    const second: VideoOut = {
+      filename: "second.mp4",
+      size_bytes: 1000,
+      modified_at: new Date().toISOString(),
+      media_type: "video",
+      duration_sec: 20,
+    };
+    render(
+      <MediaLibraryGrid
+        {...baseProps}
+        items={[items[0], second, items[1]]}
+        selectedFilename="reel.mp4"
+        onSelect={onSelect}
+      />
+    );
+    fireEvent.keyDown(window, { key: "j" });
+    expect(onSelect).toHaveBeenCalledWith(second);
+  });
 });

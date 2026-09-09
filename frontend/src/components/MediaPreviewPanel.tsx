@@ -6,6 +6,8 @@ import type { AccountOut, PostType, VideoOut } from "../api/types";
 
 const POST_TYPES: Array<{ value: PostType; label: string; media: "image" | "video" }> = [
   { value: "reel", label: "Reels", media: "video" },
+  { value: "youtube_short", label: "YouTube Shorts", media: "video" },
+  { value: "tiktok", label: "TikTok", media: "video" },
   { value: "feed_photo", label: "Фото в ленте", media: "image" },
   { value: "feed_video", label: "Видео в ленте", media: "video" },
 ];
@@ -30,7 +32,7 @@ interface Props {
   onPostTypeChange: (value: PostType) => void;
   onWhenChange: (value: string) => void;
   onCaptionChange: (value: string) => void;
-  onPublish: () => void;
+  onPublish: (meta?: { title?: string; description?: string; tags?: string }) => void;
   onDelete: () => void;
   onDownload: () => void;
 }
@@ -53,6 +55,9 @@ export function MediaPreviewPanel({
   onDownload,
 }: Props) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [tags, setTags] = useState("");
 
   useEffect(() => {
     if (!item) {
@@ -89,6 +94,7 @@ export function MediaPreviewPanel({
   }
 
   const compatibleTypes = POST_TYPES.filter((p) => p.media === item.media_type);
+  const needsCopy = postType === "youtube_short" || postType === "tiktok";
 
   return (
     <div className="space-y-4">
@@ -125,7 +131,7 @@ export function MediaPreviewPanel({
         className="space-y-3"
         onSubmit={(e) => {
           e.preventDefault();
-          onPublish();
+          onPublish(needsCopy ? { title, description, tags } : undefined);
         }}
       >
         <div>
@@ -137,7 +143,7 @@ export function MediaPreviewPanel({
           >
             {accounts.map((a) => (
               <option key={a.id} value={a.username}>
-                @{a.username} — {ACCOUNT_STATUS_LABELS[a.status] ?? a.status}
+                @{a.username} · {a.platform || "instagram"} — {ACCOUNT_STATUS_LABELS[a.status] ?? a.status}
               </option>
             ))}
           </select>
@@ -169,15 +175,46 @@ export function MediaPreviewPanel({
           </div>
           <div className="text-xs text-slate-500 mt-1">Оставьте пустым для немедленной публикации.</div>
         </div>
-        <div>
-          <label className="label">Подпись</label>
-          <textarea
-            className="input min-h-[72px]"
-            value={caption}
-            onChange={(e) => onCaptionChange(e.target.value)}
-            placeholder="Подпись (необязательно). Для Reels поддерживаются {hashtags}, {emoji}."
-          />
-        </div>
+        {needsCopy ? (
+          <>
+            <div>
+              <label className="label">Заголовок</label>
+              <input
+                className="input"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Название Shorts / TikTok"
+              />
+            </div>
+            <div>
+              <label className="label">Описание</label>
+              <textarea
+                className="input min-h-[72px]"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="label">Теги</label>
+              <input
+                className="input"
+                value={tags}
+                onChange={(e) => setTags(e.target.value)}
+                placeholder="nature, calm"
+              />
+            </div>
+          </>
+        ) : (
+          <div>
+            <label className="label">Подпись</label>
+            <textarea
+              className="input min-h-[72px]"
+              value={caption}
+              onChange={(e) => onCaptionChange(e.target.value)}
+              placeholder="Подпись (необязательно). Для Reels поддерживаются {hashtags}, {emoji}."
+            />
+          </div>
+        )}
         <div className="flex flex-wrap gap-2">
           <button
             type="button"

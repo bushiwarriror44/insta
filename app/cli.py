@@ -21,6 +21,8 @@ Enqueue a single video and run the worker::
     python -m app.cli enqueue-post --username name --video data/videos/source/clip.mp4
     python -m app.cli run-worker
 
+    python -m app.cli ask "создай прокси и аккаунт, войди, опубликуй clip.mp4"
+
 Inspect state::
 
     python -m app.cli status
@@ -61,6 +63,7 @@ from app.db import (
 from app.logging_setup import configure_logging, get_logger
 from app.proxies.pool import health_check_record, upsert_proxy
 from app.scheduler.planner import schedule_jobs
+from app.services.review import initial_job_status
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="Instagram Reels publisher CLI")
 console = Console()
@@ -353,7 +356,7 @@ def cmd_enqueue(
             source_video_path=str(video.resolve()),
             caption_template=caption_template,
             scheduled_for=scheduled_for,
-            status=PostJobStatus.queued,
+            status=initial_job_status(account),
         )
         db.add(job)
         db.commit()
@@ -418,6 +421,26 @@ def cmd_run_api(
         reload=reload,
         log_level=settings.log_level.lower(),
     )
+
+
+@app.command("ask")
+def cmd_ask(prompt: str = typer.Argument(..., help="Text instruction for the local LLM")) -> None:
+    """Send one prompt to the local LLM with browser tools (same as POST /api/assistant/run)."""
+    _bootstrap()
+    from app.assistant.chat import AssistantError, ask
+
+    with SessionLocal() as db:
+        try:
+            answer = ask(db, [{"role": "user", "content": prompt}], allow_browser=True)
+        except AssistantError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from exc
+    console.print(answer.reply)
+    if answer.asks:
+        for question in answer.asks:
+            console.print(f"  ? {question}")
+    if answer.used:
+        console.print("[dim]used[/dim]", ", ".join(answer.used))
 
 
 @app.command("provide-code")

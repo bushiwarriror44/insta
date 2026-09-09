@@ -29,6 +29,58 @@ vi.mock("../pages/Publishing", () => ({
 vi.mock("../pages/Activity", () => ({
   Activity: () => <div>ACTIVITY_PAGE</div>,
 }));
+vi.mock("../pages/Agent", () => ({
+  Agent: () => <div>AGENT_PAGE</div>,
+}));
+vi.mock("../pages/Renders", () => ({
+  Renders: () => <div>RENDERS_PAGE</div>,
+}));
+vi.mock("../pages/Calendar", () => ({
+  Calendar: () => <div>CALENDAR_PAGE</div>,
+}));
+vi.mock("../pages/Maintenance", () => ({
+  Maintenance: () => <div>MAINTENANCE_PAGE</div>,
+}));
+vi.mock("../pages/Operators", () => ({
+  Operators: () => <div>OPERATORS_PAGE</div>,
+}));
+vi.mock("../pages/Settings", () => ({
+  Settings: () => <div>SETTINGS_PAGE</div>,
+}));
+
+vi.mock("../context/ToastContext", () => ({
+  useToast: () => ({ push: vi.fn() }),
+  ToastProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
+vi.mock("../api/client", () => ({
+  api: {
+    worker: {
+      status: vi.fn().mockResolvedValue({
+        running: false,
+        ours: false,
+        pid: null,
+        seen_at: null,
+        note: "",
+      }),
+      start: vi.fn(),
+      stop: vi.fn(),
+    },
+    accounts: { list: vi.fn().mockResolvedValue([]) },
+    dashboard: vi.fn().mockResolvedValue({
+      jobs_awaiting_review: 0,
+      jobs_failed_24h: 0,
+      open_questions: 0,
+    }),
+    jobs: { list: vi.fn().mockResolvedValue([]) },
+    videos: { list: vi.fn().mockResolvedValue([]) },
+  },
+  formatApiError: (err: unknown) => String(err),
+}));
+
+vi.mock("../components/Assistant", () => ({
+  Assistant: () => <div data-testid="assistant-dock" />,
+}));
 
 function renderAt(path: string) {
   return render(
@@ -141,6 +193,54 @@ describe("App routing", () => {
     });
     renderAt("/activity");
     expect(screen.getByText("ACTIVITY_PAGE")).toBeInTheDocument();
+  });
+
+  it("renders Agent at /agent", () => {
+    useAuthMock.mockReturnValue({
+      state: { state: "open" },
+      authRequired: false,
+      logout: vi.fn(),
+      login: vi.fn(),
+      retryBootstrap: vi.fn(),
+    });
+    renderAt("/agent");
+    expect(screen.getByText("AGENT_PAGE")).toBeInTheDocument();
+  });
+
+  it("renders Calendar at /calendar", () => {
+    useAuthMock.mockReturnValue({
+      state: { state: "open" },
+      authRequired: false,
+      logout: vi.fn(),
+      login: vi.fn(),
+      retryBootstrap: vi.fn(),
+    });
+    renderAt("/calendar");
+    expect(screen.getByText("CALENDAR_PAGE")).toBeInTheDocument();
+  });
+
+  it("renders Maintenance at /maintenance", () => {
+    useAuthMock.mockReturnValue({
+      state: { state: "open" },
+      authRequired: false,
+      logout: vi.fn(),
+      login: vi.fn(),
+      retryBootstrap: vi.fn(),
+    });
+    renderAt("/maintenance");
+    expect(screen.getByText("MAINTENANCE_PAGE")).toBeInTheDocument();
+  });
+
+  it("renders Renders at /renders", () => {
+    useAuthMock.mockReturnValue({
+      state: { state: "open" },
+      authRequired: false,
+      logout: vi.fn(),
+      login: vi.fn(),
+      retryBootstrap: vi.fn(),
+    });
+    renderAt("/renders");
+    expect(screen.getByText("RENDERS_PAGE")).toBeInTheDocument();
   });
 
   it("redirects unknown routes to dashboard when authed", () => {

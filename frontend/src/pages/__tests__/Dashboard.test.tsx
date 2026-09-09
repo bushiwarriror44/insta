@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ToastProvider } from "../../context/ToastContext";
@@ -48,9 +49,11 @@ afterEach(() => {
 
 function renderDashboard() {
   return render(
-    <ToastProvider>
-      <Dashboard />
-    </ToastProvider>
+    <MemoryRouter>
+      <ToastProvider>
+        <Dashboard />
+      </ToastProvider>
+    </MemoryRouter>
   );
 }
 
@@ -109,6 +112,56 @@ describe("Dashboard page", () => {
     expect(screen.getByText("challenge")).toBeInTheDocument();
     expect(screen.getByText("code requested")).toBeInTheDocument();
     expect(screen.getAllByText(/сбои/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByRole("link", { name: /challenge/i })).toHaveAttribute(
+      "href",
+      "/accounts?username=alice"
+    );
+    expect(
+      screen.getAllByRole("link", { name: /@alice/ }).some((el) =>
+        el.getAttribute("href")?.includes("/accounts?username=alice")
+      )
+    ).toBe(true);
+  });
+
+  it("links an event with account id but no username to the account row", async () => {
+    apiMock.dashboard.mockResolvedValue(
+      summary({
+        recent_events: [
+          {
+            id: 8,
+            account_id: 10,
+            account_username: null,
+            level: "error",
+            kind: "publish_failed",
+            message: "proxy timeout",
+            created_at: new Date().toISOString(),
+          },
+        ],
+      })
+    );
+    renderDashboard();
+    expect(await screen.findByRole("link", { name: /publish_failed/i })).toHaveAttribute(
+      "href",
+      "/accounts?id=10"
+    );
+  });
+
+  it("links stat cards into the matching lists", async () => {
+    apiMock.dashboard.mockResolvedValue(summary());
+    renderDashboard();
+    await screen.findByText("Активные аккаунты");
+    expect(screen.getByRole("link", { name: "Активные аккаунты" })).toHaveAttribute(
+      "href",
+      "/accounts"
+    );
+    expect(screen.getByRole("link", { name: "В очереди / В работе" })).toHaveAttribute(
+      "href",
+      "/activity?status=queued"
+    );
+    expect(screen.getByRole("link", { name: "Мёртвые задачи (всего)" })).toHaveAttribute(
+      "href",
+      "/activity?status=dead"
+    );
   });
 
   it("polls the dashboard at the configured interval", async () => {

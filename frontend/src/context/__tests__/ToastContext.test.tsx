@@ -1,10 +1,15 @@
 import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ToastProvider, useToast } from "../ToastContext";
 
 function wrapper({ children }: { children: React.ReactNode }) {
-  return <ToastProvider>{children}</ToastProvider>;
+  return (
+    <MemoryRouter>
+      <ToastProvider>{children}</ToastProvider>
+    </MemoryRouter>
+  );
 }
 
 beforeEach(() => {
@@ -60,6 +65,21 @@ describe("ToastContext", () => {
     expect(screen.getByText("first")).toBeInTheDocument();
     expect(screen.getByText("second")).toBeInTheDocument();
     expect(screen.getByText("third")).toBeInTheDocument();
+  });
+
+  it("renders an Open action that navigates", () => {
+    const { result } = renderHook(() => useToast(), { wrapper });
+    act(() => {
+      result.current.push("Публикация в очереди", "success", {
+        label: "Открыть",
+        href: "/activity",
+      });
+    });
+    expect(screen.getByRole("link", { name: "Открыть" })).toHaveAttribute("href", "/activity");
+    act(() => {
+      fireEvent.click(screen.getByRole("link", { name: "Открыть" }));
+    });
+    expect(screen.queryByText("Публикация в очереди")).not.toBeInTheDocument();
   });
 
   it("useToast throws when used outside provider", () => {

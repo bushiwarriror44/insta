@@ -8,6 +8,7 @@ import { Loader } from "../components/Loader";
 import { MediaLibraryGrid } from "../components/MediaLibraryGrid";
 import { MediaPreviewPanel } from "../components/MediaPreviewPanel";
 import { useToast } from "../context/ToastContext";
+import { useAssistantMutate } from "../lib/assistantMutate";
 import type { AccountOut, PostType, PublicationOut, VideoOut } from "../api/types";
 
 type UploadQueueItem = {
@@ -26,6 +27,8 @@ const POST_TYPE_LABELS: Record<string, string> = {
   reel: "Reels",
   feed_photo: "Фото в ленте",
   feed_video: "Видео в ленте",
+  youtube_short: "YouTube Shorts",
+  tiktok: "TikTok",
 };
 
 function basename(path: string | null) {
@@ -36,6 +39,31 @@ function basename(path: string | null) {
 function defaultPostTypeForItem(item: VideoOut): PostType {
   if (item.media_type === "image") return "feed_photo";
   return "reel";
+}
+
+function mergeLibrary(uploads: VideoOut[], generated: VideoOut[]): VideoOut[] {
+  const known = new Set(uploads.map((item) => item.filename));
+  return [...uploads, ...generated.filter((item) => !known.has(item.filename))];
+}
+
+async function fetchGeneratedVideos(): Promise<VideoOut[]> {
+  try {
+    const assets = await api.factory.assets({ kind: "video" });
+    return assets.map((asset) => ({
+      filename: asset.filename,
+      size_bytes: 0,
+      modified_at: asset.created_at,
+      media_type: "video" as const,
+      duration_sec: asset.duration_s,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function fetchLibraryMedia(): Promise<VideoOut[]> {
+  const [uploads, generated] = await Promise.all([api.videos.list(), fetchGeneratedVideos()]);
+  return mergeLibrary(uploads, generated);
 }
 
 export function Publishing() {
@@ -59,6 +87,8 @@ export function Publishing() {
   const [archiveBusy, setArchiveBusy] = useState(false);
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
+  const [generatePrompt, setGeneratePrompt] = useState("");
+  const [joinIds, setJoinIds] = useState("");
 
   const selectedItem = useMemo(
     () => media.find((m) => m.filename === selectedFilename) ?? null,
@@ -71,16 +101,19 @@ export function Publishing() {
   );
 
   const reload = useCallback(async () => {
-    const [a, m, p] = await Promise.all([
+    const [a, m, p, generated] = await Promise.all([
       api.accounts.list(),
       api.videos.list(),
       api.publications.list({ limit: 100 }),
+      fetchGeneratedVideos(),
     ]);
     setAccounts(a);
-    setMedia(m);
+    setMedia(mergeLibrary(m, generated));
     setPublications(p);
     setUsername((current) => current || defaultUsername || a[0]?.username || "");
   }, [defaultUsername]);
+
+  useAssistantMutate(reload);
 
   useEffect(() => {
     let cancelled = false;
@@ -222,8 +255,7 @@ export function Publishing() {
       }
 
       try {
-        const list = await api.videos.list();
-        setMedia(list);
+        setMedia(await fetchLibraryMedia());
       } catch (err) {
         push(formatApiError(err), "error");
       }
@@ -253,6 +285,9 @@ export function Publishing() {
     usernameOverride?: string;
     captionOverride?: string | null;
     whenOverride?: string | null;
+    title?: string;
+    description?: string;
+    tags?: string;
   }) {
     const mediaFilename = opts?.mediaFilename ?? selectedFilename;
     const account = opts?.usernameOverride ?? username;
@@ -277,17 +312,18 @@ export function Publishing() {
           : caption.trim()
             ? caption
             : null,
+        title: opts?.title || null,
+        description: opts?.description || null,
+        tags: opts?.tags || null,
         when: whenIso,
       });
-      push(whenIso ? "Публикация запланирована" : "Публикация добавлена в очередь", "success");
+      push(whenIso ? "Публикация запланирована" : "Публикация добавлена в очередь", "success", {
+        label: "Открыть",
+        href: "/activity",
+      });
       setCaption("");
       setWhenLocal("");
-      const [jobsMedia, rows] = await Promise.all([
-        api.videos.list(),
-        api.publications.list({ limit: 100 }),
-      ]);
-      setMedia(jobsMedia);
-      setPublications(rows);
+      await reload();
     } catch (err) {
       push((err as Error).message, "error");
     } finally {
@@ -317,7 +353,7 @@ export function Publishing() {
     try {
       await api.videos.remove(selectedFilename);
       push("Медиафайл удалён", "info");
-      const list = await api.videos.list();
+      const list = await fetchLibraryMedia();
       setMedia(list);
       if (list[0]) {
         selectItem(list[0]);
@@ -354,6 +390,46 @@ export function Publishing() {
           Загружайте готовые Reels, просматривайте в браузере и публикуйте в один клик.
         </p>
       </div>
+      <Card className="p-4 space-y-3">
+        <h2 className="font-medium">Сгенерировать / склеить</h2>
+        <div className="flex gap-2">
+          <input className="input" placeholder="Промпт для fal.ai" value={generatePrompt} onChange={(e) => setGeneratePrompt(e.target.value)} />
+          <button
+            className="btn-primary shrink-0"
+            disabled={!generatePrompt.trim()}
+            onClick={async () => {
+              try {
+                await api.factory.createGeneration({ prompt: generatePrompt.trim() });
+                setGeneratePrompt("");
+                push("Рендер в очереди", "success", { label: "Открыть", href: "/renders" });
+              } catch (err) {
+                push(formatApiError(err), "error");
+              }
+            }}
+          >
+            Рендер
+          </button>
+        </div>
+        <div className="flex gap-2">
+          <input className="input" placeholder="id клипов через запятую" value={joinIds} onChange={(e) => setJoinIds(e.target.value)} />
+          <button
+            className="btn-ghost shrink-0"
+            onClick={async () => {
+              const clip_ids = joinIds.split(",").map((s) => Number(s.trim())).filter(Boolean);
+              if (!clip_ids.length) return;
+              try {
+                await api.factory.createComposition({ clip_ids });
+                setJoinIds("");
+                push("Склейка в очереди", "success", { label: "Открыть", href: "/renders" });
+              } catch (err) {
+                push(formatApiError(err), "error");
+              }
+            }}
+          >
+            Склеить
+          </button>
+        </div>
+      </Card>
 
       <Card title="Загрузка в библиотеку">
         <DropZone
@@ -463,7 +539,7 @@ export function Publishing() {
             onPostTypeChange={setPostType}
             onWhenChange={setWhenLocal}
             onCaptionChange={setCaption}
-            onPublish={() => enqueuePublication()}
+            onPublish={(meta) => enqueuePublication(meta)}
             onDelete={deleteSelected}
             onDownload={downloadSelectedFile}
           />
@@ -474,69 +550,85 @@ export function Publishing() {
         {publications.length === 0 ? (
           <div className="text-sm text-slate-500">Публикаций пока нет.</div>
         ) : (
-          <div className="overflow-x-auto -mx-5">
-            <table className="table-base">
-              <thead>
-                <tr>
-                  <th>Аккаунт</th>
-                  <th>Тип</th>
-                  <th>Медиа</th>
-                  <th>Статус</th>
-                  <th>Ошибка</th>
-                  <th>Просмотры / Воспроизведения</th>
-                  <th>Лайки</th>
-                  <th>Комментарии</th>
-                  <th>Сохранения / Репосты</th>
-                  <th>Последняя статистика</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {publications.map((row) => (
-                  <tr key={row.id} className="hover:bg-slate-900/40">
-                    <td className="font-medium">@{row.account_username ?? row.account_id}</td>
-                    <td className="text-slate-300">{POST_TYPE_LABELS[row.post_type ?? "reel"] ?? row.post_type ?? "reel"}</td>
-                    <td className="text-xs text-slate-400">
-                      <div>{row.media_code ?? row.media_id ?? "-"}</div>
-                      <div className="text-slate-500">{basename(row.final_media_path)}</div>
-                    </td>
-                    <td className={row.success ? "text-emerald-300" : "text-rose-300"}>
-                      {row.success ? "опубликовано" : "ошибка"}
-                    </td>
-                    <td className="text-xs text-rose-300 max-w-[200px] break-words">
-                      {row.error ?? "—"}
-                    </td>
-                    <td className="tabular-nums">
+          <table className="table-base">
+            <colgroup>
+              <col className="w-[12%]" />
+              <col className="w-[10%]" />
+              <col className="w-[16%]" />
+              <col className="w-[10%]" />
+              <col className="w-[16%]" />
+              <col className="w-[22%]" />
+              <col className="w-[14%]" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Аккаунт</th>
+                <th>Тип</th>
+                <th>Медиа</th>
+                <th>Статус</th>
+                <th>Ошибка</th>
+                <th>Статистика</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {publications.map((row) => (
+                <tr key={row.id} className="hover:bg-slate-900/40">
+                  <td className="font-medium truncate" title={`@${row.account_username ?? row.account_id}`}>
+                    @{row.account_username ?? row.account_id}
+                  </td>
+                  <td className="text-slate-300 truncate">
+                    {POST_TYPE_LABELS[row.post_type ?? "reel"] ?? row.post_type ?? "reel"}
+                  </td>
+                  <td className="text-[11px] text-slate-400 min-w-0">
+                    <div className="truncate" title={row.media_code ?? row.media_id ?? "-"}>
+                      {row.media_code ?? row.media_id ?? "-"}
+                    </div>
+                    <div className="truncate text-slate-500" title={basename(row.final_media_path)}>
+                      {basename(row.final_media_path)}
+                    </div>
+                  </td>
+                  <td className={row.success ? "text-emerald-300" : "text-rose-300"}>
+                    {row.success ? "опубликовано" : "ошибка"}
+                  </td>
+                  <td className="text-[11px] text-rose-300 truncate" title={row.error ?? "—"}>
+                    {row.error ?? "—"}
+                  </td>
+                  <td className="tabular-nums text-[11px] text-slate-300">
+                    <div>
                       {count(row.view_count)} / {count(row.play_count)}
-                    </td>
-                    <td className="tabular-nums">{count(row.like_count)}</td>
-                    <td className="tabular-nums">{count(row.comment_count)}</td>
-                    <td className="tabular-nums">
+                    </div>
+                    <div>{count(row.like_count)}</div>
+                    <div>{count(row.comment_count)}</div>
+                    <div>
                       {count(row.save_count)} / {count(row.share_count)}
-                    </td>
-                    <td className="text-xs text-slate-400">
+                    </div>
+                    <div
+                      className="truncate text-slate-500"
+                      title={row.last_stats_at ? new Date(row.last_stats_at).toLocaleString("ru-RU") : "-"}
+                    >
                       {row.last_stats_at ? new Date(row.last_stats_at).toLocaleString("ru-RU") : "-"}
-                    </td>
-                    <td className="text-right">
-                      <button
-                        type="button"
-                        className="btn-ghost text-xs"
-                        disabled={!row.success || !row.media_id || refreshingId === row.id}
-                        onClick={() => refreshStats(row)}
-                      >
-                        {refreshingId === row.id ? (
-                          <RefreshCw size={14} className="animate-spin" />
-                        ) : (
-                          <BarChart3 size={14} />
-                        )}
-                        Обновить статистику
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    </div>
+                  </td>
+                  <td className="text-right">
+                    <button
+                      type="button"
+                      className="btn-ghost btn-compact"
+                      aria-label="Обновить статистику"
+                      disabled={!row.success || !row.media_id || refreshingId === row.id}
+                      onClick={() => refreshStats(row)}
+                    >
+                      {refreshingId === row.id ? (
+                        <RefreshCw size={14} className="animate-spin" />
+                      ) : (
+                        <BarChart3 size={14} />
+                      )}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </Card>
     </div>

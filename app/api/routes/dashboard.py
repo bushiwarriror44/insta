@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import AuthDep, get_db
 from app.api.schemas import DailyStatRow, DashboardSummary, EventOut
-from app.db import Account, AccountStatus, DailyStat, Event, PostJob, PostJobStatus, Proxy
+from app.db import Account, AccountStatus, Clarification, DailyStat, Event, PostJob, PostJobStatus, Proxy
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"], dependencies=[AuthDep])
 
@@ -39,6 +39,30 @@ def dashboard(db: Session = Depends(get_db)) -> DashboardSummary:
         db.scalar(select(func.count(PostJob.id)).where(PostJob.status == PostJobStatus.dead)) or 0
     )
     risk_since = datetime.now(timezone.utc) - timedelta(hours=24)
+    jobs_awaiting_review = (
+        db.scalar(
+            select(func.count(PostJob.id)).where(PostJob.status == PostJobStatus.awaiting_review)
+        )
+        or 0
+    )
+    jobs_failed_24h = (
+        db.scalar(
+            select(func.count(PostJob.id)).where(
+                PostJob.status.in_([PostJobStatus.failed, PostJobStatus.dead]),
+                PostJob.finished_at >= risk_since,
+            )
+        )
+        or 0
+    )
+    open_questions = (
+        db.scalar(
+            select(func.count(Clarification.id)).where(
+                Clarification.answer.is_(None),
+                Clarification.dismissed.is_(False),
+            )
+        )
+        or 0
+    )
     risk_signals_24h = (
         db.scalar(
             select(func.count(Event.id)).where(
@@ -49,7 +73,7 @@ def dashboard(db: Session = Depends(get_db)) -> DashboardSummary:
         or 0
     )
     quarantined_accounts = (
-        db.scalar(select(func.count(Account.id)).where(Account.status == AccountStatus.paused)) or 0
+        db.scalar(select(func.count(Account.id)).where(Account.status == AccountStatus.cooldown)) or 0
     )
 
     today = datetime.now(timezone.utc).date().isoformat()
@@ -107,6 +131,9 @@ def dashboard(db: Session = Depends(get_db)) -> DashboardSummary:
         jobs_running=jobs_running,
         jobs_done_today=jobs_done_today,
         jobs_dead_total=jobs_dead_total,
+        jobs_awaiting_review=jobs_awaiting_review,
+        jobs_failed_24h=jobs_failed_24h,
+        open_questions=open_questions,
         risk_signals_24h=risk_signals_24h,
         quarantined_accounts=quarantined_accounts,
         daily_stats=daily_rows,

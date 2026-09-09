@@ -83,6 +83,9 @@ def test_dashboard_open_mode_returns_summary(api_client):
         "jobs_running",
         "daily_stats",
         "recent_events",
+        "jobs_awaiting_review",
+        "jobs_failed_24h",
+        "open_questions",
     ):
         assert key in body
 
@@ -687,6 +690,12 @@ def test_accounts_export_cookies(api_client, app_env):
     assert isinstance(body, list)
     assert body[0]["name"] == "sessionid"
 
+    res = api_client.get("/api/accounts/expuser/cookies/export?format=txt")
+    assert res.status_code == 200, res.text
+    assert res.headers["content-type"].startswith("text/plain")
+    disposition = res.headers.get("content-disposition", "")
+    assert "cookies_expuser.txt" in disposition
+
 
 def test_accounts_export_cookies_404(api_client):
     _create_account(api_client, "noexp", "px-noexp")
@@ -776,6 +785,39 @@ def test_accounts_export_device_fingerprint(api_client, app_env):
     res = api_client.get("/api/accounts/fpexp/device-fingerprint")
     assert res.status_code == 200, res.text
     assert "application/json" in res.headers["content-type"]
+
+
+def test_accounts_export_device_fingerprint_txt(api_client, app_env):
+    from app.accounts.device_factory import generate_fingerprint, save_fingerprint
+
+    _create_account(api_client, "fptxt", "px-fptxt")
+    save_fingerprint("fptxt", generate_fingerprint(country="US"))
+    res = api_client.get("/api/accounts/fptxt/device-fingerprint?format=txt")
+    assert res.status_code == 200, res.text
+    assert res.headers["content-type"].startswith("text/plain")
+    disposition = res.headers.get("content-disposition", "")
+    assert "device_fptxt.txt" in disposition
+
+
+def test_accounts_import_device_fingerprint(api_client, app_env):
+    import json
+
+    from app.accounts.device_factory import generate_fingerprint, load_fingerprint
+
+    _create_account(api_client, "fpimp", "px-fpimp")
+    fp = generate_fingerprint(country="US")
+    payload = json.dumps(fp.to_dict()).encode("utf-8")
+    res = api_client.post(
+        "/api/accounts/fpimp/device-fingerprint",
+        files={"file": ("device.json", io.BytesIO(payload), "application/json")},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["username"] == "fpimp"
+    assert body["saved"] is True
+    loaded = load_fingerprint("fpimp")
+    assert loaded is not None
+    assert loaded.user_agent == fp.user_agent
 
 
 def test_accounts_export_device_fingerprint_404(api_client):
@@ -1093,6 +1135,40 @@ def test_video_upload_list_and_enqueue(api_client, app_env):
     res = api_client.post(f"/api/jobs/{job['id']}/cancel")
     assert res.status_code == 200
     assert res.json()["status"] == "cancelled"
+
+
+def test_enqueue_job_hold_for_review_awaits(api_client, app_env, make_account):
+    make_account(username="held", hold_for_review=True)
+    filename = "held.mp4"
+    (app_env.video_source_dir / filename).write_bytes(b"\x00" * 64)
+    res = api_client.post(
+        "/api/jobs",
+        json={"username": "held", "media_filename": filename, "post_type": "reel"},
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["status"] == "awaiting_review"
+
+
+def test_enqueue_job_without_hold_is_queued(api_client, app_env, make_account):
+    make_account(username="freehold")
+    filename = "freehold.mp4"
+    (app_env.video_source_dir / filename).write_bytes(b"\x00" * 64)
+    res = api_client.post(
+        "/api/jobs",
+        json={"username": "freehold", "media_filename": filename, "post_type": "reel"},
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["status"] == "queued"
+
+
+def test_dashboard_quarantine_counts_cooldown_not_paused(api_client, make_account):
+    from app.db import AccountStatus
+
+    make_account(username="coolq", status=AccountStatus.cooldown)
+    make_account(username="pausedq", status=AccountStatus.paused)
+    res = api_client.get("/api/dashboard")
+    assert res.status_code == 200
+    assert res.json()["quarantined_accounts"] == 1
 
 
 def test_image_upload_and_feed_photo_enqueue(api_client):
@@ -1501,3 +1577,26 @@ def test_browser_routes_start_status_code_save_stop(api_client, app_env, monkeyp
 
     stop = api_client.delete("/api/accounts/browser_user/browser/stop")
     assert stop.status_code == 200
+
+
+def test_factory_plan_endpoint_queues_job(api_client, make_account):
+    account = make_account()
+    res = api_client.post(f"/api/accounts/{account.id}/plan", json={"count": 3})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "queued"
+    assert body["count"] == 3
+
+
+def test_youtube_account_create_without_password(api_client):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-yt", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    res = api_client.post(
+        "/api/accounts",
+        json={"username": "ytchan", "platform": "youtube", "proxy_label": "px-yt"},
+    )
+    assert res.status_code == 201
+    assert res.json()["platform"] == "youtube"
+

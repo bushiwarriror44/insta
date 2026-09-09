@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -14,6 +15,7 @@ from app.config import settings
 from app.db import Account, DiagnosticRun, PostJob, PostJobStatus, PostType
 from app.api.routes.diagnostics import _to_run_out
 from app.api.routes.videos import media_type_for_name
+from app.services.review import initial_job_status
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"], dependencies=[AuthDep])
 
@@ -27,6 +29,9 @@ def _serialize(job: PostJob, *, db: Session) -> JobOut:
         source_video_path=job.source_video_path,
         post_type=(job.post_type.value if hasattr(job.post_type, "value") else (job.post_type or "reel")),
         caption_template=job.caption_template,
+        title=getattr(job, "title", "") or "",
+        description=getattr(job, "description", None) or "",
+        tags=getattr(job, "tags", None) or "",
         scheduled_for=job.scheduled_for,
         status=job.status.value,
         attempts=job.attempts,
@@ -74,7 +79,7 @@ def enqueue_job(payload: EnqueueIn, db: Session = Depends(get_db)) -> JobOut:
 
     if payload.post_type == "feed_photo" and media_type != "image":
         raise HTTPException(status_code=400, detail="feed_photo requires an image file")
-    if payload.post_type in ("reel", "feed_video") and media_type != "video":
+    if payload.post_type in ("reel", "feed_video", "youtube_short", "tiktok") and media_type != "video":
         raise HTTPException(status_code=400, detail=f"{payload.post_type} requires a video file")
 
     src = settings.video_source_dir / filename
@@ -90,8 +95,12 @@ def enqueue_job(payload: EnqueueIn, db: Session = Depends(get_db)) -> JobOut:
         source_video_path=str(src.resolve()),
         post_type=PostType(payload.post_type),
         caption_template=payload.caption_template,
+        title=payload.title or "",
+        description=payload.description or "",
+        tags=payload.tags or "",
+        privacy=payload.privacy or "public",
         scheduled_for=when,
-        status=PostJobStatus.queued,
+        status=initial_job_status(account),
     )
     db.add(job)
     db.commit()
@@ -104,9 +113,63 @@ def cancel_job(job_id: int, db: Session = Depends(get_db)) -> JobOut:
     job = db.get(PostJob, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    if job.status not in (PostJobStatus.queued, PostJobStatus.failed):
+    if job.status not in (PostJobStatus.queued, PostJobStatus.failed, PostJobStatus.awaiting_review):
         raise HTTPException(status_code=400, detail=f"Cannot cancel job in status '{job.status.value}'")
     job.status = PostJobStatus.cancelled
+    db.commit()
+    db.refresh(job)
+    return _serialize(job, db=db)
+
+
+@router.post("/{job_id}/approve", response_model=JobOut)
+def approve_job(job_id: int, db: Session = Depends(get_db)) -> JobOut:
+    from app.services.review import NotHeld, approve
+
+    job = db.get(PostJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    try:
+        approve(db, job)
+    except NotHeld as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _serialize(job, db=db)
+
+
+@router.post("/{job_id}/retry", response_model=JobOut)
+def retry_job(job_id: int, db: Session = Depends(get_db)) -> JobOut:
+    from app.services.retry import NotRetriable, revive
+
+    job = db.get(PostJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    try:
+        revive(job)
+    except NotRetriable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(job)
+    return _serialize(job, db=db)
+
+
+class RescheduleIn(BaseModel):
+    when: datetime
+
+
+@router.patch("/{job_id}", response_model=JobOut)
+def reschedule_job(job_id: int, payload: RescheduleIn, db: Session = Depends(get_db)) -> JobOut:
+    job = db.get(PostJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status not in (
+        PostJobStatus.queued,
+        PostJobStatus.awaiting_review,
+        PostJobStatus.failed,
+    ):
+        raise HTTPException(status_code=409, detail=f"Cannot move job in status '{job.status.value}'")
+    when = payload.when
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    job.scheduled_for = when
     db.commit()
     db.refresh(job)
     return _serialize(job, db=db)

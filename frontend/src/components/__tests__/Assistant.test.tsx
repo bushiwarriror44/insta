@@ -1,0 +1,246 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter, useLocation } from "react-router-dom";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { Assistant } from "../Assistant";
+import { ask } from "../../api/assistant";
+import { api } from "../../api/client";
+
+vi.mock("../../api/client", () => ({
+  api: {
+    accounts: { list: vi.fn().mockResolvedValue([{ username: "alice" }]) },
+  },
+  formatApiError: (err: unknown) => String(err),
+}));
+
+vi.mock("../../api/assistant", () => ({
+  ask: vi.fn(),
+}));
+
+const askMock = vi.mocked(ask);
+
+function LocationProbe() {
+  const loc = useLocation();
+  return <div data-testid="loc">{`${loc.pathname}${loc.search}`}</div>;
+}
+
+function renderDock(ui = <Assistant />, path = "/") {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <LocationProbe />
+      {ui}
+    </MemoryRouter>
+  );
+}
+
+beforeEach(() => {
+  window.localStorage.clear();
+  vi.mocked(api.accounts.list).mockResolvedValue([{ username: "alice" }]);
+  askMock.mockReset();
+  askMock.mockResolvedValue(undefined);
+});
+
+describe("Assistant", () => {
+  it("renders the prompt box", async () => {
+    renderDock();
+    expect(await screen.findByLabelText(/спросить агента/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^спросить$/i })).toBeInTheDocument();
+  });
+
+  it("sends the current page in the request", async () => {
+    const user = userEvent.setup();
+    renderDock(<Assistant />, "/accounts");
+    await user.type(await screen.findByLabelText(/спросить агента/i), "привет");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    await waitFor(() => expect(askMock).toHaveBeenCalled());
+    expect(askMock.mock.calls[0][3]).toBe("/accounts");
+  });
+
+  it("sends the account id from the query string", async () => {
+    const user = userEvent.setup();
+    renderDock(<Assistant />, "/accounts?id=7");
+    await user.type(await screen.findByLabelText(/спросить агента/i), "одобри");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    await waitFor(() => expect(askMock).toHaveBeenCalled());
+    expect(askMock.mock.calls[0][4]).toEqual({ account_id: 7, job_id: undefined });
+  });
+
+  it("remembers the conversation", async () => {
+    askMock.mockImplementation(async (_messages, onStep) => {
+      onStep({
+        type: "done",
+        reply: "ок",
+        open_url: null,
+        opened: null,
+        used: [],
+        images: [],
+      });
+    });
+    const user = userEvent.setup();
+    const { unmount } = renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "привет");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    await waitFor(() => {
+      const stored = JSON.parse(window.localStorage.getItem("assistant-dock:thread") || "[]");
+      expect(stored.length).toBeGreaterThan(0);
+    });
+    unmount();
+    renderDock();
+    expect(await screen.findByText("привет")).toBeInTheDocument();
+  });
+
+  it("asks for clarifications and sends them as the next message", async () => {
+    askMock.mockImplementationOnce(async (_messages, onStep) => {
+      onStep({ type: "ask", questions: ["какой username?"], text: "нужен логин" });
+      onStep({
+        type: "done",
+        reply: "Нужны уточнения, чтобы продолжить.",
+        open_url: null,
+        opened: null,
+        used: ["ask_operator"],
+        images: [],
+        asks: ["какой username?"],
+      });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "добавь аккаунт");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    const field = await screen.findByLabelText("какой username?");
+    await user.type(field, "alice");
+    await user.click(screen.getByRole("button", { name: /^ответить$/i }));
+    await waitFor(() => expect(askMock).toHaveBeenCalledTimes(2));
+    const followUp = askMock.mock.calls[1][0] as Array<{ role: string; content: string }>;
+    expect(followUp.at(-1)?.content).toContain("Уточнения:");
+    expect(followUp.at(-1)?.content).toContain("alice");
+  });
+
+  it("spins a sparkle while the agent is working", async () => {
+    let release!: () => void;
+    askMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve();
+        })
+    );
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "привет");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect((await screen.findAllByTestId("assistant-sparkle")).length).toBeGreaterThan(0);
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    release();
+    await waitFor(() => expect(screen.queryByTestId("assistant-sparkle")).not.toBeInTheDocument());
+  });
+
+  it("hides the dock and remembers it", async () => {
+    const onHiddenChange = vi.fn();
+    const user = userEvent.setup();
+    const { unmount } = renderDock(<Assistant onHiddenChange={onHiddenChange} />);
+    await user.click(await screen.findByRole("button", { name: /^скрыть$/i }));
+    expect(screen.getByRole("button", { name: /показать агента/i })).toBeInTheDocument();
+    expect(screen.queryByLabelText(/спросить агента/i)).not.toBeInTheDocument();
+    expect(onHiddenChange).toHaveBeenCalledWith(true);
+    expect(window.localStorage.getItem("assistant-dock:hidden")).toBe("1");
+    unmount();
+    renderDock(<Assistant onHiddenChange={onHiddenChange} />);
+    expect(screen.getByRole("button", { name: /показать агента/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /показать агента/i }));
+    expect(await screen.findByLabelText(/спросить агента/i)).toBeInTheDocument();
+    expect(window.localStorage.getItem("assistant-dock:hidden")).toBe("0");
+  });
+
+  it("refreshes lists after a successful create", async () => {
+    const onMutate = vi.fn();
+    window.addEventListener("assistant-mutate", onMutate);
+    askMock.mockImplementation(async (_messages, onStep) => {
+      onStep({
+        type: "done",
+        reply: "добавил аккаунт",
+        open_url: null,
+        opened: null,
+        used: ["create_account"],
+        images: [],
+        created: { accounts: [10], proxies: [] },
+      });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "создай");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    await waitFor(() => expect(onMutate).toHaveBeenCalled());
+    const event = onMutate.mock.calls[0][0] as CustomEvent;
+    expect(event.detail).toEqual({ accounts: [10], proxies: [] });
+    window.removeEventListener("assistant-mutate", onMutate);
+  });
+
+  it("shows tool calls and tokens while streaming", async () => {
+    let release!: () => void;
+    askMock.mockImplementation(async (_messages, onStep) => {
+      onStep({ type: "tool", text: "смотрю аккаунты" });
+      onStep({ type: "token", text: "сейчас" });
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "что есть");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent(/смотрю аккаунты/i);
+    expect(status).toHaveTextContent(/пишет/i);
+    release();
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+  });
+
+  it("sends a preset prompt from the examples list", async () => {
+    const user = userEvent.setup();
+    renderDock();
+    await user.click(await screen.findByRole("button", { name: /что можно спросить/i }));
+    await user.click(screen.getByRole("button", { name: /^открой аккаунты$/i }));
+    await waitFor(() => expect(askMock).toHaveBeenCalled());
+    const messages = askMock.mock.calls[0][0] as Array<{ role: string; content: string }>;
+    expect(messages.at(-1)?.content).toBe("открой аккаунты");
+  });
+
+  it("navigates in-place when the reply has open_url with ?id=", async () => {
+    askMock.mockImplementation(async (_messages, onStep) => {
+      onStep({
+        type: "done",
+        reply: "открыл",
+        open_url: "/accounts?id=7",
+        opened: "alice",
+        used: ["open_account"],
+        images: [],
+      });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "открой аккаунт");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    await waitFor(() => expect(screen.getByTestId("loc")).toHaveTextContent("/accounts?id=7"));
+  });
+
+  it("shows a stop_worker confirmation as clarifications", async () => {
+    askMock.mockImplementation(async (_messages, onStep) => {
+      onStep({ type: "ask", questions: ["Остановить воркер?"], text: "публикации перестанут ехать" });
+      onStep({
+        type: "done",
+        reply: "Нужны уточнения, чтобы продолжить.",
+        open_url: null,
+        opened: null,
+        used: ["stop_worker"],
+        images: [],
+        asks: ["Остановить воркер?"],
+      });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "останови воркер");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect(await screen.findByLabelText("Остановить воркер?")).toBeInTheDocument();
+    expect(screen.getAllByText(/нужны уточнения/i).length).toBeGreaterThan(0);
+  });
+});

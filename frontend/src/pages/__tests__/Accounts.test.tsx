@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ToastProvider } from "../../context/ToastContext";
@@ -21,6 +22,7 @@ const apiMock = vi.hoisted(() => ({
     exportPlaywrightState: vi.fn(),
     exportDeviceFingerprint: vi.fn(),
     importCookiesFile: vi.fn(),
+    importDeviceFingerprint: vi.fn(),
     pause: vi.fn(),
     resume: vi.fn(),
     browserStatus: vi.fn(),
@@ -40,6 +42,9 @@ const apiMock = vi.hoisted(() => ({
   diagnostics: {
     list: vi.fn(),
     get: vi.fn(),
+  },
+  factory: {
+    updateAgentSettings: vi.fn().mockResolvedValue({ hold_for_review: true }),
   },
 }));
 
@@ -131,20 +136,48 @@ beforeEach(() => {
   Object.values(apiMock.accounts).forEach((fn) => fn.mockReset());
   Object.values(apiMock.proxies).forEach((fn) => fn.mockReset());
   Object.values(apiMock.diagnostics).forEach((fn) => fn.mockReset());
+  apiMock.factory.updateAgentSettings.mockReset();
   apiMock.accounts.list.mockResolvedValue([account]);
   apiMock.proxies.list.mockResolvedValue([proxy]);
   apiMock.diagnostics.list.mockResolvedValue([]);
+  apiMock.factory.updateAgentSettings.mockResolvedValue({ hold_for_review: true });
+  window.history.replaceState(null, "", "/");
 });
 
-function renderAccounts() {
+function renderAccounts(path = "/accounts") {
   return render(
-    <ToastProvider>
-      <Accounts />
-    </ToastProvider>
+    <MemoryRouter initialEntries={[path]}>
+      <ToastProvider>
+        <Accounts />
+      </ToastProvider>
+    </MemoryRouter>
   );
 }
 
 describe("Accounts page", () => {
+  it("filters accounts from the search box", async () => {
+    apiMock.accounts.list.mockResolvedValue([
+      account,
+      { ...account, id: 11, username: "bob", platform: "youtube" },
+    ]);
+    renderAccounts();
+    await screen.findByText("@alice");
+    fireEvent.change(screen.getByLabelText("Поиск аккаунтов"), { target: { value: "bob" } });
+    expect(screen.getByText("@bob")).toBeInTheDocument();
+    expect(screen.queryByText("@alice")).not.toBeInTheDocument();
+  });
+
+  it("toggles hold_for_review from the accounts table", async () => {
+    renderAccounts();
+    await screen.findByText("@alice");
+    fireEvent.click(screen.getByRole("checkbox", { name: /проверка/i }));
+    await waitFor(() =>
+      expect(apiMock.factory.updateAgentSettings).toHaveBeenCalledWith(10, {
+        hold_for_review: true,
+      })
+    );
+  });
+
   it("renders proxies and accounts tables after load", async () => {
     renderAccounts();
     await screen.findByText("@alice");
@@ -226,7 +259,7 @@ describe("Accounts page", () => {
     renderAccounts();
     await screen.findByText("@alice");
 
-    expect(screen.getByRole("button", { name: /Браузер Instagram/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Браузер$/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /Подключение для alice/i })).toBeDisabled();
     expect(apiMock.accounts.browserStart).not.toHaveBeenCalled();
     expect(apiMock.accounts.testConnection).not.toHaveBeenCalled();
@@ -445,6 +478,36 @@ describe("Accounts page", () => {
     );
     expect(apiMock.accounts.updateSession).not.toHaveBeenCalled();
     expect(apiMock.accounts.testConnection).not.toHaveBeenCalled();
+  });
+
+  it("imports a device fingerprint from the session modal", async () => {
+    apiMock.accounts.importDeviceFingerprint.mockResolvedValue({
+      username: "alice",
+      saved: true,
+    });
+
+    renderAccounts();
+    await screen.findByText("@alice");
+    fireEvent.click(screen.getByRole("button", { name: /сессия для alice/i }));
+    const heading = await screen.findByRole("heading", { name: /сессия · @alice/i });
+    const modal = heading.closest("div.card") as HTMLElement;
+
+    const file = new File(['{"user_agent":"ig"}'], "device_alice.json", {
+      type: "application/json",
+    });
+    const input = within(modal).getByLabelText(/импорт fingerprint из файла/i);
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /импортировать fingerprint/i })
+      ).toBeEnabled()
+    );
+    fireEvent.click(screen.getByRole("button", { name: /импортировать fingerprint/i }));
+
+    await waitFor(() =>
+      expect(apiMock.accounts.importDeviceFingerprint).toHaveBeenCalledWith("alice", file)
+    );
   });
 
   it("shows error when saving session with neither sessionid nor file", async () => {
@@ -867,7 +930,7 @@ describe("Accounts page", () => {
       screen.queryByTitle("Сессия сохранена — используется для автопостинга")
     ).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /браузер instagram/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^браузер$/i }));
     await screen.findByRole("heading", { name: /браузер · @alice/i });
 
     await waitFor(() => {
@@ -891,7 +954,7 @@ describe("Accounts page", () => {
     renderAccounts();
     await screen.findByText("@alice");
     fireEvent.click(
-      screen.getByRole("button", { name: /проверка подключения для alice/i })
+      screen.getByRole("button", { name: /^подключение для alice$/i })
     );
     await screen.findByRole("heading", { name: /подключение · @alice/i });
   });
@@ -1087,6 +1150,46 @@ describe("Accounts page", () => {
     expect(within(accountsTable).getByText(expected)).toBeInTheDocument();
   });
 
+  it("reports cookies-only results from Проверить все, not autopost readiness", async () => {
+    apiMock.accounts.testConnection.mockResolvedValue({
+      username: "alice",
+      proxy_assigned: true,
+      proxy_label: "res-de-1",
+      proxy_health: {
+        ok: true,
+        ip: "203.0.113.1",
+        geo_country: "DE",
+        instagram_reachable: true,
+        geo_mismatch: false,
+      },
+      session_storage: {
+        has_session_id: false,
+        session_file_exists: true,
+        device_file_exists: true,
+        session_source: "session_file",
+      },
+      instagram_auth: {
+        ok: true,
+        method: "session_file",
+        ig_username: null,
+        challenge: false,
+      },
+      overall_ok: true,
+      checked_at: "2026-06-29T10:00:00Z",
+      run_id: 1,
+      logs: [],
+    });
+    renderAccounts();
+    await screen.findByText("@alice");
+    fireEvent.click(screen.getByRole("button", { name: /проверить все/i }));
+    await waitFor(() =>
+      expect(apiMock.accounts.testConnection).toHaveBeenCalledWith("alice")
+    );
+    expect(apiMock.accounts.testConnection.mock.calls[0][1]).toBeUndefined();
+    expect(await screen.findByText(/проверено 1 акк\.: 1 с cookies/i)).toBeInTheDocument();
+    expect(screen.queryByText(/автопостинг/i)).not.toBeInTheDocument();
+  });
+
   it("highlights geo mismatch in proxies table", async () => {
     apiMock.proxies.list.mockResolvedValue([
       {
@@ -1122,6 +1225,97 @@ describe("Accounts page", () => {
     const cell = within(proxiesTable).getByText("US");
     expect(cell.className).not.toMatch(/amber/);
     expect(cell.closest("td")).not.toHaveAttribute("title");
+  });
+
+  it("highlights geo mismatch on the account proxy cell", async () => {
+    apiMock.accounts.list.mockResolvedValue([
+      { ...account, proxy_country: "DE", proxy_geo_country: "US" },
+    ]);
+    renderAccounts();
+    await screen.findByText("@alice");
+    const accountsTable = screen.getAllByRole("table")[1];
+    const cell = within(accountsTable).getByText("US");
+    expect(cell.className).toMatch(/amber/);
+    expect(cell.closest("td")).toHaveAttribute(
+      "title",
+      expect.stringMatching(/не совпадает/i)
+    );
+  });
+
+  it("does not wrap tables in overflow-x-auto and keeps compact actions", async () => {
+    renderAccounts();
+    await screen.findByText("@alice");
+    for (const table of screen.getAllByRole("table")) {
+      expect(table.closest(".overflow-x-auto")).toBeNull();
+    }
+    expect(screen.getByRole("button", { name: /^пауза$/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /изменить прокси res-de-1/i })
+    ).toBeInTheDocument();
+  });
+
+  it("highlights and scrolls to the account from ?username=", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    apiMock.accounts.list.mockResolvedValue([
+      account,
+      { ...account, id: 11, username: "bob", platform: "youtube" },
+    ]);
+    renderAccounts("/accounts?username=alice");
+    await screen.findByText("@alice");
+    await waitFor(() => {
+      expect(screen.queryByText("@bob")).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Поиск аккаунтов")).toHaveValue("alice");
+      expect(document.getElementById("account-10")).toHaveClass("flash-row");
+    });
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+  });
+
+  it("highlights and scrolls to accounts created by the assistant", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    renderAccounts();
+    await screen.findByText("@alice");
+    window.dispatchEvent(
+      new CustomEvent("assistant-mutate", { detail: { accounts: [10] } })
+    );
+    await waitFor(() => {
+      expect(document.getElementById("account-10")).toHaveClass("flash-row");
+    });
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+  });
+
+  it("downloads cookies when the assistant opens accounts with download query", async () => {
+    apiMock.accounts.exportCookies.mockResolvedValue(undefined);
+    renderAccounts("/accounts?id=10&download=cookies");
+    await waitFor(() =>
+      expect(apiMock.accounts.exportCookies).toHaveBeenCalledWith("alice", "json")
+    );
+  });
+
+  it("hides Instagram sessionid paste for a YouTube account", async () => {
+    apiMock.accounts.list.mockResolvedValue([{ ...account, platform: "youtube" }]);
+    renderAccounts();
+    await screen.findByText("@alice");
+    fireEvent.click(screen.getByRole("button", { name: /сессия для alice/i }));
+    await screen.findByRole("heading", { name: /сессия · @alice/i });
+    expect(screen.queryByLabelText(/cookie sessionid/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/импорт cookies из файла/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/импорт fingerprint из файла/i)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /отмена/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^подключение для alice$/i }));
+    await screen.findByRole("heading", { name: /подключение · @alice/i });
+    expect(screen.queryByRole("button", { name: /проверить mobile api/i })).not.toBeInTheDocument();
+    expect(screen.getAllByText(/cookies studio/i).length).toBeGreaterThan(0);
+  });
+
+  it("hides Instagram sessionid paste for a TikTok account", async () => {
+    apiMock.accounts.list.mockResolvedValue([{ ...account, platform: "tiktok" }]);
+    renderAccounts();
+    await screen.findByText("@alice");
+    fireEvent.click(screen.getByRole("button", { name: /сессия для alice/i }));
+    await screen.findByRole("heading", { name: /сессия · @alice/i });
+    expect(screen.queryByLabelText(/cookie sessionid/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/импорт cookies из файла/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/импорт fingerprint из файла/i)).not.toBeInTheDocument();
   });
 
   it("submits caption_profile and TOTP seed when filled", async () => {
@@ -1244,6 +1438,7 @@ describe("Accounts page", () => {
     await waitFor(() =>
       expect(apiMock.accounts.create).toHaveBeenCalledWith({
         username: "dave",
+        platform: "instagram",
         password: "pw-1",
         proxy_label: "res-de-1",
         timezone: "Europe/Berlin",

@@ -39,6 +39,15 @@ describe("DropZone", () => {
     expect(onFile).toHaveBeenCalledWith(file);
   });
 
+  it("ignores dropped files that do not match accept", () => {
+    const onFile = vi.fn();
+    const { container } = render(<DropZone onFile={onFile} />);
+    const zone = container.firstChild as HTMLElement;
+    const file = makeFile("notes.txt", "text/plain");
+    fireEvent.drop(zone, { dataTransfer: { files: [file] } });
+    expect(onFile).not.toHaveBeenCalled();
+  });
+
   it("ignores drops with no files", () => {
     const onFile = vi.fn();
     const { container } = render(<DropZone onFile={onFile} />);

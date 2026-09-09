@@ -73,6 +73,22 @@ describe("AuthContext", () => {
     expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
   });
 
+  it("shows API error when stored token probe fails with non-401, then retries", async () => {
+    window.localStorage.setItem(STORAGE_KEY, "stored-token");
+    healthMock.mockResolvedValue({ ok: true, version: "x", auth_required: true });
+    dashboardMock.mockRejectedValueOnce(new ApiError(503, "upstream down"));
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.state.state).toBe("error"));
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe("stored-token");
+
+    dashboardMock.mockResolvedValue({});
+    act(() => {
+      result.current.retryBootstrap();
+    });
+    await waitFor(() => expect(result.current.state.state).toBe("authed"));
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe("stored-token");
+  });
+
   it("resolves to 'error' when health probe throws", async () => {
     healthMock.mockRejectedValue(new Error("network down"));
     const { result } = renderHook(() => useAuth(), { wrapper });
@@ -108,6 +124,22 @@ describe("AuthContext", () => {
     expect(out).toEqual({ ok: true });
     expect(window.localStorage.getItem(STORAGE_KEY)).toBe("new-token");
     expect(result.current.state.state).toBe("authed");
+    expect(result.current.role).toBe("owner");
+  });
+
+  it("login() sets operator role from /me", async () => {
+    healthMock.mockResolvedValue({ ok: true, version: "x", auth_required: true });
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.state.state).toBe("needs-login"));
+
+    meMock.mockResolvedValue({ role: "operator", label: "night" });
+    dashboardMock.mockResolvedValueOnce({});
+    await act(async () => {
+      await result.current.login("op-pass");
+    });
+    expect(result.current.state.state).toBe("authed");
+    expect(result.current.role).toBe("operator");
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe("op-pass");
   });
 
   it("login() returns invalid when probe rejects with 401", async () => {

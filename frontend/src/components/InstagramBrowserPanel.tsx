@@ -105,8 +105,9 @@ export function InstagramBrowserPanel({
   const totpPollRef = useRef<number | null>(null);
 
   const applySession = useCallback((data: BrowserSessionOut) => {
+    if (!data) return;
     setSession(data);
-    setLogs((prev) => mergeLogs(prev, data.logs));
+    setLogs((prev) => mergeLogs(prev, data.logs ?? []));
   }, []);
 
   const refreshStatus = useCallback(async () => {

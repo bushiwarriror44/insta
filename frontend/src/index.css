@@ -42,6 +42,9 @@
   .btn-danger {
     @apply btn bg-rose-700 hover:bg-rose-600 text-white;
   }
+  .btn-compact {
+    @apply gap-1 px-1.5 py-1 text-xs;
+  }
   .input {
     @apply w-full rounded-lg bg-slate-900/70 border border-slate-700/70 px-3 py-2 text-sm
            text-slate-100 placeholder:text-slate-500 focus:border-brand-500 focus:outline-none
@@ -54,13 +57,58 @@
     @apply bg-slate-900/60 border border-slate-800 rounded-2xl shadow-lg shadow-black/20;
   }
   .table-base {
-    @apply w-full text-sm;
+    @apply w-full table-fixed text-xs;
   }
   .table-base th {
-    @apply px-4 py-2.5 text-left font-semibold text-slate-400 uppercase tracking-wider text-xs
+    @apply px-2 py-1.5 text-left font-semibold text-slate-400 text-[11px]
            border-b border-slate-800;
   }
   .table-base td {
-    @apply px-4 py-3 border-b border-slate-800/60 align-middle;
+    @apply px-2 py-1.5 border-b border-slate-800/60 align-middle;
   }
+}
+
+@keyframes row-flash {
+  0% {
+    background-color: rgb(14 165 233 / 0.18);
+    box-shadow: inset 0 0 0 2px rgb(56 189 248 / 0.7);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: inset 0 0 0 0 transparent;
+  }
+}
+
+.flash-row td {
+  animation: row-flash 2.4s ease-out;
+}
+
+@keyframes assistant-sparkle-spin {
+  from {
+    transform: rotate(0deg) scale(0.92);
+  }
+  to {
+    transform: rotate(360deg) scale(1.08);
+  }
+}
+
+@keyframes assistant-sparkle-pulse {
+  0%,
+  100% {
+    opacity: 0.7;
+    filter: drop-shadow(0 0 2px rgb(125 211 252 / 0.35));
+  }
+  50% {
+    opacity: 1;
+    filter: drop-shadow(0 0 8px rgb(125 211 252 / 0.85));
+  }
+}
+
+.assistant-sparkle {
+  animation: assistant-sparkle-spin 1.8s linear infinite, assistant-sparkle-pulse 1.2s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.assistant-sparkle-quiet {
+  animation-duration: 3.2s, 2s;
 }

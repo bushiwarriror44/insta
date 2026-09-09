@@ -70,6 +70,34 @@ class Settings(BaseSettings):
     image_compress_max_edge: int = Field(default=1920, ge=256, le=8192)
     image_compress_quality: int = Field(default=85, ge=1, le=95)
 
+    reference_dir: Path = Field(default=Path("data/reference"))
+    reference_allowed_hosts: str = Field(default="")
+    reference_max_bytes: int = Field(default=256 * 1024)
+    reference_timeout_seconds: float = Field(default=15.0)
+
+    agent_backend: str = Field(default="openai-compat")
+    agent_model: str = Field(default="qwen3:8b")
+    agent_base_url: str = Field(default="http://localhost:11434/v1")
+    agent_timeout_seconds: float = Field(default=600.0)
+    assistant_timeout_seconds: float = Field(default=180.0)
+    agent_api_key: str = Field(default="")
+    worker_autostart: bool = Field(default=True)
+    ollama_autostart: bool = Field(default=True)
+    panel_base_url: str = Field(default="http://127.0.0.1:5173")
+    screenshots_dir: Path = Field(default=Path("data/screenshots"))
+    backup_dir: Path = Field(default=Path("data/backups"))
+    backup_keep: int = Field(default=14, ge=1, le=90)
+    media_url_secret: str = Field(default="")
+    media_link_ttl_seconds: int = Field(default=3600, ge=60, le=86400)
+
+    fal_api_key: str = Field(default="")
+    fal_model: str = Field(default="fal-ai/wan-25-preview/text-to-video")
+    generation_poll_seconds: float = Field(default=5.0)
+    generation_timeout_seconds: float = Field(default=900.0)
+    daily_spend_cap_usd: float = Field(default=0.0, ge=0)
+    outbound_proxy: str = Field(default="")
+    media_dir: Path = Field(default=Path("data/videos/source"))
+
     @property
     def cors_allowed_origins(self) -> list[str]:
         raw = (self.cors_allowed_origins_raw or "").strip()
@@ -84,6 +112,10 @@ class Settings(BaseSettings):
         "playwright_dir",
         "video_source_dir",
         "video_out_dir",
+        "reference_dir",
+        "media_dir",
+        "screenshots_dir",
+        "backup_dir",
     )
     @classmethod
     def _ensure_dir(cls, v: Path) -> Path:
@@ -92,3 +124,7 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def get_settings() -> Settings:
+    return settings

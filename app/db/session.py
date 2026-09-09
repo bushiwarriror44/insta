@@ -40,8 +40,17 @@ _PENDING_COLUMNS: list[tuple[str, str, str]] = [
     ("accounts", "totp_seed", "VARCHAR(120)"),
     ("accounts", "backup_codes", "TEXT"),
     ("accounts", "login_surface", "VARCHAR(16)"),
+    ("accounts", "platform", "VARCHAR(16) DEFAULT 'instagram'"),
+    ("accounts", "brief", "TEXT DEFAULT ''"),
+    ("accounts", "hold_for_review", "BOOLEAN DEFAULT 0"),
+    ("accounts", "daily_spend_cap_usd", "FLOAT DEFAULT 0"),
     ("proxies", "last_geo_country", "VARCHAR(8)"),
     ("post_jobs", "post_type", "VARCHAR(32)"),
+    ("post_jobs", "title", "VARCHAR(255)"),
+    ("post_jobs", "description", "TEXT"),
+    ("post_jobs", "tags", "TEXT"),
+    ("post_jobs", "privacy", "VARCHAR(32)"),
+    ("post_jobs", "permalink", "TEXT"),
     ("post_logs", "post_type", "VARCHAR(32)"),
     ("post_logs", "last_stats_at", "DATETIME"),
     ("post_logs", "view_count", "INTEGER"),
@@ -74,3 +83,7 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _apply_pending_columns()
+    from app.agent.presets import seed_if_empty
+
+    with SessionLocal() as session:
+        seed_if_empty(session)

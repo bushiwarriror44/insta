@@ -34,6 +34,8 @@ os.environ.setdefault("VIDEO_OUT_DIR", str(_TEST_ROOT / "videos" / "out"))
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{_TEST_ROOT / 'init.db'}")
 os.environ.setdefault("LOG_FILE", str(_TEST_ROOT / "app.log"))
 os.environ.setdefault("LOG_LEVEL", "WARNING")
+os.environ.setdefault("WORKER_AUTOSTART", "false")
+os.environ.setdefault("OLLAMA_AUTOSTART", "false")
 os.environ.setdefault("PROXY_HEALTH_URL", "https://api.ipify.org?format=json")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "")
 os.environ.setdefault("TELEGRAM_CHAT_ID", "")
@@ -68,7 +70,8 @@ def app_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     src = tmp_path / "videos" / "source"
     out = tmp_path / "videos" / "out"
     challenges = tmp_path / "challenges"
-    for d in (sessions, devices, playwright_dir, src, out, challenges):
+    reference = tmp_path / "reference"
+    for d in (sessions, devices, playwright_dir, src, out, challenges, reference):
         d.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr(settings, "data_dir", tmp_path, raising=True)
@@ -77,7 +80,13 @@ def app_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "playwright_dir", playwright_dir, raising=True)
     monkeypatch.setattr(settings, "video_source_dir", src, raising=True)
     monkeypatch.setattr(settings, "video_out_dir", out, raising=True)
+    monkeypatch.setattr(settings, "media_dir", src, raising=True)
+    monkeypatch.setattr(settings, "reference_dir", tmp_path / "reference", raising=True)
+    monkeypatch.setattr(settings, "screenshots_dir", tmp_path / "screenshots", raising=True)
+    monkeypatch.setattr(settings, "backup_dir", tmp_path / "backups", raising=True)
     monkeypatch.setattr(settings, "log_file", tmp_path / "app.log", raising=True)
+    monkeypatch.setattr(settings, "worker_autostart", False, raising=True)
+    monkeypatch.setattr(settings, "ollama_autostart", False, raising=True)
 
     db_file = tmp_path / "test.db"
     db_url = f"sqlite:///{db_file}"
@@ -189,6 +198,7 @@ def make_account(db_session, make_proxy):
         min_gap_hours: float = 4.0,
         active_hour_start: int = 10,
         active_hour_end: int = 22,
+        **extra,
     ):
         proxy = proxy or make_proxy()
         account = Account(
@@ -201,6 +211,7 @@ def make_account(db_session, make_proxy):
             min_gap_hours=min_gap_hours,
             active_hour_start=active_hour_start,
             active_hour_end=active_hour_end,
+            **extra,
         )
         db_session.add(account)
         db_session.commit()

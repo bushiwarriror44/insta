@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 from app.db import Account, PostJob, PostJobStatus
 from app.logging_setup import get_logger
 from app.risk.profiles import classify_account_risk, profile_cap_for_account, profile_min_gap_for_account
+from app.services.review import initial_job_status
 
 logger = get_logger(__name__)
 
@@ -190,7 +191,7 @@ def schedule_jobs(
                 source_video_path=video_path,
                 caption_template=caption_template,
                 scheduled_for=slot,
-                status=PostJobStatus.queued,
+                status=initial_job_status(account),
             )
             db.add(job)
             created.append(job)

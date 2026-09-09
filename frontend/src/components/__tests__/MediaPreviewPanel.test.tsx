@@ -35,7 +35,6 @@ const account: AccountOut = {
   has_totp: false,
   has_session_id: false,
   session_file_exists: false,
-  session_file_updated_at: null,
   session_source: "none",
   posts_today: 0,
   failures_today: 0,
@@ -100,6 +99,14 @@ describe("MediaPreviewPanel", () => {
     expect(onPublish).toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /^скачать$/i }));
     expect(onDownload).toHaveBeenCalled();
+  });
+
+  it("shows title fields for YouTube Shorts", () => {
+    render(<MediaPreviewPanel item={video} postType="youtube_short" {...baseProps} />);
+    expect(screen.getByText("Заголовок")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/shorts/i)).toBeInTheDocument();
+    expect(screen.getByText("Описание")).toBeInTheDocument();
+    expect(screen.getByText("Теги")).toBeInTheDocument();
   });
 
   it("clears stale preview blob when switching files", async () => {

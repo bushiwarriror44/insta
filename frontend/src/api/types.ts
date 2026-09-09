@@ -94,6 +94,7 @@ export type LoginSurface = "mobile" | "desktop";
 export interface AccountOut {
   id: number;
   username: string;
+  platform?: "instagram" | "youtube" | "tiktok";
   login_identifier?: string | null;
   status: AccountStatus | string;
   proxy_id: number | null;
@@ -117,10 +118,13 @@ export interface AccountOut {
   login_surface?: LoginSurface | null;
   session_file_exists: boolean;
   session_file_updated_at: string | null;
-  session_source: "database" | "session_file" | "none";
+  session_source: "database" | "session_file" | "playwright" | "none";
   posts_today: number;
   failures_today: number;
   notes?: string | null;
+  brief?: string | null;
+  hold_for_review?: boolean;
+  daily_spend_cap_usd?: number;
 }
 
 export interface AccountNotesUpdate {
@@ -135,6 +139,7 @@ export interface AccountTotpOut {
 
 export interface AccountIn {
   username: string;
+  platform?: "instagram" | "youtube" | "tiktok";
   password: string;
   proxy_label: string;
   timezone?: string;
@@ -176,6 +181,11 @@ export interface CookiesImportOut {
   session_file_cleared: boolean;
 }
 
+export interface DeviceFingerprintImportOut {
+  username: string;
+  saved: boolean;
+}
+
 export interface ProxyHealthStepOut {
   ok: boolean;
   ip?: string | null;
@@ -190,12 +200,12 @@ export interface SessionStorageStepOut {
   has_session_id: boolean;
   session_file_exists: boolean;
   device_file_exists: boolean;
-  session_source: "database" | "session_file" | "none";
+  session_source: "database" | "session_file" | "playwright" | "none";
 }
 
 export interface InstagramAuthStepOut {
   ok: boolean;
-  method: "sessionid" | "session_file" | "none";
+  method: "sessionid" | "session_file" | "playwright" | "none";
   ig_username?: string | null;
   error?: string | null;
   error_code?: "session_missing" | "session_expired" | "challenge_required" | null;
@@ -311,9 +321,10 @@ export interface UploadOut {
   duration_sec?: number | null;
 }
 
-export type PostType = "reel" | "feed_photo" | "feed_video";
+export type PostType = "reel" | "feed_photo" | "feed_video" | "youtube_short" | "tiktok";
 
 export type JobStatus =
+  | "awaiting_review"
   | "queued"
   | "running"
   | "done"
@@ -328,6 +339,9 @@ export interface JobOut {
   source_video_path: string;
   post_type: PostType | string;
   caption_template: string | null;
+  title?: string;
+  description?: string;
+  tags?: string;
   scheduled_for: string;
   status: JobStatus | string;
   attempts: number;
@@ -344,6 +358,10 @@ export interface EnqueueIn {
   video_filename?: string;
   post_type?: PostType;
   caption_template?: string | null;
+  title?: string | null;
+  description?: string | null;
+  tags?: string | null;
+  privacy?: string | null;
   when?: string | null;
 }
 
@@ -397,8 +415,49 @@ export interface DashboardSummary {
   jobs_running: number;
   jobs_done_today: number;
   jobs_dead_total: number;
+  jobs_awaiting_review?: number;
+  jobs_failed_24h?: number;
+  open_questions?: number;
   risk_signals_24h: number;
   quarantined_accounts: number;
   daily_stats: DailyStatRow[];
   recent_events: EventOut[];
 }
+
+export interface WorkerProcessOut {
+  running: boolean;
+  ours: boolean;
+  pid: number | null;
+  seen_at: string | null;
+  note: string;
+}
+
+export interface MediaAssetOut {
+  id: number;
+  filename: string;
+  kind: string;
+  source: string;
+  label: string;
+  prompt: string | null;
+  duration_s: number | null;
+  width: number | null;
+  height: number | null;
+  created_at: string;
+}
+
+export interface RuntimeOut {
+  reachable: boolean;
+  base_url: string;
+  models: string[];
+  loaded: Array<{ name: string; context: number; size_bytes: number }>;
+  detail: string | null;
+  model: string;
+  context: number | null;
+}
+
+export interface BackupOut {
+  name: string;
+  bytes: number;
+  taken_at: string;
+}
+

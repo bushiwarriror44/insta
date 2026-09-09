@@ -85,13 +85,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           } catch (err) {
             if (err instanceof ApiError && err.status === 401) {
               window.localStorage.removeItem(STORAGE_KEY);
+              tokenRef.current = null;
+              setRole(null);
+              if (!cancelled) setState({ state: "needs-login" });
+              return;
             }
-            tokenRef.current = null;
-            setRole(null);
+            if (cancelled) return;
+            setState({
+              state: "error",
+              message: formatApiError(err),
+            });
+            return;
           }
-        } else {
-          tokenRef.current = null;
         }
+        tokenRef.current = null;
         if (!cancelled) setState({ state: "needs-login" });
       } catch (err) {
         if (cancelled) return;
@@ -122,6 +129,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       tokenRef.current = null;
       setRole(null);
       if (err instanceof ApiError && err.status === 401) {
+        window.localStorage.removeItem(STORAGE_KEY);
         return { ok: false, reason: "invalid", message: "Неверный пароль" };
       }
       return {

@@ -69,6 +69,7 @@ class AccountOut(BaseModel):
 
     id: int
     username: str
+    platform: str = "instagram"
     login_identifier: Optional[str] = None
     status: str
     proxy_id: Optional[int] = None
@@ -92,15 +93,19 @@ class AccountOut(BaseModel):
     login_surface: Optional[Literal["mobile", "desktop"]] = None
     session_file_exists: bool = False
     session_file_updated_at: Optional[datetime] = None
-    session_source: Literal["database", "session_file", "none"] = "none"
+    session_source: Literal["database", "session_file", "playwright", "none"] = "none"
     posts_today: int = 0
     failures_today: int = 0
     notes: Optional[str] = None
+    brief: Optional[str] = None
+    hold_for_review: bool = False
+    daily_spend_cap_usd: float = 0.0
 
 
 class AccountIn(BaseModel):
     username: str = Field(min_length=1, max_length=120)
-    password: str = Field(min_length=1, max_length=500)
+    platform: Literal["instagram", "youtube", "tiktok"] = "instagram"
+    password: str = Field(default="", max_length=500)
     proxy_label: str = Field(min_length=1)
     timezone: str = Field(default="UTC", max_length=64)
     daily_post_cap: int = Field(default=3, ge=1, le=20)
@@ -120,6 +125,8 @@ class AccountIn(BaseModel):
 
     @model_validator(mode="after")
     def _validate_business_rules(self) -> "AccountIn":
+        if self.platform == "instagram" and not (self.password or "").strip() and not self.account_line:
+            raise ValueError("password is required for Instagram accounts")
         if self.active_hour_end <= self.active_hour_start:
             raise ValueError("active_hour_end must be greater than active_hour_start")
         if self.caption_profile and self.caption_profile not in _CAPTION_PROFILE_ALLOWED:
@@ -160,6 +167,11 @@ class CookiesImportOut(BaseModel):
     session_file_cleared: bool
 
 
+class DeviceFingerprintImportOut(BaseModel):
+    username: str
+    saved: bool
+
+
 class ProxyHealthStepOut(BaseModel):
     ok: bool
     ip: Optional[str] = None
@@ -174,12 +186,12 @@ class SessionStorageStepOut(BaseModel):
     has_session_id: bool
     session_file_exists: bool
     device_file_exists: bool
-    session_source: Literal["database", "session_file", "none"]
+    session_source: Literal["database", "session_file", "playwright", "none"]
 
 
 class InstagramAuthStepOut(BaseModel):
     ok: bool
-    method: Literal["sessionid", "session_file", "none"]
+    method: Literal["sessionid", "session_file", "playwright", "none"]
     ig_username: Optional[str] = None
     error: Optional[str] = None
     error_code: Optional[
@@ -319,6 +331,9 @@ class JobOut(BaseModel):
     source_video_path: str
     post_type: str = "reel"
     caption_template: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    tags: Optional[str] = None
     scheduled_for: datetime
     status: str
     attempts: int
@@ -333,8 +348,12 @@ class EnqueueIn(BaseModel):
     username: str = Field(min_length=1)
     media_filename: Optional[str] = Field(default=None, min_length=1)
     video_filename: Optional[str] = Field(default=None, min_length=1)
-    post_type: Literal["reel", "feed_photo", "feed_video"] = "reel"
+    post_type: Literal["reel", "feed_photo", "feed_video", "youtube_short", "tiktok"] = "reel"
     caption_template: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    tags: Optional[str] = None
+    privacy: Optional[str] = None
     when: Optional[datetime] = None
 
     @model_validator(mode="after")
@@ -407,6 +426,9 @@ class DashboardSummary(BaseModel):
     jobs_running: int
     jobs_done_today: int
     jobs_dead_total: int
+    jobs_awaiting_review: int = 0
+    jobs_failed_24h: int = 0
+    open_questions: int = 0
     risk_signals_24h: int
     quarantined_accounts: int
     daily_stats: list[DailyStatRow]
@@ -461,3 +483,11 @@ class PanelEntryPathUpdateIn(BaseModel):
 class PanelMasterPasswordUpdateIn(BaseModel):
     current_password: str = Field(min_length=1)
     new_password: str = Field(min_length=8, max_length=200)
+
+
+class WorkerProcessOut(BaseModel):
+    running: bool
+    ours: bool
+    pid: Optional[int] = None
+    seen_at: Optional[datetime] = None
+    note: str = ""

@@ -185,6 +185,21 @@ def test_enqueue_post_creates_job(cli_app, db_session, make_account, app_env):
     assert job.status == PostJobStatus.queued
 
 
+def test_enqueue_post_hold_for_review(cli_app, db_session, make_account, app_env):
+    account = make_account(username="davehold", hold_for_review=True)
+    video = app_env.video_source_dir / "vhold.mp4"
+    video.write_bytes(b"x")
+
+    result = runner.invoke(
+        cli_app,
+        ["enqueue-post", "--username", "davehold", "--video", str(video)],
+    )
+    assert result.exit_code == 0, result.stdout
+    job = db_session.scalar(select(PostJob).where(PostJob.account_id == account.id))
+    assert job is not None
+    assert job.status == PostJobStatus.awaiting_review
+
+
 def test_enqueue_post_unknown_account_fails(cli_app, app_env):
     video = app_env.video_source_dir / "v.mp4"
     video.write_bytes(b"x")

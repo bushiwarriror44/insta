@@ -460,6 +460,16 @@ describe("body serialization", () => {
     expect(clickSpy).toHaveBeenCalled();
     expect(anchor.download).toBe("cookies_alice.json");
 
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify([{ name: "sessionid", value: "x" }]), {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+      })
+    );
+    await api.accounts.exportCookies("alice", "txt");
+    expect(getCall(1).url).toBe("/api/accounts/alice/cookies/export?format=txt");
+    expect(anchor.download).toBe("cookies_alice.txt");
+
     createElSpy.mockRestore();
     appendSpy.mockRestore();
     vi.unstubAllGlobals();
@@ -487,6 +497,23 @@ describe("body serialization", () => {
     expect(init.body).toBeInstanceOf(FormData);
     expect(out.format).toBe("dolphin");
     expect(out.session_id).toBe("a".repeat(40));
+  });
+
+  it("imports device fingerprint via multipart POST", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      makeResponse({
+        json: { username: "alice", saved: true },
+      })
+    );
+    const file = new File(['{"user_agent":"ig"}'], "device.json", {
+      type: "application/json",
+    });
+    const out = await api.accounts.importDeviceFingerprint("alice", file);
+    const { url, init } = getCall();
+    expect(url).toBe("/api/accounts/alice/device-fingerprint");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeInstanceOf(FormData);
+    expect(out.saved).toBe(true);
   });
 
   it("mints mobile session via POST", async () => {

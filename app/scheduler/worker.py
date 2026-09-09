@@ -67,11 +67,18 @@ from app.publisher.reels_publisher import (
     publish_feed_video,
     publish_reel,
 )
+from app.publisher.tiktok_publisher import publish_tiktok
+from app.publisher.youtube_publisher import publish_youtube_short
+from app.db.models import Platform
+from app.services.composing import claim_due_composition, run_composition
+from app.services.generation import claim_due_generation_job, run_generation_job
+from app.services.planning import claim_due_plan_job, run_plan_job
 from app.publications.stats import sync_recent_publication_stats
+from app.scheduler.heartbeat import beat
 from app.scheduler.planner import can_post_today, increment_daily_stat
 from app.risk.profiles import classify_account_risk, quarantine_retry_delay
 from app.video.caption_pool import render_caption
-from app.video.uniquifier import uniquify
+from app.video.uniquifier import random_params, uniquify
 from zoneinfo import ZoneInfo
 
 logger = get_logger(__name__)
@@ -87,7 +94,9 @@ def _install_signals() -> None:
         _SHUTDOWN = True
         logger.warning("worker.shutdown_requested")
 
-    for sig in (signal.SIGINT, signal.SIGTERM):
+    for sig in (signal.SIGINT, signal.SIGTERM, getattr(signal, "SIGBREAK", None)):
+        if sig is None:
+            continue
         try:
             signal.signal(sig, _stop)
         except (ValueError, OSError):  # pragma: no cover - non-main thread
@@ -97,8 +106,9 @@ def _install_signals() -> None:
 def _claim_due_job(db: Session, now: datetime) -> Optional[PostJob]:
     """Pick the next eligible job.
 
-    Skips jobs whose account is on an active anti-detection cooldown — those
-    rows stay ``queued`` and surface again once the cooldown window expires.
+    Skips jobs whose account is operator-paused or still on an anti-detection
+    cooldown. Those rows stay ``queued`` until pause is lifted or the cooldown
+    window expires.
     """
     base_filters = (
         (PostJob.status == PostJobStatus.queued),
@@ -107,11 +117,12 @@ def _claim_due_job(db: Session, now: datetime) -> Optional[PostJob]:
     cooldown_filter = (
         (Account.cooldown_until.is_(None)) | (Account.cooldown_until <= now)
     )
+    paused_filter = Account.status != AccountStatus.paused
 
     stmt = (
         select(PostJob)
         .join(Account, Account.id == PostJob.account_id)
-        .where(*base_filters, cooldown_filter)
+        .where(*base_filters, cooldown_filter, paused_filter)
         .order_by(PostJob.scheduled_for.asc())
         .limit(1)
         .with_for_update(skip_locked=True)
@@ -123,7 +134,7 @@ def _claim_due_job(db: Session, now: datetime) -> Optional[PostJob]:
         stmt_plain = (
             select(PostJob)
             .join(Account, Account.id == PostJob.account_id)
-            .where(*base_filters, cooldown_filter)
+            .where(*base_filters, cooldown_filter, paused_filter)
             .order_by(PostJob.scheduled_for.asc())
             .limit(1)
         )
@@ -196,6 +207,18 @@ def _account_proxy(db: Session, account: Account) -> Optional[Proxy]:
     return db.get(Proxy, account.proxy_id)
 
 
+def _account_platform(account: Account) -> Platform:
+    value = getattr(account, "platform", None)
+    if isinstance(value, Platform):
+        return value
+    if value:
+        try:
+            return Platform(value)
+        except ValueError:
+            pass
+    return Platform.instagram
+
+
 def _job_post_type(job: PostJob) -> str:
     value = getattr(job, "post_type", None)
     if hasattr(value, "value"):
@@ -260,18 +283,30 @@ def _process_job(db: Session, job: PostJob) -> None:
             diag.info("account", "Cooldown истёк — статус active")
 
     if account.status != AccountStatus.active:
-        job.status = PostJobStatus.cancelled
+        job.status = PostJobStatus.queued
         job.last_error = f"account status: {account.status.value}"
-        job.finished_at = datetime.now(timezone.utc)
         db.commit()
         log.warning("worker.account_not_active", status=account.status.value)
         diag.warn("account", f"Аккаунт неактивен: {account.status.value}")
-        _done("fail", job.last_error)
+        _done("warn", job.last_error)
+        return
+
+    now = datetime.now(timezone.utc)
+    due_in_window = _clamp_to_active_window(account, now)
+    if due_in_window > now:
+        job.status = PostJobStatus.queued
+        job.scheduled_for = due_in_window
+        db.commit()
+        log.info("worker.outside_active_hours_reschedule")
+        diag.info("hours", "Вне часов активности — перенос в окно")
+        _done("warn", "outside active hours")
         return
 
     if not can_post_today(db, account):
         job.status = PostJobStatus.queued
-        job.scheduled_for = datetime.now(timezone.utc) + timedelta(hours=2)
+        job.scheduled_for = _clamp_to_active_window(
+            account, datetime.now(timezone.utc) + timedelta(hours=2)
+        )
         db.commit()
         log.info("worker.daily_cap_reached_reschedule")
         diag.info("cap", "Дневной лимит публикаций — перенос на +2 ч")
@@ -329,26 +364,27 @@ def _process_job(db: Session, job: PostJob) -> None:
         db.commit()
         diag.info(
             "proxy",
-            f"Прокси исправен ip={snapshot.ip or '?'} instagram_ok={snapshot.instagram_reachable}",
+            f"Прокси исправен ip={snapshot.ip or '?'}",
         )
 
-    fingerprint = ensure_fingerprint_and_proxy(
-        account.username,
-        country=proxy.country or "US",
-        timezone_id=timezone_from_proxy(proxy.timezone, proxy.country),
-    )
-    rotated, fingerprint = maybe_rotate_session_uuids(
-        account.username, fingerprint, account.last_session_rotation_at
-    )
-    if rotated:
-        account.last_session_rotation_at = datetime.now(timezone.utc)
-        db.commit()
-        diag.info("session", "Обновлены UUID клиентской сессии")
-    elif account.last_session_rotation_at is None:
-        # First time we touch this account post-upgrade — stamp now so the
-        # 3–7 day clock starts ticking from a known origin.
-        account.last_session_rotation_at = datetime.now(timezone.utc)
-        db.commit()
+    platform = _account_platform(account)
+    fingerprint = None
+    if platform == Platform.instagram:
+        fingerprint = ensure_fingerprint_and_proxy(
+            account.username,
+            country=proxy.country or "US",
+            timezone_id=timezone_from_proxy(proxy.timezone, proxy.country),
+        )
+        rotated, fingerprint = maybe_rotate_session_uuids(
+            account.username, fingerprint, account.last_session_rotation_at
+        )
+        if rotated:
+            account.last_session_rotation_at = datetime.now(timezone.utc)
+            db.commit()
+            diag.info("session", "Обновлены UUID клиентской сессии")
+        elif account.last_session_rotation_at is None:
+            account.last_session_rotation_at = datetime.now(timezone.utc)
+            db.commit()
 
     src = Path(job.source_video_path)
     if not src.exists():
@@ -359,12 +395,20 @@ def _process_job(db: Session, job: PostJob) -> None:
 
     post_type = _job_post_type(job)
     diag.info("media", f"Тип публикации={post_type} файл={src.name}")
-    if post_type == PostType.reel.value:
+    uniquify_types = {PostType.reel.value, PostType.youtube_short.value, PostType.tiktok.value}
+    if post_type in uniquify_types:
         out_path = settings.video_out_dir / f"{account.username}_{job.id}_{int(time.time())}.mp4"
         try:
-            # Mirror is opt-in here; the inner ``random_params`` rolls a 5%
-            # probability so most posts stay un-flipped (preserves text overlays).
-            uniquify(src, out_path, allow_mirror=True, on_log=on_log)
+            uniquify(
+                src,
+                out_path,
+                params=random_params(
+                    allow_mirror=True,
+                    assume_tiktok_watermark=(post_type == PostType.tiktok.value),
+                ),
+                allow_mirror=True,
+                on_log=on_log,
+            )
         except Exception as exc:
             log.exception("worker.uniquify_failed")
             diag.error("uniquify", str(exc))
@@ -373,7 +417,7 @@ def _process_job(db: Session, job: PostJob) -> None:
             return
     else:
         out_path = src
-        diag.info("uniquify", "Пропущено (не reel)")
+        diag.info("uniquify", "Пропущено (не видео-ролик)")
 
     caption = render_caption(
         account_username=account.username,
@@ -403,6 +447,29 @@ def _process_job(db: Session, job: PostJob) -> None:
             result: PublishResult = publish_feed_photo(image_path=out_path, **common)
         elif post_type == PostType.feed_video.value:
             result = publish_feed_video(video_path=out_path, **common)
+        elif post_type == PostType.youtube_short.value or _account_platform(account) == Platform.youtube:
+            result = publish_youtube_short(
+                username=account.username,
+                video_path=out_path,
+                title=job.title or caption[:100],
+                description=job.description or caption,
+                tags=job.tags or "",
+                privacy=job.privacy or "public",
+                proxy_url=proxy.url,
+                fingerprint=fingerprint,
+                on_log=on_log,
+            )
+        elif post_type == PostType.tiktok.value or _account_platform(account) == Platform.tiktok:
+            result = publish_tiktok(
+                username=account.username,
+                video_path=out_path,
+                title=job.title or caption[:100],
+                description=job.description or caption,
+                tags=job.tags or "",
+                proxy_url=proxy.url,
+                fingerprint=fingerprint,
+                on_log=on_log,
+            )
         else:
             result = publish_reel(
                 video_path=out_path,
@@ -535,7 +602,8 @@ def _should_quarantine(account: Account, message: str, attempts: int) -> bool:
 
 def _enter_quarantine(db: Session, job: PostJob, account: Account, *, reason: str) -> None:
     until = quarantine_retry_delay(account)
-    account.status = AccountStatus.paused
+    account.status = AccountStatus.cooldown
+    account.cooldown_until = until
     job.status = PostJobStatus.queued
     job.last_error = f"quarantine: {reason}"
     job.next_attempt_at = until
@@ -605,7 +673,6 @@ def _maybe_sync_publication_stats(now: datetime) -> None:
 
 
 def run() -> None:
-    """Main loop: poll DB, claim job, run, sleep, repeat."""
     configure_logging()
     init_db()
     _install_signals()
@@ -616,6 +683,19 @@ def run() -> None:
         now = datetime.now(timezone.utc)
         try:
             with SessionLocal() as db:
+                beat(db, period_seconds=float(settings.worker_poll_interval_sec), note="idle")
+                plan_job = claim_due_plan_job(db, now=now)
+                if plan_job is not None:
+                    run_plan_job(db, plan_job)
+                    continue
+                gen_job = claim_due_generation_job(db, now=now)
+                if gen_job is not None:
+                    run_generation_job(db, gen_job)
+                    continue
+                composition = claim_due_composition(db, now=now)
+                if composition is not None:
+                    run_composition(db, composition)
+                    continue
                 job = _claim_due_job(db, now)
                 if job is not None:
                     _process_job(db, job)

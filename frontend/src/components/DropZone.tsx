@@ -2,6 +2,21 @@ import clsx from "clsx";
 import { CheckCircle2, UploadCloud, XCircle } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+function fileMatchesAccept(file: File, accept: string): boolean {
+  const tokens = accept
+    .split(",")
+    .map((token) => token.trim().toLowerCase())
+    .filter(Boolean);
+  if (tokens.length === 0) return true;
+  const type = file.type.toLowerCase();
+  const name = file.name.toLowerCase();
+  return tokens.some((token) => {
+    if (token.startsWith(".")) return name.endsWith(token);
+    if (token.endsWith("/*")) return type.startsWith(token.slice(0, -1));
+    return type === token;
+  });
+}
+
 interface Props {
   accept?: string;
   disabled?: boolean;
@@ -63,14 +78,15 @@ export function DropZone({
   const handleFiles = useCallback(
     (files: FileList | null) => {
       if (!files || files.length === 0) return;
-      const list = Array.from(files);
+      const list = Array.from(files).filter((file) => fileMatchesAccept(file, accept));
+      if (list.length === 0) return;
       if (staging) {
         setPendingFiles(list);
         return;
       }
       commitFiles(list);
     },
-    [commitFiles, staging]
+    [accept, commitFiles, staging]
   );
 
   const isVideo = pendingFiles[0]?.type.startsWith("video/");

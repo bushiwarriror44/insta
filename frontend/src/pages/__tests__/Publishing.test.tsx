@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AccountOut, PublicationOut, VideoOut } from "../../api/types";
@@ -18,6 +19,11 @@ const apiMock = vi.hoisted(() => ({
   },
   jobs: { enqueue: vi.fn() },
   publications: { list: vi.fn(), refreshStats: vi.fn() },
+  factory: {
+    assets: vi.fn().mockResolvedValue([]),
+    createGeneration: vi.fn(),
+    createComposition: vi.fn(),
+  },
 }));
 
 vi.mock("../../api/client", async () => {
@@ -109,16 +115,20 @@ beforeEach(() => {
   Object.values(apiMock.videos).forEach((fn) => fn.mockReset());
   Object.values(apiMock.jobs).forEach((fn) => fn.mockReset());
   Object.values(apiMock.publications).forEach((fn) => fn.mockReset());
+  Object.values(apiMock.factory).forEach((fn) => fn.mockReset());
   apiMock.accounts.list.mockResolvedValue([account]);
   apiMock.videos.list.mockResolvedValue([video, image]);
   apiMock.publications.list.mockResolvedValue([publication]);
+  apiMock.factory.assets.mockResolvedValue([]);
 });
 
 function renderPublishing() {
   return render(
-    <ToastProvider>
-      <Publishing />
-    </ToastProvider>
+    <MemoryRouter>
+      <ToastProvider>
+        <Publishing />
+      </ToastProvider>
+    </MemoryRouter>
   );
 }
 
@@ -126,8 +136,8 @@ describe("Publishing page", () => {
   it("renders media library grid and publication statistics", async () => {
     renderPublishing();
     await screen.findAllByText("clip.mp4");
-    fireEvent.click(screen.getByRole("button", { name: /^фото$/i }));
-    expect(screen.getByText("photo.jpg")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /вкладка фото/i }));
+    expect(await screen.findByText("photo.jpg")).toBeInTheDocument();
     expect(screen.getByText("100 / 120")).toBeInTheDocument();
     expect(screen.getByText("CODE")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /видео/i })).toBeInTheDocument();
@@ -255,8 +265,8 @@ describe("Publishing page", () => {
     renderPublishing();
     await screen.findAllByText("clip.mp4");
 
-    fireEvent.click(screen.getByRole("button", { name: /^фото$/i }));
-    fireEvent.click(screen.getByText("photo.jpg"));
+    fireEvent.click(screen.getByRole("button", { name: /вкладка фото/i }));
+    fireEvent.click(await screen.findByText("photo.jpg"));
     fireEvent.change(byLabel(/подпись/i), { target: { value: "hello" } });
     fireEvent.click(screen.getByRole("button", { name: /опубликовать сейчас/i }));
 
@@ -351,5 +361,63 @@ describe("Publishing page", () => {
     expect(
       screen.getByText(new Date(lastStatsAt).toLocaleString("ru-RU"))
     ).toBeInTheDocument();
+  });
+
+  it("shows generated fal assets in the library grid", async () => {
+    apiMock.factory.assets.mockResolvedValue([
+      {
+        id: 3,
+        filename: "fal-sunset.mp4",
+        kind: "video",
+        source: "fal",
+        label: "sunset",
+        prompt: "sunset",
+        duration_s: 8,
+        width: 1080,
+        height: 1920,
+        created_at: new Date().toISOString(),
+      },
+    ]);
+    renderPublishing();
+    expect(await screen.findByText("fal-sunset.mp4")).toBeInTheDocument();
+  });
+
+  it("schedules a publication and links the toast to activity", async () => {
+    apiMock.jobs.enqueue.mockResolvedValue({});
+    renderPublishing();
+    await screen.findAllByText("clip.mp4");
+    fireEvent.change(byLabel(/запланировать на/i), {
+      target: { value: "2026-09-10T12:00" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^запланировать$/i }));
+    await waitFor(() =>
+      expect(apiMock.jobs.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          username: "alice",
+          media_filename: "clip.mp4",
+          when: expect.stringMatching(/^\d{4}-/),
+        })
+      )
+    );
+    const open = await screen.findByRole("link", { name: /открыть/i });
+    expect(open).toHaveAttribute("href", "/activity");
+    expect(screen.getByText(/публикация запланирована/i)).toBeInTheDocument();
+  });
+
+  it("queues a fal render and links the toast to renders", async () => {
+    apiMock.factory.createGeneration.mockResolvedValue({});
+    renderPublishing();
+    await screen.findAllByText("clip.mp4");
+    fireEvent.change(screen.getByPlaceholderText(/промпт для fal/i), {
+      target: { value: "sunset over the sea" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^рендер$/i }));
+    await waitFor(() =>
+      expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
+        prompt: "sunset over the sea",
+      })
+    );
+    const open = await screen.findByRole("link", { name: /открыть/i });
+    expect(open).toHaveAttribute("href", "/renders");
   });
 });

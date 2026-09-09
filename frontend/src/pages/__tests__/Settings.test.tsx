@@ -101,4 +101,53 @@ describe("Settings page", () => {
       expect(apiMock.updateMasterPassword).toHaveBeenCalledWith("old", "newpass12");
     });
   });
+
+  it("catches a mismatched master-password confirmation", async () => {
+    useAuthMock.mockReturnValue({ role: "owner" });
+    renderSettings();
+    await screen.findByRole("heading", { name: /настройки/i });
+
+    fireEvent.change(screen.getByLabelText(/текущий пароль \/ admin_token/i), {
+      target: { value: "old" },
+    });
+    fireEvent.change(screen.getByLabelText(/^новый пароль$/i), {
+      target: { value: "newpass12" },
+    });
+    fireEvent.change(screen.getByLabelText(/подтверждение/i), {
+      target: { value: "newpass13" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /сменить мастер-пароль/i }));
+
+    expect(await screen.findByText(/не совпадают/i)).toBeInTheDocument();
+    expect(apiMock.updateMasterPassword).not.toHaveBeenCalled();
+  });
+
+  it("redirects to the new secret URL after saving the path", async () => {
+    useAuthMock.mockReturnValue({ role: "owner" });
+    apiMock.updateEntryPath.mockResolvedValue({
+      entry_path: "/newSecretPath",
+      master_password_set: false,
+    });
+    const replace = vi.fn();
+    vi.stubGlobal("location", {
+      ...window.location,
+      origin: "http://localhost:3000",
+      replace,
+    });
+
+    renderSettings();
+    await screen.findByRole("heading", { name: /настройки/i });
+    fireEvent.change(screen.getByLabelText(/новый путь/i), {
+      target: { value: "/newSecretPath" },
+    });
+    fireEvent.change(screen.getByLabelText(/текущий мастер-пароль/i), {
+      target: { value: "master" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /сохранить путь/i }));
+
+    await waitFor(() => {
+      expect(apiMock.updateEntryPath).toHaveBeenCalledWith("/newSecretPath", "master");
+    });
+    expect(replace).toHaveBeenCalledWith("http://localhost:3000/newSecretPath/");
+  });
 });
