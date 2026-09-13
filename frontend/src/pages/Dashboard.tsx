@@ -2,6 +2,7 @@ import {
   Activity as ActivityIcon,
   AlertTriangle,
   CheckCircle2,
+  LayoutDashboard,
   RefreshCw,
   Server,
   Users,
@@ -11,7 +12,9 @@ import { Link } from "react-router-dom";
 
 import { api, formatApiError } from "../api/client";
 import { Card } from "../components/Card";
+import { EmptyState } from "../components/EmptyState";
 import { Loader } from "../components/Loader";
+import { PageHeader } from "../components/PageHeader";
 import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
 import { useToast } from "../context/ToastContext";
@@ -95,10 +98,11 @@ export function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Панель</h1>
-        <p className="text-sm text-slate-400 mt-1">Текущее состояние аккаунтов и очереди.</p>
-      </div>
+      <PageHeader
+        icon={LayoutDashboard}
+        title="Панель"
+        description="Текущее состояние аккаунтов и очереди."
+      />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
@@ -137,7 +141,7 @@ export function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card title="Сегодня по аккаунтам" className="lg:col-span-1">
           {data.daily_stats.length === 0 ? (
-            <div className="text-sm text-slate-500">Сегодня активности пока нет.</div>
+            <EmptyState>Сегодня активности пока нет.</EmptyState>
           ) : (
             <ul className="divide-y divide-slate-800">
               {data.daily_stats.map((row) => (
@@ -170,7 +174,7 @@ export function Dashboard() {
 
         <Card title="Последние события" className="lg:col-span-2">
           {data.recent_events.length === 0 ? (
-            <div className="text-sm text-slate-500">Событий пока нет.</div>
+            <EmptyState>Событий пока нет.</EmptyState>
           ) : (
             <ul className="divide-y divide-slate-800">
               {data.recent_events.map((ev) => {

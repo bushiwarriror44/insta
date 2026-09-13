@@ -1,4 +1,19 @@
 import clsx from "clsx";
+import {
+  AlertTriangle,
+  Ban,
+  Check,
+  CheckCircle2,
+  CircleHelp,
+  Clock,
+  Loader2,
+  Pause,
+  Shield,
+  ShieldAlert,
+  Thermometer,
+  XCircle,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 const STYLES: Record<string, string> = {
   active: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30",
@@ -42,15 +57,43 @@ const LABELS: Record<string, string> = {
   bad: "Плохо",
 };
 
+const ICONS: Record<string, LucideIcon> = {
+  active: CheckCircle2,
+  paused: Pause,
+  challenge: Shield,
+  blocked: Ban,
+  cooldown: Thermometer,
+  awaiting_review: Shield,
+  queued: Clock,
+  running: Loader2,
+  done: Check,
+  failed: AlertTriangle,
+  dead: AlertTriangle,
+  cancelled: Ban,
+  info: CircleHelp,
+  warn: AlertTriangle,
+  error: XCircle,
+  critical: ShieldAlert,
+  ok: CheckCircle2,
+  bad: XCircle,
+};
+
 export function StatusBadge({ value }: { value: string }) {
   const key = value.toLowerCase();
+  const Icon = ICONS[key];
   return (
     <span
       className={clsx(
-        "inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full ring-1",
+        "inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full ring-1",
         STYLES[key] ?? "bg-slate-700/40 text-slate-300 ring-slate-600/30"
       )}
     >
+      {Icon ? (
+        <Icon
+          className={clsx("h-3 w-3 shrink-0", key === "running" && "animate-spin")}
+          aria-hidden
+        />
+      ) : null}
       {LABELS[key] ?? value}
     </span>
   );

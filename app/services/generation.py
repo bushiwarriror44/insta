@@ -136,6 +136,8 @@ def run_generation_job(
     job.status = PipelineStatus.done
     job.stage = ""
     job.queue_position = None
+    if result.backend:
+        job.backend = result.backend
     job.asset_id = asset.id
     job.cost_usd = result.cost_usd
     job.seed = result.seed if result.seed is not None else job.seed

@@ -389,7 +389,7 @@ class GenerationJob(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     prompt: Mapped[str] = mapped_column(Text)
     negative_prompt: Mapped[str] = mapped_column(Text, default="")
-    backend: Mapped[str] = mapped_column(String(32), default="fal")
+    backend: Mapped[str] = mapped_column(String(32), default="auto")
     status: Mapped[PipelineStatus] = mapped_column(
         Enum(PipelineStatus, native_enum=False), default=PipelineStatus.queued, index=True
     )

@@ -49,6 +49,8 @@ def test_handbook_file_states_local_ollama_and_that_proxies_are_not_for_chat():
     assert "YouTube Data API" in text
     assert "export_playwright_state" in text
     assert "create_render" in text
+    assert "list_render_backends" in text
+    assert "backend=auto" in text
     assert "compose" in text
     assert "awaiting_review" in text
     assert "reels-worker" in text
@@ -59,6 +61,7 @@ def test_handbook_file_states_local_ollama_and_that_proxies_are_not_for_chat():
     assert "apply_preset" in text
     assert "wait_plan" in text
     assert "geo_mismatch" in text
+    assert "account_logs" in text
     assert "Только в UI" in text
     assert "процитируй как есть" in text.lower() or "Процитируй как есть" in text
 
@@ -68,6 +71,8 @@ def test_system_prompt_requires_the_dont_know_phrase():
     assert "я не знаю ответ на этот вопрос" in SYSTEM_PROMPT
     assert "ask_operator" in SYSTEM_PROMPT
     assert "diagnose" in SYSTEM_PROMPT
+    assert "account_logs" in SYSTEM_PROMPT
+    assert "docker_logs" in SYSTEM_PROMPT
     assert "процитируй как есть" in SYSTEM_PROMPT
     assert "publish_now" in SYSTEM_PROMPT
     assert "create_render" in SYSTEM_PROMPT

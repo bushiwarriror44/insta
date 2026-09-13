@@ -6,7 +6,9 @@ import { Copy, KeyRound, Plus, ShieldOff } from "lucide-react";
 import { api, formatApiError } from "../api/client";
 import type { PanelOperatorCreatedOut, PanelOperatorOut } from "../api/types";
 import { copyTextToClipboard } from "../components/DiagnosticLogPanel";
+import { EmptyState } from "../components/EmptyState";
 import { Modal } from "../components/Modal";
+import { PageHeader } from "../components/PageHeader";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 
@@ -83,13 +85,11 @@ export function Operators() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Доступы</h1>
-        <p className="text-sm text-slate-400 mt-1">
-          Генерация и отзыв паролей операторов. Вкладка доступна только владельцу
-          (мастер-пароль / ADMIN_TOKEN).
-        </p>
-      </div>
+      <PageHeader
+        icon={KeyRound}
+        title="Доступы"
+        description="Генерация и отзыв паролей операторов. Вкладка доступна только владельцу (мастер-пароль / ADMIN_TOKEN)."
+      />
 
       <form onSubmit={onCreate} className="card p-4 flex flex-wrap items-end gap-3">
         <div className="flex-1 min-w-[200px]">
@@ -131,8 +131,8 @@ export function Operators() {
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-2 py-8 text-center text-slate-500">
-                  Операторов пока нет
+                <td colSpan={5}>
+                  <EmptyState>Операторов пока нет</EmptyState>
                 </td>
               </tr>
             ) : (

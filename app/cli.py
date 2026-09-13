@@ -294,6 +294,8 @@ def cmd_install_playwright(
 def cmd_first_login(username: str) -> None:
     """Perform a stealth Playwright first login. Use for fresh accounts."""
     _bootstrap()
+    from app.accounts.first_login_service import run_account_first_login
+
     with SessionLocal() as db:
         account = db.scalar(select(Account).where(Account.username == username))
         if account is None:
@@ -303,29 +305,14 @@ def cmd_first_login(username: str) -> None:
         if proxy is None:
             console.print(f"[red]Account {username} has no proxy assigned. First-login is blocked.[/red]")
             raise typer.Exit(code=1)
-
-    fp = ensure_fingerprint_and_proxy(
-        username,
-        country=(proxy.country or "US"),
-        timezone_id=timezone_from_proxy(proxy.timezone, proxy.country),
-    )
-
-    from app.behavior.warmup_playwright import first_login
-
-    success = first_login(
-        username=username,
-        password=account.password,
-        proxy_url=proxy.url,
-        locale=fp.locale,
-        timezone_id=timezone_from_proxy(proxy.timezone, proxy.country),
-        user_agent=None,
-        fingerprint=fp,
-        totp_seed=account.totp_seed,
-    )
-    if success.ok:
-        console.print(f"[green]First login flow completed for {username}[/green]")
-    else:
-        console.print(f"[yellow]First login finished with warnings for {username}. Check logs.[/yellow]")
+        out = run_account_first_login(account, db)
+        if out.ok:
+            console.print(f"[green]First login flow completed for {username}[/green]")
+            return
+        console.print(
+            f"[yellow]First login finished with warnings for {username}. "
+            f"{out.error or 'Check logs.'}[/yellow]"
+        )
         raise typer.Exit(code=1)
 
 

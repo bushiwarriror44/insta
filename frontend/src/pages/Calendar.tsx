@@ -1,7 +1,9 @@
+import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { api, formatApiError } from "../api/client";
+import { PageHeader } from "../components/PageHeader";
 import { StatusBadge } from "../components/StatusBadge";
 import { useToast } from "../context/ToastContext";
 import { useAssistantMutate } from "../lib/assistantMutate";
@@ -93,9 +95,10 @@ export function Calendar() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Календарь</h1>
+        <PageHeader icon={CalendarDays} title="Календарь" />
         <div className="flex items-center gap-2">
           <button type="button" className="btn-ghost text-xs" onClick={() => setWeekOffset((n) => n - 1)}>
+            <ChevronLeft className="h-4 w-4" />
             Назад
           </button>
           <span className="text-sm text-slate-400">неделя с {heading}</span>
@@ -104,6 +107,7 @@ export function Calendar() {
           </button>
           <button type="button" className="btn-ghost text-xs" onClick={() => setWeekOffset((n) => n + 1)}>
             Вперёд
+            <ChevronRight className="h-4 w-4" />
           </button>
         </div>
       </div>
@@ -132,10 +136,12 @@ export function Calendar() {
                   }}
                   onDragStart={() => setDragId(job.id)}
                   onDragEnd={() => setDragId(null)}
-                  className="rounded-lg border border-slate-800 bg-slate-900/60 p-2 text-xs cursor-grab"
+                  className="rounded-lg border border-slate-800 bg-slate-900/60 p-2 text-xs cursor-grab hover:border-slate-700 transition-colors"
                 >
                   <div className="font-medium truncate">{job.title || job.account_username}</div>
-                  <StatusBadge value={job.status} />
+                  <div className="mt-1">
+                    <StatusBadge value={job.status} />
+                  </div>
                 </div>
               ))}
             </div>

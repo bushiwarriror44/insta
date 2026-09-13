@@ -369,3 +369,19 @@ def test_install_playwright_invokes_subprocess(cli_app, monkeypatch):
     assert result.exit_code == 0
     assert called["cmd"] is not None
     assert called["cmd"][-2:] == ["install", "chromium"]
+
+
+def test_first_login_cli_uses_service(cli_app, db_session, make_account, monkeypatch):
+    from app.api.schemas import FirstLoginOut
+
+    account = make_account(username="clifl")
+    called: dict = {}
+
+    def _fake(acc, db, surface=None):
+        called["id"] = acc.id
+        return FirstLoginOut(run_id=7, ok=True, session_imported=True, logs=[])
+
+    monkeypatch.setattr("app.accounts.first_login_service.run_account_first_login", _fake)
+    result = runner.invoke(cli_app, ["first-login", "clifl"])
+    assert result.exit_code == 0, result.stdout
+    assert called["id"] == account.id

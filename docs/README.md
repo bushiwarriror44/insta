@@ -8,7 +8,7 @@
 
 ## С чего начать
 
-1. Скопировать `.env.example` → `.env`, задать `ADMIN_TOKEN` (и при необходимости ключ fal, Telegram).
+1. Скопировать `.env.example` → `.env`, задать `ADMIN_TOKEN` (и при необходимости ключи рендера, Telegram).
 2. Локально: `python -m app.cli init-db`, затем `python -m app.cli run-api` (API `:8000`) и фронтенд Vite `:5173`.
 3. Docker: `docker compose up -d --build` — UI обычно на `:3000`, API `:8000`.
 4. Открыть панель по **секретному пути** из настроек (страница «Настройки» / `python -m app.cli status`). Корень без пути отдаёт ошибку.
@@ -25,7 +25,7 @@
 | [panel.md](panel.md) | Все страницы UI, кнопки, что делает чат |
 | [accounts-sessions.md](accounts-sessions.md) | Прокси, Instagram vs Studio, автовход, VNC |
 | [publishing.md](publishing.md) | Библиотека, очередь, статусы, uniquify |
-| [generation.md](generation.md) | fal.ai, склейка, контент-план на странице «Агент» |
+| [generation.md](generation.md) | цепочка рендера (`auto` / fal / HF / pollinations / local), склейка, контент-план |
 | [assistant.md](assistant.md) | Нижний чат vs `POST /api/assistant/run` и `cli ask` |
 | [cli.md](cli.md) | Команды `python -m app.cli …` |
 | [data-and-ops.md](data-and-ops.md) | Каталоги `data/`, логи, бэкап, Telegram |

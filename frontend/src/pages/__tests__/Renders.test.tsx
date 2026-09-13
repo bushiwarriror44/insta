@@ -28,6 +28,7 @@ const apiMock = vi.hoisted(() => ({
   accounts: { list: vi.fn() },
   factory: {
     generations: vi.fn(),
+    backends: vi.fn(),
     compositions: vi.fn(),
     createGeneration: vi.fn(),
     cancelGeneration: vi.fn(),
@@ -51,6 +52,10 @@ vi.mock("../../api/client", async () => {
 function defaults() {
   apiMock.accounts.list.mockResolvedValue([]);
   apiMock.factory.generations.mockResolvedValue([queuedGen]);
+  apiMock.factory.backends.mockResolvedValue([
+    { name: "auto", healthy: true, licence: "depends", experimental: false, detail: "fal: ok" },
+    { name: "fal", healthy: true, licence: "Apache-2.0", experimental: false, detail: "" },
+  ]);
   apiMock.factory.compositions.mockResolvedValue([]);
   apiMock.factory.createGeneration.mockResolvedValue({ id: 9 });
   apiMock.factory.cancelGeneration.mockResolvedValue({ id: 9 });
@@ -91,6 +96,7 @@ describe("Renders page", () => {
     await waitFor(() =>
       expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
         prompt: "fog over ridge",
+        backend: "auto",
         account_id: undefined,
       })
     );
@@ -102,13 +108,44 @@ describe("Renders page", () => {
     apiMock.accounts.list.mockResolvedValue([account]);
     renderRenders();
     await screen.findByText("Ridge");
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "1" } });
+    fireEvent.change(screen.getByRole("combobox", { name: /аккаунт/i }), { target: { value: "1" } });
     fireEvent.change(screen.getByPlaceholderText("Промпт"), { target: { value: "city night" } });
     fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
     await waitFor(() =>
       expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
         prompt: "city night",
+        backend: "auto",
         account_id: 1,
+      })
+    );
+  });
+
+  it("queues a render with an explicit backend", async () => {
+    renderRenders();
+    await screen.findByText("Ridge");
+    fireEvent.change(screen.getByRole("combobox", { name: /бэкенд/i }), { target: { value: "fal" } });
+    fireEvent.change(screen.getByPlaceholderText("Промпт"), { target: { value: "only fal" } });
+    fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
+    await waitFor(() =>
+      expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
+        prompt: "only fal",
+        backend: "fal",
+        account_id: undefined,
+      })
+    );
+  });
+
+  it("queues a render after clicking a backend chip", async () => {
+    renderRenders();
+    await screen.findByText("Ridge");
+    fireEvent.click(screen.getByRole("button", { name: /fal/i }));
+    fireEvent.change(screen.getByPlaceholderText("Промпт"), { target: { value: "from chip" } });
+    fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
+    await waitFor(() =>
+      expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
+        prompt: "from chip",
+        backend: "fal",
+        account_id: undefined,
       })
     );
   });

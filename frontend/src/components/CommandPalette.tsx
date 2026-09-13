@@ -1,3 +1,19 @@
+import type { LucideIcon } from "lucide-react";
+import {
+  Activity as ActivityIcon,
+  Archive,
+  CalendarDays,
+  Clapperboard,
+  Film,
+  KeyRound,
+  LayoutDashboard,
+  Library,
+  MessageSquare,
+  Settings as SettingsIcon,
+  Sparkles,
+  Users,
+  Wrench,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -9,23 +25,24 @@ import type { AccountOut, JobOut, VideoOut } from "../api/types";
 interface Command {
   label: string;
   hint: string;
+  icon: LucideIcon;
   go: () => void;
 }
 
-const PAGES: { label: string; to: string }[] = [
-  { label: "Панель", to: "/" },
-  { label: "Аккаунты", to: "/accounts" },
-  { label: "Библиотека", to: "/publishing" },
-  { label: "Агент", to: "/agent" },
-  { label: "Рендеры", to: "/renders" },
-  { label: "Календарь", to: "/calendar" },
-  { label: "Активность", to: "/activity" },
-  { label: "Обслуживание", to: "/maintenance" },
+const PAGES: { label: string; to: string; icon: LucideIcon }[] = [
+  { label: "Панель", to: "/", icon: LayoutDashboard },
+  { label: "Аккаунты", to: "/accounts", icon: Users },
+  { label: "Библиотека", to: "/publishing", icon: Library },
+  { label: "Агент", to: "/agent", icon: Sparkles },
+  { label: "Рендеры", to: "/renders", icon: Clapperboard },
+  { label: "Календарь", to: "/calendar", icon: CalendarDays },
+  { label: "Активность", to: "/activity", icon: ActivityIcon },
+  { label: "Обслуживание", to: "/maintenance", icon: Wrench },
 ];
 
-const OWNER_PAGES: { label: string; to: string }[] = [
-  { label: "Доступы", to: "/operators" },
-  { label: "Настройки", to: "/settings" },
+const OWNER_PAGES: { label: string; to: string; icon: LucideIcon }[] = [
+  { label: "Доступы", to: "/operators", icon: KeyRound },
+  { label: "Настройки", to: "/settings", icon: SettingsIcon },
 ];
 
 export function CommandPalette({ onClose }: { onClose: () => void }) {
@@ -73,22 +90,26 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     const all: Command[] = pages.map((page) => ({
       label: page.label,
       hint: "страница",
+      icon: page.icon,
       go: () => navigate(page.to),
     }));
     all.push({
       label: "Спросить агента",
       hint: "чат",
+      icon: MessageSquare,
       go: () => showAssistant(),
     });
     all.push({
       label: "Снять копию базы",
       hint: "обслуживание",
+      icon: Archive,
       go: () => navigate("/maintenance"),
     });
     for (const account of accounts) {
       all.push({
         label: `@${account.username}`,
         hint: `аккаунт · ${account.platform || "instagram"}`,
+        icon: Users,
         go: () => navigate(`/accounts?username=${encodeURIComponent(account.username)}`),
       });
     }
@@ -96,6 +117,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       all.push({
         label: `#${job.id} ${job.title || job.account_username || ""}`.trim(),
         hint: `задача · ${job.status}`,
+        icon: ActivityIcon,
         go: () => navigate(`/activity?job=${job.id}`),
       });
     }
@@ -103,6 +125,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       all.push({
         label: clip.filename,
         hint: "клип",
+        icon: Film,
         go: () => navigate("/publishing"),
       });
     }
@@ -160,21 +183,27 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
           {commands.length === 0 ? (
             <li className="px-4 py-3 text-sm text-slate-500">Ничего с таким названием.</li>
           ) : (
-            commands.map((command, i) => (
-              <li key={`${command.hint}-${command.label}`}>
-                <button
-                  type="button"
-                  className={`flex w-full items-center justify-between px-4 py-2 text-left text-sm ${
-                    i === active ? "bg-slate-800/80" : "hover:bg-slate-900/60"
-                  }`}
-                  onMouseEnter={() => setActive(i)}
-                  onClick={() => run(command)}
-                >
-                  <span>{command.label}</span>
-                  <span className="text-xs text-slate-500">{command.hint}</span>
-                </button>
-              </li>
-            ))
+            commands.map((command, i) => {
+              const Icon = command.icon;
+              return (
+                <li key={`${command.hint}-${command.label}`}>
+                  <button
+                    type="button"
+                    className={`flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-sm ${
+                      i === active ? "bg-slate-800/80" : "hover:bg-slate-900/60"
+                    }`}
+                    onMouseEnter={() => setActive(i)}
+                    onClick={() => run(command)}
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      <Icon className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+                      <span className="truncate">{command.label}</span>
+                    </span>
+                    <span className="text-xs text-slate-500 shrink-0">{command.hint}</span>
+                  </button>
+                </li>
+              );
+            })
           )}
         </ul>
       </div>

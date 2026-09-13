@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
 import httpx
@@ -12,6 +13,8 @@ from app.services.http import client as http_client
 MIN_CONTEXT = 4096
 MAX_CONTEXT = 40960
 LOAD_TIMEOUT = 300.0
+UNLOAD_TIMEOUT = 60.0
+UNLOAD_WAIT = 30.0
 
 
 class RuntimeError_(Exception):
@@ -80,6 +83,39 @@ def probe(settings: Settings | None = None) -> Runtime:
             for m in _models(running)
         ],
     )
+
+
+def unload_loaded(settings: Settings | None = None) -> list[str]:
+    """Drop every model sitting in VRAM so a local video job can use the card.
+
+    Failures here must not abort the render: a dead Ollama is already empty.
+    """
+    settings = settings or get_settings()
+    root = native(settings.agent_base_url)
+    if not root:
+        return []
+    seen = probe(settings)
+    if not seen.reachable:
+        return []
+    names = [one.name for one in seen.loaded if one.name]
+    if not names:
+        return []
+    try:
+        with http_client(settings, timeout=UNLOAD_TIMEOUT) as client:
+            for name in names:
+                client.post(
+                    f"{root}/api/generate",
+                    json={"model": name, "keep_alive": 0},
+                )
+    except httpx.RequestError:
+        return names
+    deadline = time.monotonic() + UNLOAD_WAIT
+    while time.monotonic() < deadline:
+        after = probe(settings)
+        if not after.loaded:
+            break
+        time.sleep(0.4)
+    return names
 
 
 def load_with_context(model: str, context: int, settings: Settings | None = None) -> Loaded:

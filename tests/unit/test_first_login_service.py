@@ -104,6 +104,8 @@ def test_first_login_service_success(db_session, make_account, make_proxy, monke
 
 
 def test_first_login_service_challenge(db_session, make_account, make_proxy, monkeypatch):
+    from app.db.models import Event, EventLevel
+
     proxy = make_proxy(label="px-ch")
     account = make_account(username="chuser", proxy=proxy)
 
@@ -119,11 +121,18 @@ def test_first_login_service_challenge(db_session, make_account, make_proxy, mon
     out = run_account_first_login(account, db_session)
     assert out.ok is False
     assert out.challenge is True
+    events = db_session.query(Event).filter(Event.account_id == account.id).all()
+    assert len(events) == 1
+    assert events[0].kind == "first_login"
+    assert events[0].level == EventLevel.warn
+    assert events[0].message == "Требуется подтверждение Instagram"
 
 
 def test_first_login_skips_playwright_when_session_exists(
     db_session, make_account, make_proxy, monkeypatch
 ):
+    from app.db.models import Event
+
     proxy = make_proxy(label="px-saved")
     account = make_account(username="saveduser", proxy=proxy)
     account.session_id = "d" * 40
@@ -135,7 +144,7 @@ def test_first_login_skips_playwright_when_session_exists(
     )
     monkeypatch.setattr(
         "app.accounts.first_login_service.storage_state_has_session",
-        lambda username: username == "saveduser",
+        lambda username: False,
     )
 
     def _fail_first_login(**kwargs):
@@ -145,6 +154,39 @@ def test_first_login_skips_playwright_when_session_exists(
     out = run_account_first_login(account, db_session)
     assert out.ok is True
     assert out.session_imported is True
+    assert any("повторный автовход не нужен" in line.message.lower() for line in out.logs)
+    assert not db_session.query(Event).filter(Event.kind == "first_login").all()
+
+
+def test_first_login_skips_when_playwright_state_only(
+    db_session, make_account, make_proxy, monkeypatch
+):
+    from app.db.models import Event
+
+    proxy = make_proxy(label="px-pw-only")
+    account = make_account(username="pwonly", proxy=proxy)
+    db_session.commit()
+
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.playwright_browsers_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.storage_state_has_session",
+        lambda username: username == "pwonly",
+    )
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.import_playwright_session_to_account",
+        lambda db, acc, **kwargs: True,
+    )
+
+    def _fail_first_login(**kwargs):
+        raise AssertionError("first_login should not run when Playwright session exists")
+
+    monkeypatch.setattr("app.accounts.first_login_service.first_login", _fail_first_login)
+    out = run_account_first_login(account, db_session)
+    assert out.ok is True
+    assert not db_session.query(Event).filter(Event.kind == "first_login").all()
 
 
 def test_first_login_service_normalizes_invalid_proxy_timezone(
@@ -264,6 +306,14 @@ def test_first_login_service_bad_password_message(
     account_logs = [line.message for line in out.logs if line.step == "account"]
     assert any("Пароль:" in m for m in account_logs)
     assert any("Логин Instagram:" in m for m in account_logs)
+    from app.db.models import Event, EventLevel
+
+    events = db_session.query(Event).filter(Event.account_id == account.id).all()
+    assert len(events) == 1
+    assert events[0].kind == "first_login"
+    assert events[0].level == EventLevel.error
+    assert events[0].message and "Неверный пароль" in events[0].message
+    assert "hunter" not in events[0].message.lower()
 
 
 def test_first_login_service_guest_explore_error_and_bad_password(
@@ -417,3 +467,92 @@ def test_first_login_service_no_playwright(db_session, make_account, monkeypatch
     out = run_account_first_login(account, db_session)
     assert out.ok is False
     assert "install-playwright" in (out.error or "").lower() or "Chromium" in (out.error or "")
+
+
+def test_first_login_uses_attached_proxy_url(db_session, make_account, make_proxy, monkeypatch):
+    from app.assistant.tools import attach_proxy
+    from app.db.models import Event
+
+    proxy_a = make_proxy(label="px-chain-a", url="http://user:secret@proxy-a.example:8000")
+    proxy_b = make_proxy(label="px-chain-b", url="http://user:secret@proxy-b.example:9000")
+    account = make_account(username="pxchain", proxy=proxy_a, password="hunter2")
+    captured: dict = {}
+
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.playwright_browsers_available",
+        lambda: True,
+    )
+
+    def _fake_first_login(**kwargs):
+        captured["proxy_url"] = kwargs["proxy_url"]
+        return FirstLoginResult(ok=True, session_id="a" * 40)
+
+    monkeypatch.setattr("app.accounts.first_login_service.first_login", _fake_first_login)
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.import_playwright_session_to_account",
+        lambda db, acc, **kwargs: True,
+    )
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.storage_state_has_session",
+        lambda username: False,
+    )
+
+    out = run_account_first_login(account, db_session)
+    assert out.ok is True
+    assert captured["proxy_url"] == proxy_a.url
+    blob = " ".join(line.message for line in out.logs)
+    assert "proxy-a.example:8000" in blob
+    assert "user:secret" not in blob
+
+    attach_proxy(db_session, account.id, "px-chain-b")
+    db_session.refresh(account)
+    out_b = run_account_first_login(account, db_session)
+    assert out_b.ok is True
+    assert captured["proxy_url"] == proxy_b.url
+    blob_b = " ".join(line.message for line in out_b.logs)
+    assert "proxy-b.example:9000" in blob_b
+    assert "user:secret" not in blob_b
+    assert not db_session.query(Event).filter(Event.kind == "first_login").all()
+
+
+def test_first_login_fail_writes_event(db_session, make_account, monkeypatch):
+    from app.db.models import Event, EventLevel
+
+    account = make_account(username="flfail")
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.playwright_browsers_available",
+        lambda: False,
+    )
+    out = run_account_first_login(account, db_session)
+    assert out.ok is False
+    events = db_session.query(Event).filter(Event.account_id == account.id).all()
+    assert len(events) == 1
+    assert events[0].kind == "first_login"
+    assert events[0].level == EventLevel.error
+    assert "password" not in (events[0].message or "").lower()
+    assert "hunter" not in (events[0].message or "")
+
+
+def test_first_login_without_proxy_fails_before_browser(db_session, make_account, monkeypatch):
+    from app.db.models import Event, EventLevel
+
+    account = make_account(username="noproxyfl")
+    account.proxy_id = None
+    db_session.commit()
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.playwright_browsers_available",
+        lambda: True,
+    )
+
+    def _fail_browser(**kwargs):
+        raise AssertionError("Playwright must not start without a proxy")
+
+    monkeypatch.setattr("app.accounts.first_login_service.first_login", _fail_browser)
+    out = run_account_first_login(account, db_session)
+    assert out.ok is False
+    assert out.error == "Прокси не назначен"
+    events = db_session.query(Event).filter(Event.account_id == account.id).all()
+    assert len(events) == 1
+    assert events[0].kind == "first_login"
+    assert events[0].level == EventLevel.error
+    assert events[0].message == "Прокси не назначен"

@@ -57,6 +57,94 @@ def test_run_tool_has_no_delete_tools(db_session):
             raise AssertionError(f"expected ToolError for {name}")
 
 
+def test_run_tool_creates_proxy_then_youtube_account(db_session):
+    from app.assistant.tools import list_accounts, list_proxies
+    from app.db.models import Account, Proxy
+    from sqlalchemy import select
+
+    proxy_out, opened_px = run_tool(
+        db_session,
+        "create_proxy",
+        {"label": "probe-yt-px", "url": "http://u:p@example:8000"},
+    )
+    assert opened_px is None
+    assert proxy_out["id"] is not None
+    assert proxy_out["label"] == "probe-yt-px"
+
+    account_out, opened_acc = run_tool(
+        db_session,
+        "create_account",
+        {
+            "username": "probe_yt_user",
+            "proxy_label": "probe-yt-px",
+            "password": "unused",
+            "platform": "youtube",
+        },
+    )
+    assert opened_acc is None
+    assert account_out["id"] is not None
+    assert account_out["username"] == "probe_yt_user"
+    assert account_out["platform"] == "youtube"
+
+    labels = {row["label"] for row in list_proxies(db_session)}
+    assert "probe-yt-px" in labels
+    names = {row["username"] for row in list_accounts(db_session)}
+    assert "probe_yt_user" in names
+    stored = db_session.scalar(
+        select(Account).where(Account.username == "probe_yt_user")
+    )
+    assert stored is not None
+    assert db_session.get(Proxy, stored.proxy_id).label == "probe-yt-px"
+
+
+def test_tool_specs_have_create_but_no_settings_writes():
+    from app.assistant.chat import tool_specs
+
+    names = {spec["function"]["name"] for spec in tool_specs()}
+    assert "create_account" in names
+    assert "create_proxy" in names
+    assert "account_logs" in names
+    assert "docker_logs" in names
+    blob = " ".join(names).lower()
+    for forbidden in (
+        "entry_path",
+        "master_password",
+        "update_settings",
+        "write_env",
+        "update_entry_path",
+        "set_master_password",
+    ):
+        assert forbidden not in blob
+
+
+def test_run_tool_has_no_settings_or_env_write_tools(db_session):
+    for name in (
+        "update_entry_path",
+        "update_master_password",
+        "set_master_password",
+        "update_settings",
+        "write_env",
+        "save_env",
+    ):
+        try:
+            run_tool(db_session, name, {"path": "/x", "password": "y"})
+        except ToolError as exc:
+            assert "нет" in str(exc)
+        else:
+            raise AssertionError(f"expected ToolError for {name}")
+
+
+def test_list_operators_reads_entry_path_without_changing_it(db_session):
+    from app.panel.settings_store import get_or_create_panel_settings
+
+    before = get_or_create_panel_settings(db_session).entry_path
+    result, opened = run_tool(db_session, "list_operators", {})
+    assert opened is None
+    assert result["entry_path"] == before
+    after = get_or_create_panel_settings(db_session).entry_path
+    assert after == before
+
+
 def test_open_account_and_post_use_panel_query(db_session, make_account, app_env):
     from app.assistant.tools import open_account, open_post
 
@@ -202,6 +290,64 @@ def test_list_errors_and_job_logs(db_session, make_account):
     assert opened.path == "/activity"
     assert opened.query == {"job": str(job.id)}
     assert payload["runs"][0]["lines"][0]["message"] == "timeout"
+
+
+def test_account_logs_redacts_password_and_lists_login_runs(db_session, make_account):
+    from app.assistant.chat import run_tool
+    from app.assistant.tools import account_logs, list_errors
+    from app.db.models import (
+        DiagnosticRun,
+        DiagnosticRunKind,
+        DiagnosticRunStatus,
+        Event,
+        EventLevel,
+    )
+
+    account = make_account(username="logreader", password="super-secret-pw")
+    db_session.add(
+        DiagnosticRun(
+            kind=DiagnosticRunKind.first_login,
+            account_id=account.id,
+            status=DiagnosticRunStatus.fail,
+            summary="Неверный пароль",
+            lines_json=(
+                '[{"ts":"2026-01-01T00:00:00Z","level":"info","step":"account",'
+                '"message":"Пароль: super-secret-pw"},'
+                '{"ts":"2026-01-01T00:00:01Z","level":"error","step":"login",'
+                '"message":"Неверный пароль"}]'
+            ),
+        )
+    )
+    db_session.add(
+        Event(
+            account_id=account.id,
+            level=EventLevel.error,
+            kind="first_login",
+            message="Неверный пароль",
+        )
+    )
+    db_session.commit()
+
+    payload, opened = account_logs(db_session, account.id, kind="first_login")
+    assert opened.path == "/accounts"
+    assert opened.query == {"id": str(account.id)}
+    messages = [line["message"] for line in payload["runs"][0]["lines"]]
+    assert "Пароль: ***" in messages
+    assert "super-secret-pw" not in str(payload)
+
+    via_tool, _opened = run_tool(db_session, "account_logs", {"account_id": account.id})
+    assert via_tool["username"] == "logreader"
+    assert "super-secret-pw" not in str(via_tool)
+
+    errors = list_errors(db_session)
+    assert any(e["kind"] == "first_login" for e in errors["events"])
+
+    try:
+        account_logs(db_session, account.id, kind="nope")
+    except ToolError as exc:
+        assert "kind" in str(exc)
+    else:
+        raise AssertionError("expected ToolError")
 
 
 def test_create_and_update_proxy_and_account(db_session, make_proxy):
@@ -847,6 +993,7 @@ def test_diagnose_without_app_log_does_not_crash(db_session, monkeypatch):
     assert "worker" in out
     assert out["ollama"]["reachable"] is False
     assert "errors" in out
+    assert "render_backends" in out
 
 
 def test_docker_logs_without_cli(monkeypatch):
@@ -856,10 +1003,70 @@ def test_docker_logs_without_cli(monkeypatch):
         raise FileNotFoundError("docker")
 
     monkeypatch.setattr("app.assistant.tools.subprocess.run", boom)
+    monkeypatch.setattr(
+        "app.assistant.tools._docker_engine_logs",
+        lambda *_a, **_k: {"available": False, "reason": "нет /var/run/docker.sock", "lines": []},
+    )
     out = docker_logs("reels-api")
     assert out["available"] is False
     assert "Docker CLI" in out["reason"]
     assert out["lines"] == []
+
+
+def test_docker_logs_falls_back_to_engine(monkeypatch):
+    from app.assistant.tools import docker_logs
+
+    def boom(*_a, **_k):
+        raise FileNotFoundError("docker")
+
+    monkeypatch.setattr("app.assistant.tools.subprocess.run", boom)
+    monkeypatch.setattr(
+        "app.assistant.tools._docker_engine_logs",
+        lambda container, tail: {
+            "available": True,
+            "lines": [f"{container} started"],
+        },
+    )
+    out = docker_logs("reels-api")
+    assert out["available"] is True
+    assert out["source"] == "engine"
+    assert out["service"] == "reels-api"
+    assert out["lines"] == ["insta-reels-api started"]
+
+
+def test_diagnose_tails_app_log(db_session, monkeypatch):
+    from app.assistant.tools import diagnose
+    from app.config import settings
+    from app.services.runtime import Runtime
+
+    log_file = settings.log_file
+    assert log_file is not None
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    log_file.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "app.services.runtime.probe",
+        lambda settings=None: Runtime(reachable=False, base_url="http://x", detail="test"),
+    )
+    out = diagnose(db_session, tail=2)
+    assert out["app_log"] == ["two", "three"]
+    assert out["app_log_reason"] is None
+
+
+def test_tail_log_reads_from_end_not_whole_file(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from app.assistant.tools import _tail_log
+
+    log = tmp_path / "app.log"
+    log.write_text("\n".join(f"L{i}" for i in range(4000)) + "\n", encoding="utf-8")
+
+    def _forbid_read_text(self, *args, **kwargs):
+        raise AssertionError("must not read the whole log file")
+
+    monkeypatch.setattr(Path, "read_text", _forbid_read_text)
+    lines, reason = _tail_log(log, 3)
+    assert reason is None
+    assert lines == ["L3997", "L3998", "L3999"]
 
 
 def test_docker_logs_refuses_unknown_service():
@@ -871,6 +1078,15 @@ def test_docker_logs_refuses_unknown_service():
         assert "нет" in str(exc)
     else:
         raise AssertionError("expected ToolError")
+
+
+def test_decode_docker_log_stream_multiplexed():
+    from app.assistant.tools import _decode_docker_log_stream
+
+    payload = b"hello\n"
+    header = bytes([1, 0, 0, 0]) + len(payload).to_bytes(4, "big")
+    assert _decode_docker_log_stream(header + payload) == "hello\n"
+    assert _decode_docker_log_stream(b"plain text") == "plain text"
 
 
 def test_chat_body_disables_think():
@@ -966,6 +1182,10 @@ def test_create_render_without_key_quotes_healthcheck(db_session, monkeypatch):
     from app.config import settings
 
     monkeypatch.setattr(settings, "fal_api_key", "")
+    monkeypatch.setattr(settings, "hf_token", "")
+    monkeypatch.setattr(settings, "pollinations_video_url", "")
+    monkeypatch.setattr(settings, "wan_base_url", "")
+    monkeypatch.setattr(settings, "hf_space_id", "")
     try:
         create_render(db_session, prompt="туман над лесом")
     except ToolError as exc:
@@ -993,7 +1213,52 @@ def test_create_render_queues_when_key_set(db_session, monkeypatch):
     assert job is not None
     assert job.prompt == "туман над лесом"
     assert job.status is PipelineStatus.queued
-    assert job.backend == "fal"
+    assert job.backend == "auto"
+
+
+def test_create_render_hf_without_fal_queues_auto(db_session, monkeypatch):
+    from app.assistant.tools import create_render
+    from app.config import settings
+    from app.db.models import GenerationJob
+
+    monkeypatch.setattr(settings, "fal_api_key", "")
+    monkeypatch.setattr(settings, "hf_token", "hf-test")
+    monkeypatch.setattr(settings, "pollinations_video_url", "")
+    monkeypatch.setattr(settings, "wan_base_url", "")
+    monkeypatch.setattr(settings, "hf_space_id", "")
+    out = create_render(db_session, prompt="туман над лесом")
+    job = db_session.get(GenerationJob, out["id"])
+    assert job is not None
+    assert job.backend == "auto"
+
+
+def test_create_render_explicit_fal_without_key(db_session, monkeypatch):
+    from app.assistant.tools import ToolError, create_render
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "fal_api_key", "")
+    monkeypatch.setattr(settings, "hf_token", "hf-test")
+    try:
+        create_render(db_session, prompt="туман", backend="fal")
+    except ToolError as exc:
+        assert "fal" in str(exc)
+        assert "API-ключ" in str(exc)
+    else:
+        raise AssertionError("expected ToolError")
+
+
+def test_list_render_backends_reports_health(monkeypatch):
+    from app.assistant.tools import list_render_backends
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "fal_api_key", "k")
+    monkeypatch.setattr(settings, "hf_token", "")
+    rows = list_render_backends()
+    names = [row["name"] for row in rows]
+    assert "auto" in names
+    assert "fal" in names
+    fal = next(row for row in rows if row["name"] == "fal")
+    assert fal["healthy"] is True
 
 
 def test_compose_without_clips_asks(db_session):
@@ -1090,6 +1355,7 @@ def test_describe_covers_factory_tools():
     from app.assistant.chat import describe
 
     assert describe("create_render", {"prompt": "fog"}) == "ставлю рендер"
+    assert describe("list_render_backends", {}) == "смотрю движки рендера"
     assert describe("compose", {"clip_ids": [1, 2]}) == "ставлю склейку"
     assert describe("reschedule_job", {"job_id": 1}) == "переношу слот"
     assert describe("list_questions", {}) == "смотрю вопросы агента"

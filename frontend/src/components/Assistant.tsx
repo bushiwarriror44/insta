@@ -6,7 +6,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
-import { Sparkle } from "lucide-react";
+import { Send, Sparkle, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -34,6 +34,7 @@ const LOOKED_AT: Record<string, string> = {
   list_project_files: "посмотрел файлы проекта",
   read_project_file: "прочитал файл",
   job_logs: "прочитал логи",
+  account_logs: "прочитал логи аккаунта",
   open_page: "открыл страницу",
   open_clip: "нашёл клип",
   open_post: "нашёл публикацию",
@@ -476,6 +477,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                   className="btn-primary"
                   disabled={asks.some((_, i) => !(askAnswers[i] ?? "").trim())}
                 >
+                  <Send className="h-4 w-4" />
                   Ответить
                 </button>
               </form>
@@ -528,6 +530,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                     }}
                     className="btn-ghost"
                   >
+                    <Trash2 className="h-4 w-4" />
                     Очистить
                   </button>
                 )}
@@ -538,7 +541,10 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                       Думает…
                     </span>
                   ) : (
-                    "Спросить"
+                    <>
+                      <Send className="h-4 w-4" />
+                      Спросить
+                    </>
                   )}
                 </button>
               </div>

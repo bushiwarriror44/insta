@@ -6,15 +6,17 @@ Never delete.
 from __future__ import annotations
 
 import asyncio
+import http.client
 import json
 import re
+import socket
 import subprocess
 import threading
 import time
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, quote
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +33,7 @@ from app.db.models import (
     Composition,
     CompositionClip,
     DiagnosticRun,
+    DiagnosticRunKind,
     Event,
     EventLevel,
     GenerationJob,
@@ -134,6 +137,24 @@ COMPOSE_SERVICES = frozenset(
         "reels-ollama-pull",
     }
 )
+COMPOSE_CONTAINERS = {
+    "reels-api": "insta-reels-api",
+    "reels-worker": "insta-reels-worker",
+    "reels-ollama": "insta-reels-ollama",
+    "reels-frontend": "insta-reels-frontend",
+    "reels-ollama-pull": "insta-reels-ollama-pull",
+}
+ACCOUNT_LOG_KINDS = frozenset(
+    {
+        "connection_test",
+        "publish_job",
+        "first_login",
+        "mint_mobile_session",
+        "browser_session",
+    }
+)
+DOCKER_SOCK = Path("/var/run/docker.sock")
+_PASSWORD_LOG_LINE = re.compile(r"(?i)^(пароль\s*:\s*)(.+)$")
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_FILE = PROJECT_ROOT / "docker-compose.yml"
 SKIP_DIRS = frozenset(
@@ -406,6 +427,7 @@ def list_renders(db: Session, *, status: str | None = None) -> list[dict[str, An
             "cost_usd": g.cost_usd,
             "asset_id": g.asset_id,
             "last_error": g.last_error,
+            "backend": g.backend,
         }
         for g in db.execute(stmt).scalars()
     ]
@@ -610,6 +632,76 @@ def job_logs(db: Session, job_id: int, *, tail: int = 40) -> tuple[dict[str, Any
     )
 
 
+def _redact_diag_message(message: str) -> str:
+    match = _PASSWORD_LOG_LINE.match((message or "").strip())
+    if not match:
+        return message
+    value = (match.group(2) or "").strip()
+    if value in ("", "—", "-", "***"):
+        return message
+    return f"{match.group(1)}***"
+
+
+def account_logs(
+    db: Session,
+    account_id: int,
+    *,
+    kind: Any = None,
+    tail: int = 40,
+) -> tuple[dict[str, Any], Opened]:
+    from app.diagnostics.collector import load_run_lines
+
+    account = _account(db, account_id)
+    try:
+        n = int(tail or 40)
+    except (TypeError, ValueError):
+        n = 40
+    n = max(1, min(n, 80))
+    stmt = select(DiagnosticRun).where(DiagnosticRun.account_id == account.id)
+    raw_kind = str(kind or "").strip()
+    if raw_kind:
+        if raw_kind not in ACCOUNT_LOG_KINDS:
+            raise ToolError(
+                f"kind {kind!r} нет; можно: {', '.join(sorted(ACCOUNT_LOG_KINDS))}"
+            )
+        try:
+            kind_enum = DiagnosticRunKind(raw_kind)
+        except ValueError as exc:
+            raise ToolError(f"kind {kind!r} нет") from exc
+        stmt = stmt.where(DiagnosticRun.kind == kind_enum)
+    stmt = stmt.order_by(DiagnosticRun.created_at.desc()).limit(LIMIT)
+    runs = db.scalars(stmt).all()
+    payload: list[dict[str, Any]] = []
+    for run in runs:
+        lines = load_run_lines(run)
+        payload.append(
+            {
+                "run_id": run.id,
+                "kind": _status_value(run.kind),
+                "status": _status_value(run.status),
+                "summary": run.summary,
+                "at": _when(run.created_at),
+                "lines": [
+                    {
+                        "level": line.level,
+                        "step": line.step,
+                        "message": _redact_diag_message(line.message),
+                    }
+                    for line in lines[-n:]
+                ],
+            }
+        )
+    opened = Opened(path="/accounts", query={"id": str(account.id)}, what=account.username)
+    return (
+        {
+            "account_id": account.id,
+            "username": account.username,
+            "runs": payload,
+        },
+        opened,
+    )
+
+
 def diagnose(db: Session, *, tail: int = LOG_TAIL) -> dict[str, Any]:
     from app.config import get_settings
     from app.scheduler.heartbeat import worker_status
@@ -641,6 +733,7 @@ def diagnose(db: Session, *, tail: int = LOG_TAIL) -> dict[str, Any]:
             "detail": ollama.detail,
         },
         "errors": list_errors(db),
+        "render_backends": list_render_backends(),
         "app_log": app_log,
         "app_log_reason": app_log_reason,
     }
@@ -657,6 +750,24 @@ def docker_logs(service: Any, *, tail: int = LOG_TAIL) -> dict[str, Any]:
     except (TypeError, ValueError):
         n = LOG_TAIL
     n = max(1, min(n, 200))
+    compose = _docker_compose_logs(name, n)
+    if compose.get("available"):
+        return compose
+    engine = _docker_engine_logs(COMPOSE_CONTAINERS[name], n)
+    if engine.get("available"):
+        engine["service"] = name
+        engine["source"] = "engine"
+        return engine
+    reasons = [r for r in (compose.get("reason"), engine.get("reason")) if r]
+    return {
+        "available": False,
+        "service": name,
+        "reason": "; ".join(reasons) or "логи docker недоступны",
+        "lines": [],
+    }
+
+
+def _docker_compose_logs(name: str, n: int) -> dict[str, Any]:
     if not COMPOSE_FILE.is_file():
         return {
             "available": False,
@@ -713,6 +824,94 @@ def docker_logs(service: Any, *, tail: int = LOG_TAIL) -> dict[str, Any]:
     return payload
 
 
+class _UnixHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, socket_path: str, timeout: float) -> None:
+        super().__init__("localhost", timeout=timeout)
+        self._socket_path = socket_path
+
+    def connect(self) -> None:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+        sock.connect(self._socket_path)
+        self.sock = sock
+
+
+def _decode_docker_log_stream(raw: bytes) -> str:
+    if not raw:
+        return ""
+    multiplexed = len(raw) >= 8 and raw[0] in (0, 1, 2) and raw[1:4] == b"\x00\x00\x00"
+    if not multiplexed:
+        return raw.decode("utf-8", errors="replace")
+    chunks: list[bytes] = []
+    i = 0
+    while i + 8 <= len(raw):
+        size = int.from_bytes(raw[i + 4 : i + 8], "big")
+        start = i + 8
+        end = start + size
+        if end > len(raw):
+            chunks.append(raw[start:])
+            break
+        chunks.append(raw[start:end])
+        i = end
+    return b"".join(chunks).decode("utf-8", errors="replace")
+
+
+def _docker_engine_logs(container: str, tail: int) -> dict[str, Any]:
+    if not hasattr(socket, "AF_UNIX"):
+        return {"available": False, "reason": "нет unix-сокетов", "lines": []}
+    if not DOCKER_SOCK.exists():
+        return {"available": False, "reason": f"нет {DOCKER_SOCK.as_posix()}", "lines": []}
+    path = f"/containers/{quote(container, safe='')}/logs?stdout=1&stderr=1&timestamps=0&tail={int(tail)}"
+    conn: _UnixHTTPConnection | None = None
+    try:
+        conn = _UnixHTTPConnection(str(DOCKER_SOCK), timeout=DOCKER_LOG_TIMEOUT)
+        conn.request("GET", path)
+        resp = conn.getresponse()
+        body = resp.read()
+        if resp.status == 404:
+            return {
+                "available": False,
+                "reason": f"контейнера {container} нет",
+                "lines": [],
+            }
+        if resp.status >= 400:
+            detail = body.decode("utf-8", errors="replace").strip() or f"HTTP {resp.status}"
+            return {"available": False, "reason": detail, "lines": []}
+        text = _decode_docker_log_stream(body).strip()
+        lines = text.splitlines()[-tail:] if text else []
+        payload: dict[str, Any] = {"available": True, "lines": lines}
+        if not lines:
+            payload["reason"] = f"контейнер {container} есть, но логов нет"
+        return payload
+    except OSError as exc:
+        return {"available": False, "reason": str(exc) or "docker.sock недоступен", "lines": []}
+    except Exception as exc:  # noqa: BLE001
+        return {"available": False, "reason": str(exc), "lines": []}
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+
+def _tail_file_lines(path: Path, n: int, *, chunk: int = 8192) -> list[str]:
+    """Last *n* lines; reads from the end of the file, not the whole contents."""
+    with path.open("rb") as fh:
+        fh.seek(0, 2)
+        pos = fh.tell()
+        if pos == 0:
+            return []
+        buf = b""
+        while pos > 0 and buf.count(b"\n") <= n:
+            step = min(chunk, pos)
+            pos -= step
+            fh.seek(pos)
+            buf = fh.read(step) + buf
+    text = buf.decode("utf-8", errors="replace")
+    return text.splitlines()[-n:]
+
+
 def _tail_log(path: Path | None, tail: int) -> tuple[list[str] | None, str | None]:
     if path is None:
         return None, "log_file не задан"
@@ -720,11 +919,13 @@ def _tail_log(path: Path | None, tail: int) -> tuple[list[str] | None, str | Non
     if not target.is_file():
         return None, f"файла нет: {_rel_to_project(target)}"
     try:
-        text = target.read_text(encoding="utf-8", errors="replace")
+        n = max(1, min(int(tail or LOG_TAIL), 200))
+    except (TypeError, ValueError):
+        n = LOG_TAIL
+    try:
+        return _tail_file_lines(target, n), None
     except OSError as exc:
         return None, str(exc)
-    n = max(1, min(int(tail or LOG_TAIL), 200))
-    return text.splitlines()[-n:], None
 
 
 def open_page(page: Any) -> Opened:
@@ -1531,7 +1732,7 @@ def retry_render(db: Session, job_id: int) -> dict[str, Any]:
         raise ToolError(f"рендера {job_id} нет")
     backend = get_backend(job.backend)
     if not backend.healthcheck():
-        raise ToolError(f"{job.backend} не настроен — сначала задайте его API-ключ")
+        raise ToolError(backend.health_detail())
     try:
         revive(job)
     except NotRetriable as exc:
@@ -1540,18 +1741,25 @@ def retry_render(db: Session, job_id: int) -> dict[str, Any]:
     return {"id": job.id, "status": _status_value(job.status)}
 
 
+def list_render_backends() -> list[dict[str, Any]]:
+    from app.generation.registry import describe_backends
+
+    return describe_backends()
+
+
 def create_render(
     db: Session,
     *,
     prompt: str | None = None,
     account_id: int | None = None,
-    backend: str = "fal",
+    backend: str | None = None,
     duration_s: float | None = None,
     width: int | None = None,
     height: int | None = None,
     seed: int | None = None,
     negative_prompt: str = "",
 ) -> dict[str, Any]:
+    from app.config import get_settings
     from app.generation.registry import available_backends, get_backend
 
     text = (prompt or "").strip()
@@ -1559,14 +1767,18 @@ def create_render(
         return {
             "ask": True,
             "questions": ["какой промпт для рендера?"],
-            "why": "чтобы поставить fal-рендер",
+            "why": "чтобы поставить рендер",
         }
-    name = one_word(backend) or "fal"
+    settings = get_settings()
+    if backend is None or str(backend).strip() == "":
+        name = (settings.video_backend or "auto").strip().lower()
+    else:
+        name = one_word(backend)
     if name not in available_backends():
         raise ToolError(f"неизвестный бэкенд {name!r}")
     engine = get_backend(name)
     if not engine.healthcheck():
-        raise ToolError(f"{name} не настроен — задайте его API-ключ")
+        raise ToolError(engine.health_detail())
     if account_id is not None:
         _account(db, account_id)
     seconds = 5.0 if duration_s is None else float(duration_s)
@@ -1586,7 +1798,12 @@ def create_render(
     db.add(job)
     db.commit()
     db.refresh(job)
-    return {"id": job.id, "status": _status_value(job.status), "prompt": job.prompt}
+    return {
+        "id": job.id,
+        "status": _status_value(job.status),
+        "prompt": job.prompt,
+        "backend": job.backend,
+    }
 
 
 def compose(

@@ -7,7 +7,7 @@
 - Python 3.11+ (локально), ffmpeg в PATH для uniquify.
 - Playwright Chromium: `python -m app.cli install-playwright` или `playwright install chromium`.
 - Для живого браузера в Docker: `BROWSER_VNC_ENABLED=true`, в образе Xvfb / x11vnc / websockify. Локально Windows VNC-стек как в Linux-контейнере не предполагается — Instagram-автовход идёт через `first_login` / Playwright без noVNC.
-- Ollama на хосте (`localhost:11434`) или сервис `reels-ollama`.
+- Ollama **не** на маленьком админ-VPS. GPU-хост задаётся через `AGENT_BASE_URL`. Локальный `reels-ollama` только с профилем compose `ollama` (нужно ≥16 GB RAM).
 
 ## Локально
 
@@ -37,8 +37,16 @@ npm run dev
 
 ## Docker
 
+Админ-панель (2 vCPU / 6 GB — **без** Ollama):
+
 ```text
 docker compose up -d --build
+```
+
+Ollama в том же compose (не для 6 GB):
+
+```text
+docker compose --profile ollama up -d --build
 ```
 
 Сервисы (имена для `docker_logs` в чате — только эти):
@@ -51,7 +59,7 @@ docker compose up -d --build
 | `reels-ollama-pull` | одноразово тянет `AGENT_MODEL` |
 | `reels-frontend` | nginx UI, порт хоста `3000` → контейнер `:80` |
 
-В compose API/worker смотрят на `http://reels-ollama:11434/v1`, `OLLAMA_AUTOSTART=false`, `WORKER_AUTOSTART=false` (воркер — отдельный контейнер). Том `./data` общий. `init-db` на старте контейнеров; отключить: `SKIP_AUTO_INIT_DB=1`.
+`AGENT_BASE_URL` берётся из `.env` (пустой — чат 503 до GPU). `OLLAMA_AUTOSTART=false`, `WORKER_AUTOSTART=false` (воркер — отдельный контейнер). Том `./data` общий. `init-db` на старте контейнеров; отключить: `SKIP_AUTO_INIT_DB=1`.
 
 CLI внутри стека: `docker compose exec reels-api python -m app.cli status` (не печатайте путь панели в переписку).
 
@@ -87,7 +95,7 @@ CLI внутри стека: `docker compose exec reels-api python -m app.cli st
 
 | Переменная | Смысл |
 | --- | --- |
-| `AGENT_BASE_URL` | OpenAI-совместимый чат, по умолчанию `http://localhost:11434/v1` |
+| `AGENT_BASE_URL` | OpenAI-совместимый чат; пусто на админ-VPS, потом URL GPU (Clore) + `/v1` |
 | `AGENT_MODEL` | обычно `qwen3:8b` |
 | `ASSISTANT_TIMEOUT_SECONDS` | таймаут HTTP к модели (чат) |
 | `WORKER_AUTOSTART` / `OLLAMA_AUTOSTART` | автостарт при `run-api` |
@@ -107,8 +115,14 @@ CLI внутри стека: `docker compose exec reels-api python -m app.cli st
 
 | Переменная | Смысл |
 | --- | --- |
-| `FAL_API_KEY` | без ключа `create_render` отказывается с текстом healthcheck |
+| `VIDEO_BACKEND` | `auto` или одно имя: `fal` / `huggingface` / `pollinations` / `local` / `hfspace` |
+| `VIDEO_BACKEND_CHAIN` | порядок failover для `auto` |
+| `FAL_API_KEY` | fal; без ключа этот движок выключен |
 | `FAL_MODEL` | модель fal (Wan 2.5 по умолчанию) |
+| `HF_TOKEN` / `HF_VIDEO_MODEL` | Hugging Face Inference |
+| `POLLINATIONS_VIDEO_URL` | публичный T2V; пусто — выключен |
+| `WAN_BASE_URL` | свой GPU HTTP, не compose панели |
+| `HF_SPACE_ID` | optional Gradio Space, experimental |
 | `DEFAULT_DAILY_POST_CAP` и часы | дефолты новых аккаунтов |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | алерты (необязательно) |
 

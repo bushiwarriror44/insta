@@ -92,6 +92,19 @@ class Settings(BaseSettings):
 
     fal_api_key: str = Field(default="")
     fal_model: str = Field(default="fal-ai/wan-25-preview/text-to-video")
+    video_backend: str = Field(default="auto")
+    video_backend_chain: str = Field(
+        default="fal,huggingface,pollinations,local,hfspace"
+    )
+    hf_token: str = Field(default="")
+    hf_video_model: str = Field(default="Wan-AI/Wan2.1-T2V-1.3B")
+    hf_inference_url: str = Field(default="https://router.huggingface.co")
+    pollinations_video_url: str = Field(default="https://gen.pollinations.ai/video")
+    pollinations_api_key: str = Field(default="")
+    wan_base_url: str = Field(default="")
+    wan_api_key: str = Field(default="")
+    hf_space_id: str = Field(default="")
+    hf_space_api_name: str = Field(default="predict")
     generation_poll_seconds: float = Field(default=5.0)
     generation_timeout_seconds: float = Field(default=900.0)
     daily_spend_cap_usd: float = Field(default=0.0, ge=0)

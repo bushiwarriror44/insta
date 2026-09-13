@@ -1,10 +1,13 @@
+import { Calendar, CalendarDays, Eye, Plus, Send, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { api, formatApiError } from "../api/client";
 import { AgentToggle } from "../components/AgentToggle";
 import { Card } from "../components/Card";
+import { EmptyState } from "../components/EmptyState";
 import { Loader } from "../components/Loader";
 import { Modal } from "../components/Modal";
+import { PageHeader } from "../components/PageHeader";
 import { useToast } from "../context/ToastContext";
 import { useAssistantMutate } from "../lib/assistantMutate";
 import { refreshNavBadges } from "../lib/uiEvents";
@@ -91,9 +94,7 @@ export function Agent() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <h1 className="text-xl font-semibold">Контент-агент</h1>
-      </div>
+      <PageHeader icon={Sparkles} title="Контент-агент" />
       <Card className="p-4">
         <h2 className="font-medium mb-3">Процесс агента</h2>
         <AgentToggle />
@@ -170,6 +171,7 @@ export function Agent() {
               }
             }}
           >
+            <Calendar className="h-4 w-4" />
             Запланировать
           </button>
           <button
@@ -190,6 +192,7 @@ export function Agent() {
               }
             }}
           >
+            <CalendarDays className="h-4 w-4" />
             План на неделю
           </button>
           <button
@@ -210,6 +213,7 @@ export function Agent() {
               }
             }}
           >
+            <Eye className="h-4 w-4" />
             Превью
           </button>
         </div>
@@ -232,9 +236,11 @@ export function Agent() {
               }
             }}
           >
+            <Plus className="h-4 w-4" />
             Добавить
           </button>
         </div>
+        {sources.length === 0 ? <EmptyState>пока пусто</EmptyState> : null}
         <ul className="text-sm space-y-2">
           {sources.map((s) => (
             <li key={s.id} className="flex items-center gap-2 text-slate-400">
@@ -296,6 +302,7 @@ export function Agent() {
                     }
                   }}
                 >
+                  <Send className="h-4 w-4" />
                   Ответить
                 </button>
               </div>
@@ -318,6 +325,13 @@ export function Agent() {
             </tr>
           </thead>
           <tbody>
+            {runs.length === 0 ? (
+              <tr>
+                <td colSpan={6}>
+                  <EmptyState>пока пусто</EmptyState>
+                </td>
+              </tr>
+            ) : null}
             {runs.map((r) => (
               <tr
                 key={r.id}

@@ -15,8 +15,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-import httpx
-
 from app.config import Settings, get_settings
 from app.generation.base import (
     STAGE_DOWNLOADING,
@@ -30,6 +28,7 @@ from app.generation.base import (
     ProgressCallback,
     VideoBackend,
 )
+from app.generation.download import download_url, raise_http
 from app.services.http import client as http_client
 
 QUEUE_ROOT = "https://queue.fal.run"
@@ -44,8 +43,6 @@ RATE_USD_PER_SECOND = {
     "fal-ai/wan-25-preview/text-to-video": 0.05,
     "fal-ai/kling-video/v2.5-turbo/pro/text-to-video": 0.07,
 }
-
-MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024
 
 TERMINAL_FAILURES = {"FAILED", "ERROR", "CANCELLED"}
 
@@ -81,6 +78,11 @@ class FalVideoBackend(VideoBackend):
     def healthcheck(self) -> bool:
         return bool(self.settings.fal_api_key)
 
+    def health_detail(self) -> str:
+        if self.healthcheck():
+            return ""
+        return "fal не настроен — задайте его API-ключ"
+
     def generate(
         self,
         request: GenerationRequest,
@@ -107,6 +109,7 @@ class FalVideoBackend(VideoBackend):
             generator=f"{self.model}",
             cost_usd=RATE_USD_PER_SECOND.get(self.model, 0.0) * duration,
             seed=result.get("seed"),
+            backend=self.name,
         )
 
     # --- Queue -------------------------------------------------------
@@ -132,7 +135,7 @@ class FalVideoBackend(VideoBackend):
 
     def _submit(self, client: httpx.Client, payload: dict[str, Any]) -> str:
         response = client.post(f"{QUEUE_ROOT}/{self.model}", json=payload)
-        self._raise_for_status(response, "submit")
+        raise_http(response, "fal", "submit")
 
         request_id = response.json().get("request_id")
         if not request_id:
@@ -150,7 +153,7 @@ class FalVideoBackend(VideoBackend):
 
         while True:
             response = client.get(f"{base}/status")
-            self._raise_for_status(response, "status")
+            raise_http(response, "fal", "status")
             body = response.json()
             status = body.get("status")
 
@@ -176,7 +179,7 @@ class FalVideoBackend(VideoBackend):
             time.sleep(self.settings.generation_poll_seconds)
 
         result = client.get(base)
-        self._raise_for_status(result, "result")
+        raise_http(result, "fal", "result")
         return result.json()
 
     @staticmethod
@@ -189,40 +192,5 @@ class FalVideoBackend(VideoBackend):
     def _download(
         self, client: httpx.Client, url: str, out_dir: Path, request_id: str
     ) -> Path:
-        out_dir.mkdir(parents=True, exist_ok=True)
         destination = out_dir / f"fal-{request_id}.mp4"
-
-        written = 0
-        try:
-            with client.stream("GET", url, timeout=300) as response:
-                self._raise_for_status(response, "download")
-                with destination.open("wb") as out:
-                    for chunk in response.iter_bytes(1024 * 1024):
-                        written += len(chunk)
-                        if written > MAX_DOWNLOAD_BYTES:
-                            raise GenerationError(
-                                "generated video is implausibly large"
-                            )
-                        out.write(chunk)
-        except Exception:
-            destination.unlink(missing_ok=True)
-            raise
-
-        if written == 0:
-            destination.unlink(missing_ok=True)
-            raise GenerationError("fal returned an empty video")
-        return destination
-
-    @staticmethod
-    def _raise_for_status(response: httpx.Response, stage: str) -> None:
-        if response.status_code < 400:
-            return
-        if response.status_code in (401, 403):
-            raise GenerationError(f"fal rejected the API key ({stage})")
-        if response.status_code == 429:
-            raise GenerationError(f"fal rate limited the {stage}", retryable=True)
-        if response.status_code >= 500:
-            raise GenerationError(
-                f"fal server error {response.status_code} ({stage})", retryable=True
-            )
-        raise GenerationError(f"fal {stage} failed: {response.status_code}")
+        return download_url(client, url, destination, name="fal")

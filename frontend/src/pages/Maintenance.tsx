@@ -1,7 +1,10 @@
+import { Archive, Save, Wrench } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { api, formatApiError } from "../api/client";
 import { Card } from "../components/Card";
+import { EmptyState } from "../components/EmptyState";
+import { PageHeader } from "../components/PageHeader";
 import { useToast } from "../context/ToastContext";
 import type { BackupOut, RuntimeOut } from "../api/types";
 
@@ -33,7 +36,7 @@ export function Maintenance() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold">Обслуживание</h1>
+      <PageHeader icon={Wrench} title="Обслуживание" />
       <Card className="p-4 space-y-3">
         <h2 className="font-medium">Ollama</h2>
         {runtime ? (
@@ -73,6 +76,7 @@ export function Maintenance() {
                   }
                 }}
               >
+                <Save className="h-4 w-4" />
                 Применить
               </button>
             </div>
@@ -102,9 +106,11 @@ export function Maintenance() {
               }
             }}
           >
+            <Archive className="h-4 w-4" />
             Снять копию
           </button>
         </div>
+        {backups.length === 0 ? <EmptyState>пока пусто</EmptyState> : null}
         <ul className="text-sm space-y-1">
           {backups.map((b) => (
             <li key={b.name} className="text-slate-400">

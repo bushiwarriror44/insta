@@ -14,7 +14,7 @@
 
 Run шлёт **один** `prompt`, без истории. Страницы панели `open_page` не обязан открывать. Живой Playwright можно стартовать.
 
-Нужны живой API и Ollama. Если баннер «Агент остановлен» — воркер мёртв; чат может поставить задачу, но fal / склейка / публикация из очереди не поедут, пока воркер не запущен.
+Нужны живой API и Ollama. Если баннер «Агент остановлен» — воркер мёртв; чат может поставить задачу, но рендер / склейка / публикация из очереди не поедут, пока воркер не запущен.
 
 ## Пример промпта (run / `cli ask`)
 
@@ -23,7 +23,7 @@ Run шлёт **один** `prompt`, без истории. Страницы па
 ```text
 Создай прокси label=res-de-1 url=http://USER:PASS@HOST:PORT страна DE TZ Europe/Berlin.
 Создай аккаунт instagram @alice на этом прокси, пароль из карточки уже будет.
-Сделай first_login (desktop). Поставь fal-рендер: «туман над лесом», 5 секунд,
+Сделай first_login (desktop). Поставь рендер: «туман над лесом», 5 секунд,
 дождись готовности, опубликуй ролик сейчас на этот аккаунт.
 ```
 
@@ -50,13 +50,14 @@ Instagram: `first_login` / `mint_mobile_session` работают с парол�
 | `overview` | сводка: аккаунты, клипы, публикации, рендеры |
 | `list_accounts` / `account_details` | список / карточка (включая секреты карточки) |
 | `list_posts` / `list_clips` / `list_renders` / `list_compositions` / `list_proxies` | очереди и библиотека |
+| `list_render_backends` | какие движки рендера живы (`auto` / fal / …) |
 | `list_errors` | свежие ошибки |
 | `job_logs` | логи публикации + открыть на Активности |
 | `list_operators` | как устроены доступы (не создать/отозвать) |
 | `list_project_files` / `read_project_file` | файлы **внутри** репозитория и `data/` |
 | `get_session` | Instagram: sessionid; Studio: есть ли state.json и имена cookies |
 | `page_guide` | секция handbook другой страницы |
-| `diagnose` | воркер, Ollama, ошибки БД, хвост `data/app.log` |
+| `diagnose` | воркер, Ollama, движки рендера, ошибки БД, хвост `data/app.log` |
 | `docker_logs` | только `reels-api` / `reels-worker` / `reels-ollama` / `reels-frontend` / `reels-ollama-pull` |
 
 ### Открыть в UI (чат панели)

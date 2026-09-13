@@ -432,6 +432,14 @@ export interface WorkerProcessOut {
   note: string;
 }
 
+export interface RenderBackendOut {
+  name: string;
+  healthy: boolean;
+  licence: string;
+  experimental: boolean;
+  detail: string;
+}
+
 export interface MediaAssetOut {
   id: number;
   filename: string;

@@ -6,7 +6,7 @@ from typing import Literal
 
 from sqlalchemy.orm import Session
 
-from app.accounts.account_diagnostics import log_account_credentials
+from app.accounts.account_diagnostics import log_account_credentials, proxy_log_line
 from app.accounts.cookie_formats import STUDIO_PLATFORMS, studio_session_ready
 from app.accounts.playwright_session import playwright_state_path
 from app.accounts.device_factory import device_path
@@ -199,7 +199,7 @@ def run_account_connection_test(
         )
 
     proxy_label = proxy.label
-    collector.info("proxy", f"Используется прокси {proxy_label}")
+    collector.info("proxy", proxy_log_line(proxy))
 
     is_healthy, snapshot, health_error = health_check_record(db, proxy)
     db.refresh(proxy)

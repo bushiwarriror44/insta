@@ -404,17 +404,18 @@ describe("Publishing page", () => {
     expect(screen.getByText(/публикация запланирована/i)).toBeInTheDocument();
   });
 
-  it("queues a fal render and links the toast to renders", async () => {
+  it("queues a render and links the toast to renders", async () => {
     apiMock.factory.createGeneration.mockResolvedValue({});
     renderPublishing();
     await screen.findAllByText("clip.mp4");
-    fireEvent.change(screen.getByPlaceholderText(/промпт для fal/i), {
+    fireEvent.change(screen.getByPlaceholderText(/промпт для рендера/i), {
       target: { value: "sunset over the sea" },
     });
     fireEvent.click(screen.getByRole("button", { name: /^рендер$/i }));
     await waitFor(() =>
       expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
         prompt: "sunset over the sea",
+        backend: "auto",
       })
     );
     const open = await screen.findByRole("link", { name: /открыть/i });

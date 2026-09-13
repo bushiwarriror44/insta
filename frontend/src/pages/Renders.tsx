@@ -1,12 +1,16 @@
+import { Ban, Clapperboard, Layers, Play, RefreshCw } from "lucide-react";
 import { useCallback, useState } from "react";
+import clsx from "clsx";
 
 import { api, formatApiError } from "../api/client";
 import { Card } from "../components/Card";
+import { EmptyState } from "../components/EmptyState";
+import { PageHeader } from "../components/PageHeader";
 import { StatusBadge } from "../components/StatusBadge";
 import { useToast } from "../context/ToastContext";
 import { usePollWhenVisible } from "../hooks/usePollWhenVisible";
 import { useAssistantMutate } from "../lib/assistantMutate";
-import type { AccountOut } from "../api/types";
+import type { AccountOut, RenderBackendOut } from "../api/types";
 
 type Gen = {
   id: number;
@@ -16,27 +20,36 @@ type Gen = {
   post_title: string;
   last_error: string | null;
   cost_usd: number;
+  backend?: string;
 };
 type Join = { id: number; status: string; post_title: string; last_error: string | null; clips: number };
+
+function backendLabel(name: string) {
+  return name === "auto" ? "Авто" : name;
+}
 
 export function Renders() {
   const { push } = useToast();
   const [gens, setGens] = useState<Gen[]>([]);
   const [joins, setJoins] = useState<Join[]>([]);
   const [accounts, setAccounts] = useState<AccountOut[]>([]);
+  const [backends, setBackends] = useState<RenderBackendOut[]>([]);
   const [prompt, setPrompt] = useState("");
+  const [backend, setBackend] = useState("auto");
   const [accountId, setAccountId] = useState<number | "">("");
   const [joinIds, setJoinIds] = useState("");
 
   const reload = useCallback(async () => {
-    const [g, c, accs] = await Promise.all([
+    const [g, c, accs, engines] = await Promise.all([
       api.factory.generations(),
       api.factory.compositions(),
       api.accounts.list(),
+      api.factory.backends(),
     ]);
     setGens(g);
     setJoins(c);
     setAccounts(accs);
+    setBackends(engines);
   }, []);
 
   const runAction = useCallback(
@@ -61,11 +74,54 @@ export function Renders() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold">Рендеры и склейки</h1>
+      <PageHeader icon={Clapperboard} title="Рендеры и склейки" />
       <Card className="p-4 space-y-3">
         <h2 className="font-medium">Новый рендер</h2>
+        {backends.length ? (
+          <div className="flex flex-wrap gap-2 text-sm">
+            {backends.map((engine) => (
+              <button
+                key={engine.name}
+                type="button"
+                title={engine.detail || engine.licence}
+                aria-pressed={backend === engine.name}
+                onClick={() => setBackend(engine.name)}
+                className={clsx(
+                  "rounded-full px-2.5 py-1 text-xs ring-1 transition-colors",
+                  backend === engine.name
+                    ? "bg-brand-600/20 text-brand-200 ring-brand-500/40"
+                    : engine.healthy
+                      ? "text-emerald-400 ring-emerald-500/30 hover:bg-emerald-500/10"
+                      : "text-slate-500 ring-slate-700 hover:bg-slate-800/60"
+                )}
+              >
+                {backendLabel(engine.name)}
+                {engine.experimental ? " · exp" : ""}
+                {engine.healthy ? " · ок" : " · нет"}
+              </button>
+            ))}
+          </div>
+        ) : null}
         <textarea className="input min-h-[80px]" placeholder="Промпт" value={prompt} onChange={(e) => setPrompt(e.target.value)} />
-        <select className="input" value={accountId} onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")}>
+        <select
+          className="input"
+          aria-label="бэкенд"
+          value={backend}
+          onChange={(e) => setBackend(e.target.value)}
+        >
+          {(backends.length ? backends : [{ name: "auto", healthy: true }]).map((engine) => (
+            <option key={engine.name} value={engine.name}>
+              {backendLabel(engine.name)}
+              {engine.healthy === false ? " (нет)" : ""}
+            </option>
+          ))}
+        </select>
+        <select
+          className="input"
+          aria-label="аккаунт"
+          value={accountId}
+          onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")}
+        >
           <option value="">без аккаунта</option>
           {accounts.map((a) => (
             <option key={a.id} value={a.id}>
@@ -80,6 +136,7 @@ export function Renders() {
             try {
               await api.factory.createGeneration({
                 prompt: prompt.trim(),
+                backend,
                 account_id: typeof accountId === "number" ? accountId : undefined,
               });
               setPrompt("");
@@ -90,16 +147,18 @@ export function Renders() {
             }
           }}
         >
+          <Play className="h-4 w-4" />
           Поставить рендер
         </button>
       </Card>
       <Card className="p-4">
-        <h2 className="font-medium mb-3">fal.ai</h2>
+        <h2 className="font-medium mb-3">Рендеры</h2>
         <table className="table-base">
           <thead>
             <tr>
               <th>ID</th>
               <th>Статус</th>
+              <th>Бэкенд</th>
               <th>Заголовок</th>
               <th>Стадия</th>
               <th>$</th>
@@ -107,12 +166,20 @@ export function Renders() {
             </tr>
           </thead>
           <tbody>
+            {gens.length === 0 ? (
+              <tr>
+                <td colSpan={7}>
+                  <EmptyState>пока пусто</EmptyState>
+                </td>
+              </tr>
+            ) : null}
             {gens.map((g) => (
-              <tr key={g.id} className="hover:bg-slate-900/40">
+              <tr key={g.id}>
                 <td className="tabular-nums">{g.id}</td>
                 <td>
                   <StatusBadge value={g.status} />
                 </td>
+                <td>{g.backend || "—"}</td>
                 <td className="truncate" title={g.post_title || g.prompt}>
                   {g.post_title || g.prompt.slice(0, 60)}
                 </td>
@@ -126,6 +193,7 @@ export function Renders() {
                         aria-label="Отменить"
                         onClick={() => void runAction(() => api.factory.cancelGeneration(g.id))}
                       >
+                        <Ban className="h-4 w-4" />
                         Отменить
                       </button>
                     ) : null}
@@ -134,6 +202,7 @@ export function Renders() {
                         className="btn-ghost btn-compact"
                         onClick={() => void runAction(() => api.factory.retryGeneration(g.id))}
                       >
+                        <RefreshCw className="h-4 w-4" />
                         Повторить
                       </button>
                     ) : null}
@@ -166,6 +235,7 @@ export function Renders() {
               }
             }}
           >
+            <Layers className="h-4 w-4" />
             Склеить
           </button>
         </div>
@@ -180,8 +250,15 @@ export function Renders() {
             </tr>
           </thead>
           <tbody>
+            {joins.length === 0 ? (
+              <tr>
+                <td colSpan={5}>
+                  <EmptyState>пока пусто</EmptyState>
+                </td>
+              </tr>
+            ) : null}
             {joins.map((j) => (
-              <tr key={j.id} className="hover:bg-slate-900/40">
+              <tr key={j.id}>
                 <td className="tabular-nums">{j.id}</td>
                 <td>
                   <StatusBadge value={j.status} />
@@ -198,6 +275,7 @@ export function Renders() {
                         aria-label="Отменить"
                         onClick={() => void runAction(() => api.factory.cancelComposition(j.id))}
                       >
+                        <Ban className="h-4 w-4" />
                         Отменить
                       </button>
                     ) : null}
@@ -206,6 +284,7 @@ export function Renders() {
                         className="btn-ghost btn-compact"
                         onClick={() => void runAction(() => api.factory.retryComposition(j.id))}
                       >
+                        <RefreshCw className="h-4 w-4" />
                         Повторить
                       </button>
                     ) : null}

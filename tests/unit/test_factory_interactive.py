@@ -129,3 +129,31 @@ def test_create_generation_and_join(api_client, db_session, monkeypatch):
     assert join.status_code == 200
     assert join.json()["clips"] == 1
     assert join.json()["status"] == "queued"
+
+
+def test_list_generation_backends(api_client, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "fal_api_key", "k")
+    res = api_client.get("/api/generations/backends")
+    assert res.status_code == 200
+    names = [row["name"] for row in res.json()]
+    assert names[0] == "auto"
+    assert "fal" in names
+    fal = next(row for row in res.json() if row["name"] == "fal")
+    assert fal["healthy"] is True
+    assert "licence" in fal
+    assert "experimental" in fal
+
+
+def test_create_generation_auto_rejected_when_none_healthy(api_client, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "fal_api_key", "")
+    monkeypatch.setattr(settings, "hf_token", "")
+    monkeypatch.setattr(settings, "pollinations_video_url", "")
+    monkeypatch.setattr(settings, "wan_base_url", "")
+    monkeypatch.setattr(settings, "hf_space_id", "")
+    res = api_client.post("/api/generations", json={"prompt": "mist"})
+    assert res.status_code == 409
+    assert "не настроен" in res.json()["detail"]

@@ -397,3 +397,59 @@ def test_youtube_connection_fails_without_state(db_session, make_account, monkey
     out = run_account_connection_test(account, db_session)
     assert out.overall_ok is False
     assert out.instagram_auth.error_code == "session_missing"
+
+
+def test_connection_test_passes_attached_proxy_url(db_session, make_account, make_proxy, monkeypatch):
+    from app.accounts.connection_test import run_account_connection_test
+    from app.accounts.session_manager import ProbeSessionResult
+    from app.proxies.pool import HealthSnapshot
+
+    proxy = make_proxy(label="px-ct-url", url="http://user:secret@egress.example:7777")
+    account = make_account(username="ctproxy", proxy=proxy, session_id="s" * 40)
+    captured: dict = {}
+    snapshot = HealthSnapshot(
+        ok=True,
+        ip="203.0.113.9",
+        country="US",
+        instagram_reachable=True,
+        instagram_login_reachable=True,
+        checked_at=datetime.now(timezone.utc),
+    )
+
+    def _health(db, px):
+        captured["health_url"] = px.url
+        return True, snapshot, None
+
+    def _probe(**kwargs):
+        captured["probe_url"] = kwargs["proxy_url"]
+        return ProbeSessionResult(ok=True, method="sessionid", ig_username="ctproxy")
+
+    monkeypatch.setattr("app.accounts.connection_test.health_check_record", _health)
+    monkeypatch.setattr(
+        "app.accounts.connection_test.ensure_fingerprint_and_proxy",
+        lambda username, country="US", **kwargs: MagicMock(),
+    )
+    monkeypatch.setattr("app.accounts.connection_test.probe_session_auth", _probe)
+
+    out = run_account_connection_test(account, db_session, probe_mobile=True)
+    assert out.overall_ok is True
+    assert captured["health_url"] == proxy.url
+    assert captured["probe_url"] == proxy.url
+    blob = " ".join(line.message for line in out.logs)
+    assert "egress.example:7777" in blob
+    assert "user:secret" not in blob
+
+
+def test_connection_test_fail_writes_event(db_session, make_account):
+    from app.accounts.connection_test import run_account_connection_test
+    from app.db.models import Event, EventLevel
+
+    account = make_account(username="nopx")
+    account.proxy_id = None
+    db_session.commit()
+    out = run_account_connection_test(account, db_session)
+    assert out.overall_ok is False
+    events = db_session.query(Event).filter(Event.account_id == account.id).all()
+    assert len(events) == 1
+    assert events[0].kind == "connection_test"
+    assert events[0].level == EventLevel.error

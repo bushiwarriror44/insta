@@ -41,3 +41,32 @@ def test_probe_reads_ollama_name_when_model_is_missing():
     assert seen.models == ["llama3.2:3b", "qwen3:8b"]
     assert seen.loaded[0].name == "qwen3:8b"
     assert seen.context_of("qwen3:8b") == 8192
+
+
+def test_unload_posts_keep_alive_zero_for_each_loaded_model():
+    tags = {"models": [{"name": "qwen3:32b"}]}
+    running = {"models": [{"name": "qwen3:32b", "context_length": 8192, "size": 1}]}
+    empty = {"models": []}
+    client = MagicMock()
+    client.__enter__.return_value = client
+    client.get.side_effect = replies(tags, running, tags, empty)
+    client.post.return_value = httpx.Response(
+        200, json={}, request=httpx.Request("POST", "http://x")
+    )
+    with patch("app.services.runtime.http_client", return_value=client):
+        names = runtime.unload_loaded(make_settings())
+
+    assert names == ["qwen3:32b"]
+    posted = client.post.call_args
+    assert posted.args[0] == "http://localhost:11434/api/generate"
+    assert posted.kwargs["json"] == {"model": "qwen3:32b", "keep_alive": 0}
+
+
+def test_unload_skips_when_nothing_is_in_vram():
+    tags = {"models": [{"name": "qwen3:8b"}]}
+    running = {"models": []}
+    client = answering(tags, running)
+    with patch("app.services.runtime.http_client", return_value=client):
+        names = runtime.unload_loaded(make_settings())
+    assert names == []
+    client.post.assert_not_called()

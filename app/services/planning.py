@@ -127,9 +127,7 @@ def one_shot_costs(duration_s: float, settings: Settings) -> float:
     from app.generation.registry import get_backend
 
     try:
-        # "fal" is the registry's default and what a GenerationJob gets
-        # unless something says otherwise.
-        backend = get_backend(settings=settings)
+        backend = get_backend(settings.video_backend, settings)
     except NotImplementedError:
         return 0.0
     return backend.estimate_cost(GenerationRequest(prompt="", duration_s=duration_s))
@@ -191,6 +189,7 @@ def queue_ideas(
     tracks = tracks if tracks is not None else library_tracks(session)
     jobs: list[GenerationJob] = []
     invented: list[str] = []
+    engine = get_settings().video_backend or "auto"
 
     for idea in ideas:
         track = match_track(idea.soundtrack, tracks)
@@ -207,6 +206,7 @@ def queue_ideas(
             jobs.append(
                 GenerationJob(
                     prompt=shot,
+                    backend=engine,
                     duration_s=duration_s,
                     account_id=channel.id,
                     post_title=idea.title,

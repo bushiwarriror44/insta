@@ -8,10 +8,25 @@ from typing import Literal
 
 from sqlalchemy.orm import Session
 
-from app.db.models import DiagnosticRun, DiagnosticRunKind, DiagnosticRunStatus
+from app.db.models import (
+    DiagnosticRun,
+    DiagnosticRunKind,
+    DiagnosticRunStatus,
+    Event,
+    EventLevel,
+)
 
 LogLevel = Literal["info", "warn", "error"]
 RunStatus = Literal["ok", "warn", "fail"]
+
+LOGIN_EVENT_KINDS = frozenset(
+    {
+        DiagnosticRunKind.connection_test,
+        DiagnosticRunKind.first_login,
+        DiagnosticRunKind.mint_mobile_session,
+        DiagnosticRunKind.browser_session,
+    }
+)
 
 
 @dataclass
@@ -102,6 +117,17 @@ class DiagnosticCollector:
         self._run.status = DiagnosticRunStatus(status)
         self._run.summary = summary
         self._run.finished_at = datetime.now(timezone.utc)
+        if status in ("fail", "warn") and self._run.kind in LOGIN_EVENT_KINDS:
+            kind = self._run.kind.value if hasattr(self._run.kind, "value") else str(self._run.kind)
+            level = EventLevel.error if status == "fail" else EventLevel.warn
+            self._db.add(
+                Event(
+                    account_id=self._run.account_id,
+                    level=level,
+                    kind=kind,
+                    message=summary,
+                )
+            )
         self._db.commit()
 
     def callback(self) -> "LogCallback":

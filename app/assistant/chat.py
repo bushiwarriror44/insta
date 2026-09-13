@@ -37,8 +37,8 @@ URL прокси, токен владельца, содержимое файло
 или что запланировано — сначала смотри. Спросили пароль, прокси или файл — \
 открой `account_details` / `list_proxies` / `read_project_file` и отдай как есть. \
 Спросили, что сломалось, что упало в коде или почему стек молчит — сначала \
-`diagnose`, не память. Конкретная публикация — `job_logs`. Логи Docker/compose — \
-`docker_logs`. Как работают доступы — `list_operators`. \
+`diagnose`, не память. Конкретная публикация — `job_logs`. Логи входа аккаунта — \
+`account_logs`. Логи Docker/compose — `docker_logs`. Как работают доступы — `list_operators`. \
 Спросили, что ты умеешь, как и что для этого нужно — ответь блоком \
 «Я сам / Только в UI / Нужно от оператора» из справочника.
 
@@ -55,7 +55,8 @@ fingerprint только для Instagram, `get_session`, проверить п�
 опубликовать ролик (`publish_now`, `enqueue_publish`; тип из площадки аккаунта, поля title / caption / description / tags / when), \
 перенести слот (`reschedule_job`), править лимиты и проверку (`update_account`: daily_post_cap, hold_for_review, login_surface), \
 поставить план (`plan_account`: duration_s / auto_schedule; список — `list_plans` / `list_questions` / `list_sources` / `list_presets`, пресет — `apply_preset`), превью (`preview_plan`), \
-поставить fal-рендер (`create_render`) и склейку (`compose`), \
+поставить рендер (`create_render`, по умолчанию цепочка `auto`) и склейку (`compose`), \
+статусы движков — `list_render_backends`, \
 автовход и mint mobile только для Instagram, \
 паузу, ответить на вопрос агента, \
 добавить источник, читать файлы проекта, `diagnose`, `docker_logs`. \
@@ -238,7 +239,8 @@ TOOLS = [
         },
         [],
     ),
-    schema("list_renders", "Рендеры fal.ai.", {"status": {"type": "string"}}, []),
+    schema("list_renders", "Рендеры (backend, статус, ошибка).", {"status": {"type": "string"}}, []),
+    schema("list_render_backends", "Какие движки рендера живы: auto, fal, huggingface, pollinations, local, hfspace.", {}, []),
     schema("list_compositions", "Склейки клипов.", {"status": {"type": "string"}}, []),
     schema(
         "list_questions",
@@ -277,6 +279,25 @@ TOOLS = [
         "Диагностические логи публикации и открыть её на Активности.",
         {"job_id": {"type": "integer"}},
         ["job_id"],
+    ),
+    schema(
+        "account_logs",
+        "Диагностические логи входа и проверки аккаунта (first_login, connection_test, mint, browser, publish). Пароль в ответе скрыт.",
+        {
+            "account_id": {"type": "integer"},
+            "kind": {
+                "type": "string",
+                "enum": [
+                    "connection_test",
+                    "first_login",
+                    "mint_mobile_session",
+                    "browser_session",
+                    "publish_job",
+                ],
+            },
+            "tail": {"type": "integer"},
+        },
+        ["account_id"],
     ),
     schema(
         "list_operators",
@@ -542,7 +563,7 @@ TOOLS = [
     ),
     schema(
         "docker_logs",
-        "Логи docker compose этого репозитория. Сервисы: reels-api, reels-worker, reels-ollama, reels-frontend, reels-ollama-pull. Если Docker нет — вернёт available false, не выдумывай логи.",
+        "Логи docker compose этого репозитория. Сервисы: reels-api, reels-worker, reels-ollama, reels-frontend, reels-ollama-pull. Если CLI нет — читает Engine API через docker.sock. Если Docker нет — available false, не выдумывай логи.",
         {
             "service": {
                 "type": "string",
@@ -695,7 +716,7 @@ TOOLS = [
     ),
     schema(
         "retry_render",
-        "Повторить упавший рендер fal.ai.",
+        "Повторить упавший рендер. auto снова идёт по цепочке.",
         {"job_id": {"type": "integer"}},
         ["job_id"],
     ),
@@ -707,10 +728,11 @@ TOOLS = [
     ),
     schema(
         "create_render",
-        "Поставить fal-рендер. Промпт обязателен. Нет промпта — ask. Если бэкенд не настроен — ошибка healthcheck.",
+        "Поставить рендер. Промпт обязателен. backend по умолчанию auto (цепочка). Нет промпта — ask. Если ни один движок не жив — ошибка healthcheck как есть.",
         {
             "prompt": {"type": "string"},
             "account_id": {"type": "integer"},
+            "backend": {"type": "string"},
             "duration_s": {"type": "number"},
             "negative_prompt": {"type": "string"},
         },
@@ -800,7 +822,7 @@ BROWSER_TOOLS = [
     ),
     schema(
         "wait_render",
-        "Ждать, пока fal-рендер станет done/failed. Вызови после create_render, прежде чем публиковать.",
+        "Ждать, пока рендер станет done/failed. Вызови после create_render, прежде чем публиковать.",
         {
             "job_id": {"type": "integer"},
             "timeout_s": {"type": "number"},
@@ -835,6 +857,14 @@ class AssistantError(Exception):
 
 def _prepare_runtime(settings: Settings) -> None:
     """Start Ollama / the model pull so the operator never has to."""
+    from app.services.gpu_slot import video_busy
+
+    if video_busy(settings):
+        raise AssistantError(
+            "GPU занята рендером видео — чат выгружен, чтобы хватило памяти. "
+            "Напишите снова, когда ролик доедет.",
+            retryable=True,
+        )
     current = probe(settings)
     if not current.reachable:
         if not settings.ollama_autostart:
@@ -894,6 +924,8 @@ def run_tool(
         return tools.list_clips(db, kind=args.get("kind") or "video", query=args.get("query")), None
     if name == "list_renders":
         return tools.list_renders(db, status=args.get("status")), None
+    if name == "list_render_backends":
+        return tools.list_render_backends(), None
     if name == "list_compositions":
         return tools.list_compositions(db, status=args.get("status")), None
     if name == "list_questions":
@@ -912,6 +944,14 @@ def run_tool(
         return tools.list_errors(db), None
     if name == "job_logs":
         payload, opened = tools.job_logs(db, _row_id(args, "job_id"))
+        return payload, opened
+    if name == "account_logs":
+        payload, opened = tools.account_logs(
+            db,
+            _row_id(args, "account_id"),
+            kind=args.get("kind"),
+            tail=int(args.get("tail") or 40),
+        )
         return payload, opened
     if name == "open_page":
         opened = tools.open_page(args.get("page", ""))
@@ -1189,6 +1229,7 @@ def run_tool(
                 db,
                 prompt=_optional_text(args, "prompt"),
                 account_id=_optional_id(args, "account_id"),
+                backend=_optional_text(args, "backend"),
                 duration_s=_optional_number(args, "duration_s"),
                 negative_prompt=str(args.get("negative_prompt") or ""),
             ),
@@ -1370,6 +1411,8 @@ def describe(name: str, args: dict[str, Any]) -> str:
         if status:
             return f"смотрю рендеры: {tools.one_word(status)}"
         return "смотрю рендеры"
+    if name == "list_render_backends":
+        return "смотрю движки рендера"
     if name == "list_compositions":
         status = args.get("status")
         if status:
@@ -1390,6 +1433,7 @@ def describe(name: str, args: dict[str, Any]) -> str:
         "list_project_files": "смотрю файлы проекта",
         "read_project_file": "читаю файл проекта",
         "job_logs": "читаю логи задачи",
+        "account_logs": "читаю логи аккаунта",
         "open_page": "открываю страницу",
         "open_clip": "открываю клип",
         "open_post": "открываю публикацию",

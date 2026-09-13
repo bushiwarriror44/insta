@@ -1,4 +1,4 @@
-import { Ban, RefreshCw } from "lucide-react";
+import { Activity as ActivityIcon, Ban, Check, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import clsx from "clsx";
@@ -6,8 +6,10 @@ import clsx from "clsx";
 import { api } from "../api/client";
 import { Card } from "../components/Card";
 import { DiagnosticLogPanel } from "../components/DiagnosticLogPanel";
+import { EmptyState } from "../components/EmptyState";
 import { Loader } from "../components/Loader";
 import { Modal } from "../components/Modal";
+import { PageHeader } from "../components/PageHeader";
 import { StatusBadge } from "../components/StatusBadge";
 import { useToast } from "../context/ToastContext";
 import { useHotkeys } from "../hooks/useHotkeys";
@@ -207,12 +209,11 @@ export function Activity() {
   return (
     <div className="space-y-6">
       <div className="flex items-end justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-semibold">Активность</h1>
-          <p className="text-sm text-slate-400 mt-1">
-            Очередь задач и журнал событий в реальном времени. Обновление каждые {POLL_INTERVAL_MS / 1000} с.
-          </p>
-        </div>
+        <PageHeader
+          icon={ActivityIcon}
+          title="Активность"
+          description={`Очередь задач и журнал событий в реальном времени. Обновление каждые ${POLL_INTERVAL_MS / 1000} с.`}
+        />
         <button
           className="btn-ghost"
           onClick={async () => {
@@ -252,21 +253,40 @@ export function Activity() {
         title="Задачи"
         description={`${jobs.length} последних — нажмите на строку для просмотра диагностических логов`}
         actions={
-          <select
-            className="input max-w-[140px] py-1.5 text-xs"
-            value={jobStatus}
-            onChange={(e) => setJobStatus(e.target.value)}
-          >
+          <div className="flex flex-wrap items-center gap-2">
             {JOB_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s ? (JOB_STATUS_LABELS[s] ?? s) : "Все статусы"}
-              </option>
+              <button
+                key={s || "all"}
+                type="button"
+                className={clsx(
+                  "rounded-full px-2 py-0.5 text-xs ring-1 transition-colors",
+                  jobStatus === s
+                    ? "bg-brand-600/20 text-brand-200 ring-brand-500/40"
+                    : "text-slate-400 ring-slate-700 hover:bg-slate-800/60"
+                )}
+                aria-pressed={jobStatus === s}
+                onClick={() => setJobStatus(s)}
+              >
+                {s ? <StatusBadge value={s} /> : "Все статусы"}
+              </button>
             ))}
-          </select>
+            <select
+              className="sr-only"
+              aria-label="Статус задачи"
+              value={jobStatus}
+              onChange={(e) => setJobStatus(e.target.value)}
+            >
+              {JOB_STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {s ? (JOB_STATUS_LABELS[s] ?? s) : "Все статусы"}
+                </option>
+              ))}
+            </select>
+          </div>
         }
       >
         {jobs.length === 0 ? (
-          <div className="text-sm text-slate-500">Нет задач по выбранному фильтру.</div>
+          <EmptyState>Нет задач по выбранному фильтру.</EmptyState>
         ) : (
           <table className="table-base">
             <colgroup>
@@ -347,6 +367,7 @@ export function Activity() {
                             }
                           }}
                         >
+                          <Check className="h-3.5 w-3.5" />
                           Одобрить
                         </button>
                       )}
@@ -382,6 +403,7 @@ export function Activity() {
                             }
                           }}
                         >
+                          <RefreshCw className="h-3.5 w-3.5" />
                           Повторить
                         </button>
                       )}
@@ -396,7 +418,7 @@ export function Activity() {
       ) : lane === "renders" ? (
         <Card title="Рендеры">
           {renders.length === 0 ? (
-            <div className="text-sm text-slate-500">Нет рендеров.</div>
+            <EmptyState>Нет рендеров.</EmptyState>
           ) : (
             <ul className="text-sm space-y-2">
               {renders.map((g) => (
@@ -411,7 +433,7 @@ export function Activity() {
       ) : (
         <Card title="Склейки">
           {joins.length === 0 ? (
-            <div className="text-sm text-slate-500">Нет склеек.</div>
+            <EmptyState>Нет склеек.</EmptyState>
           ) : (
             <ul className="text-sm space-y-2">
               {joins.map((g) => (
@@ -443,7 +465,7 @@ export function Activity() {
         }
       >
         {events.length === 0 ? (
-          <div className="text-sm text-slate-500">Событий нет.</div>
+          <EmptyState>Событий нет.</EmptyState>
         ) : (
           <ul className="divide-y divide-slate-800">
             {events.map((ev) => {

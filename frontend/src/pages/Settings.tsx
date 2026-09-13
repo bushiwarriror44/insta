@@ -6,6 +6,7 @@ import { Navigate } from "react-router-dom";
 import { api, formatApiError } from "../api/client";
 import type { PanelSettingsOut } from "../api/types";
 import { copyTextToClipboard } from "../components/DiagnosticLogPanel";
+import { PageHeader } from "../components/PageHeader";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 
@@ -99,15 +100,11 @@ export function Settings() {
 
   return (
     <div className="space-y-6 max-w-2xl">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-          <SettingsIcon size={22} />
-          Настройки
-        </h1>
-        <p className="text-sm text-slate-400 mt-1">
-          Секретный URL админки и мастер-пароль. Только для владельца.
-        </p>
-      </div>
+      <PageHeader
+        icon={SettingsIcon}
+        title="Настройки"
+        description="Секретный URL админки и мастер-пароль. Только для владельца."
+      />
 
       {loading || !data ? (
         <p className="text-slate-500 text-sm">Загрузка…</p>

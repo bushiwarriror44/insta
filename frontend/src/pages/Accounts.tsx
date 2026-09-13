@@ -15,6 +15,7 @@ import {
   ShieldOff,
   Sparkles,
   Trash2,
+  Users,
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -24,8 +25,10 @@ import { api } from "../api/client";
 import { Card } from "../components/Card";
 import { CountryFlag, countryCodeToFlag } from "../components/CountryFlag";
 import { DiagnosticLogPanel, copyTextToClipboard } from "../components/DiagnosticLogPanel";
+import { EmptyState } from "../components/EmptyState";
 import { Loader } from "../components/Loader";
 import { Modal } from "../components/Modal";
+import { PageHeader } from "../components/PageHeader";
 import {
   isSessionExpired,
   isSessionMissing,
@@ -370,12 +373,11 @@ export function Accounts() {
   return (
     <div className="space-y-6">
       <div className="flex items-end justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-semibold">Аккаунты</h1>
-          <p className="text-sm text-slate-400 mt-1">
-            Управление аккаунтами Instagram и их прокси.
-          </p>
-        </div>
+        <PageHeader
+          icon={Users}
+          title="Аккаунты"
+          description="Управление аккаунтами Instagram и их прокси."
+        />
         <div className="flex items-center gap-2">
           <button className="btn-ghost" onClick={() => setOpenProxy(true)}>
             <Server size={16} />
@@ -409,7 +411,7 @@ export function Accounts() {
         }
       >
         {proxies.length === 0 ? (
-          <div className="text-sm text-slate-500">Прокси пока нет.</div>
+          <EmptyState>Прокси пока нет.</EmptyState>
         ) : (
           <table className="table-base">
             <colgroup>
@@ -567,9 +569,9 @@ export function Accounts() {
         }
       >
         {accounts.length === 0 ? (
-          <div className="text-sm text-slate-500">Аккаунтов пока нет.</div>
+          <EmptyState>Аккаунтов пока нет.</EmptyState>
         ) : shownAccounts.length === 0 ? (
-          <div className="text-sm text-slate-500">Никого не нашлось.</div>
+          <EmptyState>Никого не нашлось.</EmptyState>
         ) : (
           <table className="table-base">
             <colgroup>

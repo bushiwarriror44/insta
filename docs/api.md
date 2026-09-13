@@ -78,7 +78,7 @@ CORS: `CORS_ALLOWED_ORIGINS` (Vite `:5173`, Docker UI `:3000`).
 - `/api/health` — живость процесса.
 - `/api/accounts`, `/api/proxies` — CRUD, `test-connection`, `first-login`, `mint-mobile-session`, cookies, fingerprint, Playwright state.
 - `/api/jobs` — очередь публикаций, approve / cancel / retry, логи.
-- `/api/generations`, `/api/compositions` — fal и склейка.
+- `/api/generations`, `/api/generations/backends`, `/api/compositions` — рендер (auto/fal/…) и склейка.
 - `POST /api/accounts/{id}/plan` | `/preview` | `/week` — контент-план.
 - `/api/worker/start` | `/stop` — воркер панели.
 - `/api/maintenance/runtime` — Ollama; `POST /api/maintenance/backups` — копия БД.

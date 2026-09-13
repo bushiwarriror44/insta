@@ -87,4 +87,10 @@ describe("CommandPalette", () => {
     expect(screen.queryByRole("button", { name: /Настройки/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Доступы/ })).not.toBeInTheDocument();
   });
+
+  it("puts an icon on the Dashboard row", async () => {
+    renderPalette();
+    const row = await screen.findByRole("button", { name: /Панель/ });
+    expect(row.querySelector("svg")).toBeTruthy();
+  });
 });

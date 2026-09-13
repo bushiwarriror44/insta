@@ -5,7 +5,7 @@ import time
 
 from sqlalchemy.orm import Session
 
-from app.accounts.account_diagnostics import log_account_credentials
+from app.accounts.account_diagnostics import log_account_credentials, proxy_log_line
 from app.accounts.challenge import make_handler
 from app.accounts.first_login_service import _format_auth_error
 from app.accounts.login_identifier import (
@@ -43,7 +43,7 @@ def mint_mobile_session(account: Account, db: Session) -> MintMobileSessionOut:
 
     if not account.proxy_id:
         collector.error("proxy", "Прокси не назначен")
-        collector.finish("fail", "no proxy")
+        collector.finish("fail", "Прокси не назначен")
         return MintMobileSessionOut(
             run_id=collector.run_id,
             ok=False,
@@ -54,7 +54,7 @@ def mint_mobile_session(account: Account, db: Session) -> MintMobileSessionOut:
     proxy = db.get(Proxy, account.proxy_id)
     if proxy is None:
         collector.error("proxy", "Запись прокси отсутствует")
-        collector.finish("fail", "proxy missing")
+        collector.finish("fail", "Запись прокси отсутствует")
         return MintMobileSessionOut(
             run_id=collector.run_id,
             ok=False,
@@ -64,7 +64,7 @@ def mint_mobile_session(account: Account, db: Session) -> MintMobileSessionOut:
 
     if not (account.password or "").strip():
         collector.error("account", "Пароль аккаунта не задан")
-        collector.finish("fail", "no password")
+        collector.finish("fail", "Пароль аккаунта не задан")
         return MintMobileSessionOut(
             run_id=collector.run_id,
             ok=False,
@@ -74,7 +74,7 @@ def mint_mobile_session(account: Account, db: Session) -> MintMobileSessionOut:
 
     log_account_credentials(collector, account, proxy)
     collector.info("start", f"Создание mobile-сессии для @{account.username}")
-    collector.info("proxy", f"Прокси {proxy.label}")
+    collector.info("proxy", proxy_log_line(proxy))
 
     tz_id = timezone_from_proxy(proxy.timezone, proxy.country)
     if is_placeholder_timezone(account.timezone):
@@ -116,7 +116,7 @@ def mint_mobile_session(account: Account, db: Session) -> MintMobileSessionOut:
         session_id = _attempt(login_id)
     except HardCheckpoint as exc:
         collector.warn("login", f"Требуется подтверждение Instagram (challenge); {_elapsed()}")
-        collector.finish("warn", "challenge required")
+        collector.finish("warn", "Требуется подтверждение Instagram")
         return MintMobileSessionOut(
             run_id=collector.run_id,
             ok=False,
@@ -128,7 +128,7 @@ def mint_mobile_session(account: Account, db: Session) -> MintMobileSessionOut:
         last_auth_error = exc
     except Exception as exc:  # noqa: BLE001
         collector.error("login", f"Mobile login не удался: {exc}; {_elapsed()}")
-        collector.finish("fail", "login failed")
+        collector.finish("fail", "Вход не удался")
         return MintMobileSessionOut(
             run_id=collector.run_id,
             ok=False,
@@ -151,7 +151,7 @@ def mint_mobile_session(account: Account, db: Session) -> MintMobileSessionOut:
                     "login",
                     f"Требуется подтверждение Instagram (challenge); {_elapsed()}",
                 )
-                collector.finish("warn", "challenge required")
+                collector.finish("warn", "Требуется подтверждение Instagram")
                 return MintMobileSessionOut(
                     run_id=collector.run_id,
                     ok=False,
@@ -163,7 +163,7 @@ def mint_mobile_session(account: Account, db: Session) -> MintMobileSessionOut:
                 last_auth_error = exc
             except Exception as exc:  # noqa: BLE001
                 collector.error("login", f"Mobile login не удался: {exc}; {_elapsed()}")
-                collector.finish("fail", "login failed")
+                collector.finish("fail", "Вход не удался")
                 return MintMobileSessionOut(
                     run_id=collector.run_id,
                     ok=False,

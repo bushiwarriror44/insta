@@ -643,10 +643,11 @@ export const api = {
         duration_ms: number;
       }>(`/api/agent-runs/${id}`),
     generations: () =>
-      request<Array<{ id: number; status: string; prompt: string; stage: string; post_title: string; last_error: string | null; cost_usd: number }>>(
+      request<Array<{ id: number; status: string; prompt: string; stage: string; post_title: string; last_error: string | null; cost_usd: number; backend?: string }>>(
         "/api/generations"
       ),
-    createGeneration: (body: { prompt: string; account_id?: number; duration_s?: number }) =>
+    backends: () => request<import("./types").RenderBackendOut[]>("/api/generations/backends"),
+    createGeneration: (body: { prompt: string; account_id?: number; duration_s?: number; backend?: string }) =>
       request<{ id: number; status: string }>("/api/generations", { method: "POST", body }),
     cancelGeneration: (id: number) =>
       request<{ id: number; status: string }>(`/api/generations/${id}/cancel`, { method: "POST" }),

@@ -38,6 +38,7 @@ class GenerationRequest:
 #: is waiting on rather than for the provider's own vocabulary.
 STAGE_SUBMITTED = "submitted"
 STAGE_QUEUED = "waiting at the provider"
+STAGE_UNLOADING = "unloading chat"
 STAGE_RENDERING = "rendering"
 STAGE_DOWNLOADING = "downloading"
 
@@ -64,6 +65,8 @@ class GenerationResult:
     #: Marginal cost of this clip in USD; 0.0 for self-hosted.
     cost_usd: float = 0.0
     seed: int | None = None
+    #: Registry name that actually produced the file (for `auto` failover).
+    backend: str = ""
 
 
 class VideoBackend(abc.ABC):
@@ -72,6 +75,13 @@ class VideoBackend(abc.ABC):
     #: of a non-commercial model is the operator's problem to avoid, so
     #: it is surfaced rather than buried in a provider's docs.
     model_licence: str
+    experimental: bool = False
+
+    def health_detail(self) -> str:
+        """Why `healthcheck` is false, or empty when the backend is ready."""
+        if self.healthcheck():
+            return ""
+        return f"{self.name} не настроен — задайте его API-ключ"
 
     @abc.abstractmethod
     def generate(

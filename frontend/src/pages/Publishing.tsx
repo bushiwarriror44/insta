@@ -1,12 +1,14 @@
-import { BarChart3, RefreshCw } from "lucide-react";
+import { BarChart3, Clapperboard, Layers, Library, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { api, formatApiError } from "../api/client";
 import { Card } from "../components/Card";
 import { DropZone } from "../components/DropZone";
+import { EmptyState } from "../components/EmptyState";
 import { Loader } from "../components/Loader";
 import { MediaLibraryGrid } from "../components/MediaLibraryGrid";
 import { MediaPreviewPanel } from "../components/MediaPreviewPanel";
+import { PageHeader } from "../components/PageHeader";
 import { useToast } from "../context/ToastContext";
 import { useAssistantMutate } from "../lib/assistantMutate";
 import type { AccountOut, PostType, PublicationOut, VideoOut } from "../api/types";
@@ -384,22 +386,21 @@ export function Publishing() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Библиотека</h1>
-        <p className="text-sm text-slate-400 mt-1">
-          Загружайте готовые Reels, просматривайте в браузере и публикуйте в один клик.
-        </p>
-      </div>
+      <PageHeader
+        icon={Library}
+        title="Библиотека"
+        description="Загружайте готовые Reels, просматривайте в браузере и публикуйте в один клик."
+      />
       <Card className="p-4 space-y-3">
         <h2 className="font-medium">Сгенерировать / склеить</h2>
         <div className="flex gap-2">
-          <input className="input" placeholder="Промпт для fal.ai" value={generatePrompt} onChange={(e) => setGeneratePrompt(e.target.value)} />
+          <input className="input" placeholder="Промпт для рендера" value={generatePrompt} onChange={(e) => setGeneratePrompt(e.target.value)} />
           <button
             className="btn-primary shrink-0"
             disabled={!generatePrompt.trim()}
             onClick={async () => {
               try {
-                await api.factory.createGeneration({ prompt: generatePrompt.trim() });
+                await api.factory.createGeneration({ prompt: generatePrompt.trim(), backend: "auto" });
                 setGeneratePrompt("");
                 push("Рендер в очереди", "success", { label: "Открыть", href: "/renders" });
               } catch (err) {
@@ -407,6 +408,7 @@ export function Publishing() {
               }
             }}
           >
+            <Clapperboard className="h-4 w-4" />
             Рендер
           </button>
         </div>
@@ -426,6 +428,7 @@ export function Publishing() {
               }
             }}
           >
+            <Layers className="h-4 w-4" />
             Склеить
           </button>
         </div>
@@ -548,7 +551,7 @@ export function Publishing() {
 
       <Card title="Статистика опубликованных медиа" description={`${publications.length} записей`}>
         {publications.length === 0 ? (
-          <div className="text-sm text-slate-500">Публикаций пока нет.</div>
+          <EmptyState>Публикаций пока нет.</EmptyState>
         ) : (
           <table className="table-base">
             <colgroup>

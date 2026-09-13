@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from app.accounts.account_diagnostics import log_account_credentials
+from app.accounts.account_diagnostics import log_account_credentials, proxy_log_line
 from app.accounts.login_identifier import (
     is_account_not_found_error,
     resolve_login_identifier,
@@ -29,6 +29,13 @@ from app.geo.country_codes import normalize_country_code
 from app.geo.timezone_normalize import (
     is_placeholder_timezone,
     timezone_from_proxy,
+)
+
+CHALLENGE_SUMMARY = "Требуется подтверждение Instagram"
+NO_PASSWORD_SUMMARY = "Пароль аккаунта не задан"
+PROXY_MISSING_SUMMARY = "Запись прокси отсутствует"
+PLAYWRIGHT_UNAVAILABLE_SUMMARY = (
+    "Chromium не установлен — выполните install-playwright на сервере"
 )
 
 
@@ -119,7 +126,7 @@ def _try_api_login_fallback(
         session_id = _attempt(login_id)
     except HardCheckpoint as exc:
         collector.warn("login", "Требуется ручное подтверждение (challenge) — откройте вкладку «Браузер»")
-        collector.finish("warn", "challenge required")
+        collector.finish("warn", CHALLENGE_SUMMARY)
         return (
             FirstLoginOut(
                 run_id=collector.run_id,
@@ -149,7 +156,7 @@ def _try_api_login_fallback(
                 session_id = _attempt(email)
             except HardCheckpoint as exc:
                 collector.warn("login", "Требуется ручное подтверждение (challenge) — откройте вкладку «Браузер»")
-                collector.finish("warn", "challenge required")
+                collector.finish("warn", CHALLENGE_SUMMARY)
                 return (
                     FirstLoginOut(
                         run_id=collector.run_id,
@@ -210,18 +217,18 @@ def run_account_first_login(
     )
 
     if not playwright_browsers_available():
-        collector.error("browser", "Chromium не установлен — выполните install-playwright на сервере")
-        collector.finish("fail", "playwright unavailable")
+        collector.error("browser", PLAYWRIGHT_UNAVAILABLE_SUMMARY)
+        collector.finish("fail", PLAYWRIGHT_UNAVAILABLE_SUMMARY)
         return FirstLoginOut(
             run_id=collector.run_id,
             ok=False,
-            error="Chromium не установлен — выполните install-playwright на сервере",
+            error=PLAYWRIGHT_UNAVAILABLE_SUMMARY,
             logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
         )
 
     if not account.proxy_id:
         collector.error("proxy", "Прокси не назначен")
-        collector.finish("fail", "no proxy")
+        collector.finish("fail", "Прокси не назначен")
         return FirstLoginOut(
             run_id=collector.run_id,
             ok=False,
@@ -231,32 +238,37 @@ def run_account_first_login(
 
     proxy = db.get(Proxy, account.proxy_id)
     if proxy is None:
-        collector.error("proxy", "Запись прокси отсутствует")
-        collector.finish("fail", "proxy missing")
+        collector.error("proxy", PROXY_MISSING_SUMMARY)
+        collector.finish("fail", PROXY_MISSING_SUMMARY)
         return FirstLoginOut(
             run_id=collector.run_id,
             ok=False,
-            error="Запись прокси отсутствует",
+            error=PROXY_MISSING_SUMMARY,
             logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
         )
 
     if not (account.password or "").strip():
-        collector.error("account", "Пароль аккаунта не задан")
-        collector.finish("fail", "no password")
+        collector.error("account", NO_PASSWORD_SUMMARY)
+        collector.finish("fail", NO_PASSWORD_SUMMARY)
         return FirstLoginOut(
             run_id=collector.run_id,
             ok=False,
-            error="Пароль аккаунта не задан",
+            error=NO_PASSWORD_SUMMARY,
             logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
         )
 
-    if (account.session_id or "").strip() and storage_state_has_session(account.username):
-        collector.info("session", "Сессия уже сохранена (браузер) — проверяем подключение")
+    has_db_session = bool((account.session_id or "").strip())
+    has_browser_session = storage_state_has_session(account.username)
+    if has_db_session or has_browser_session:
+        if has_browser_session and not has_db_session:
+            import_playwright_session_to_account(db, account)
+            db.refresh(account)
+        collector.info("session", "Сессия уже сохранена — повторный автовход не нужен")
         return _finish_success(
             collector,
             account,
             db,
-            login_message="Используется сохранённая сессия из браузера",
+            login_message="Используется сохранённая сессия",
         )
 
     resolved_surface = resolve_playwright_surface(surface or account.login_surface)
@@ -266,7 +278,7 @@ def run_account_first_login(
     login_id = resolve_login_identifier(account)
     log_account_credentials(collector, account, proxy)
     collector.info("start", f"Автовход через браузер для @{account.username}")
-    collector.info("proxy", f"Прокси {proxy.label}")
+    collector.info("proxy", proxy_log_line(proxy))
 
     tz_id = timezone_from_proxy(proxy.timezone, proxy.country)
     if is_placeholder_timezone(account.timezone):
@@ -301,7 +313,7 @@ def run_account_first_login(
     if result.challenge:
         collector.warn("login", "Требуется ручное подтверждение (challenge) — откройте вкладку «Браузер»")
         _log_playwright_failure_diagnostics(collector, account, result)
-        collector.finish("warn", "challenge required")
+        collector.finish("warn", CHALLENGE_SUMMARY)
         return FirstLoginOut(
             run_id=collector.run_id,
             ok=False,
@@ -351,7 +363,7 @@ def run_account_first_login(
         fallback_out, api_err = _try_api_login_fallback(collector, account, db, proxy, fingerprint)
         if fallback_out is not None:
             return fallback_out
-        collector.finish("fail", api_err or "session import failed")
+        collector.finish("fail", api_err or "Не удалось сохранить sessionid")
         return FirstLoginOut(
             run_id=collector.run_id,
             ok=False,

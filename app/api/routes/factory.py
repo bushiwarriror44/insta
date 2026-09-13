@@ -27,7 +27,7 @@ from app.db.models import (
     PromptPreset,
     SourceKind,
 )
-from app.generation.registry import available_backends, get_backend
+from app.generation.registry import available_backends, describe_backends, get_backend
 from app.agent.sources import SourceError, read_source
 from app.services.clarifications import answer as answer_clarification
 from app.services.clarifications import open_questions
@@ -66,7 +66,7 @@ class SourcePatch(BaseModel):
 class GenerationCreate(BaseModel):
     prompt: str = Field(min_length=1)
     negative_prompt: str = ""
-    backend: str = "fal"
+    backend: str = "auto"
     duration_s: float = Field(default=5.0, ge=5, le=10)
     width: int = Field(default=720, ge=256, le=1920)
     height: int = Field(default=1280, ge=256, le=1920)
@@ -339,12 +339,18 @@ def list_assets(
     ]
 
 
+@router.get("/api/generations/backends")
+def list_generation_backends() -> list[dict[str, Any]]:
+    return describe_backends(settings)
+
+
 @router.post("/api/generations")
 def create_generation(payload: GenerationCreate, db: Session = Depends(get_db)) -> dict[str, Any]:
     if payload.backend not in available_backends():
         raise HTTPException(status_code=400, detail=f"неизвестный бэкенд {payload.backend!r}")
-    if not get_backend(payload.backend, settings).healthcheck():
-        raise HTTPException(status_code=409, detail=f"{payload.backend} не настроен — задайте его API-ключ")
+    engine = get_backend(payload.backend, settings)
+    if not engine.healthcheck():
+        raise HTTPException(status_code=409, detail=engine.health_detail())
     if payload.account_id is not None:
         _account(db, payload.account_id)
     job = GenerationJob(
@@ -383,7 +389,10 @@ def retry_generation(job_id: int, db: Session = Depends(get_db)) -> dict[str, An
     if job is None:
         raise HTTPException(status_code=404, detail="Рендер не найден")
     if not get_backend(job.backend, settings).healthcheck():
-        raise HTTPException(status_code=409, detail=f"{job.backend} не настроен — сначала задайте его API-ключ")
+        raise HTTPException(
+            status_code=409,
+            detail=get_backend(job.backend, settings).health_detail(),
+        )
     try:
         revive(job)
     except NotRetriable as exc:
@@ -463,6 +472,7 @@ def list_generations(
             "post_title": r.post_title,
             "last_error": r.last_error,
             "cost_usd": r.cost_usd,
+            "backend": r.backend,
         }
         for r in rows
     ]

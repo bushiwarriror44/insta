@@ -146,6 +146,10 @@ def test_create_render_without_key_quotes_healthcheck(db_session, monkeypatch):
     from app.config import settings
 
     monkeypatch.setattr(settings, "fal_api_key", "")
+    monkeypatch.setattr(settings, "hf_token", "")
+    monkeypatch.setattr(settings, "pollinations_video_url", "")
+    monkeypatch.setattr(settings, "wan_base_url", "")
+    monkeypatch.setattr(settings, "hf_space_id", "")
     try:
         create_render(db_session, prompt="туман")
     except ToolError as exc:

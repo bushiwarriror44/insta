@@ -34,4 +34,10 @@ describe("StatusBadge", () => {
     const badge = screen.getByText("Активен");
     expect(badge.className).toMatch(/emerald/);
   });
+
+  it("renders an icon next to the status label", () => {
+    const { container } = render(<StatusBadge value="queued" />);
+    expect(screen.getByText("В очереди")).toBeInTheDocument();
+    expect(container.querySelector("svg")).toBeTruthy();
+  });
 });
