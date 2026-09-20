@@ -152,7 +152,7 @@ On every start, `reels-worker` and `reels-api` run `init-db` automatically (safe
 To disable that, set `SKIP_AUTO_INIT_DB=1` in `.env`.
 
 - Admin UI: [http://localhost:3000](http://localhost:3000)
-- API docs: [http://localhost:8000/api/docs](http://localhost:8000/api/docs)
+- API schema: panel tab **Администрирование** (`/administration`)
 
 **CLI inside the stack** (no extra Compose profiles — use `exec` on the API container):
 

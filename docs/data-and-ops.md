@@ -23,7 +23,7 @@ Fingerprint и mobile dump — **только Instagram**. Для Studio дос�
 
 ## Логи
 
-Хвост `data/app.log` — tool `diagnose` (по умолчанию ~80 строк) и страница Обслуживание / Активность через `job_logs`. Полный файл чат не читает целиком.
+Хвост `data/app.log` — tool `diagnose` (по умолчанию ~24 строки) и страница Обслуживание / Активность через `job_logs`. Полный файл чат не читает целиком.
 
 Docker: `python -m app.cli` не подменяет compose. Логи сервисов — `docker compose logs reels-api` (и соседние `reels-*`) или чат `docker_logs`. Нет Docker CLI — инструмент вернёт `available: false`; не выдумывать.
 
@@ -37,7 +37,7 @@ Docker: `python -m app.cli` не подменяет compose. Логи серви
 
 ## Диагностика
 
-1. `diagnose` — воркер (pid / heartbeat), Ollama (reachable, модели), свежие ошибки, хвост лога.
+1. `diagnose` — воркер (pid / heartbeat), блоки `posting` / `login` / `proxies` (очередь, сессии, DiagnosticRun, geo, `hints`), Ollama (reachable, модели), свежие ошибки, хвост лога. Чат: секции «Если постинг сломался», «Если вход сломался», «Если прокси сломался» в [`assistant-handbook.md`](assistant-handbook.md).
 2. `test_connection` / «Подключение» — прокси + сессия на диске; для Studio это не «Google ещё пускает».
 3. Челлендж Instagram — Telegram (если задан) и файл в `data/challenges/`; CLI `provide-code`.
 4. VNC: `python -m app.cli browser-vnc-diag` на хосте контейнера.

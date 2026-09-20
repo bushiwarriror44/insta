@@ -6,6 +6,7 @@ import { Loader } from "./components/Loader";
 import { useAuth } from "./context/AuthContext";
 import { Accounts } from "./pages/Accounts";
 import { Activity } from "./pages/Activity";
+import { Administration } from "./pages/Administration";
 import { Agent } from "./pages/Agent";
 import { Calendar } from "./pages/Calendar";
 import { Dashboard } from "./pages/Dashboard";
@@ -63,6 +64,7 @@ export default function App() {
         <Route path="/calendar" element={<Calendar />} />
         <Route path="/activity" element={<Activity />} />
         <Route path="/maintenance" element={<Maintenance />} />
+        <Route path="/administration" element={<Administration />} />
         <Route path="/operators" element={<Operators />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />

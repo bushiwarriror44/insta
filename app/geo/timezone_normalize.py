@@ -28,6 +28,7 @@ _COUNTRY_DEFAULT_IANA: dict[str, str] = {
     "RU": "Europe/Moscow",
     "UA": "Europe/Kyiv",
     "KZ": "Asia/Almaty",
+    "AM": "Asia/Yerevan",
     "CA": "America/Toronto",
     "AU": "Australia/Sydney",
 }

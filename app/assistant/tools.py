@@ -34,6 +34,7 @@ from app.db.models import (
     CompositionClip,
     DiagnosticRun,
     DiagnosticRunKind,
+    DiagnosticRunStatus,
     Event,
     EventLevel,
     GenerationJob,
@@ -65,6 +66,7 @@ PAGES = {
     "maintenance": "/maintenance",
     "settings": "/settings",
     "operators": "/operators",
+    "administration": "/administration",
 }
 
 PAGE_ALIASES = {
@@ -82,6 +84,7 @@ PAGE_ALIASES = {
     "обслуживание": "maintenance",
     "настройки": "settings",
     "операторы": "operators",
+    "администрирование": "administration",
 }
 
 
@@ -127,6 +130,8 @@ GLOSSARY = {
 LIMIT = 12
 MAX_FILE_BYTES = 40_960
 LOG_TAIL = 80
+DIAGNOSE_LOG_TAIL = 24
+SNAPSHOT_LIST_LIMIT = 20
 DOCKER_LOG_TIMEOUT = 8
 COMPOSE_SERVICES = frozenset(
     {
@@ -472,12 +477,33 @@ def list_proxies(db: Session) -> list[dict[str, Any]]:
     ]
 
 
-def list_operators(db: Session) -> dict[str, Any]:
+def list_operators(db: Session, *, as_owner: bool = True) -> dict[str, Any]:
     from app.config import settings
     from app.panel.settings_store import get_or_create_panel_settings
 
     panel = get_or_create_panel_settings(db)
     rows = db.scalars(select(PanelOperator).order_by(PanelOperator.created_at.desc())).all()
+    operators = [
+        {
+            "id": row.id,
+            "label": row.label,
+            "active": row.revoked_at is None,
+            "created_at": _when(row.created_at),
+            "revoked_at": _when(row.revoked_at),
+            "last_used_at": _when(row.last_used_at),
+        }
+        for row in rows
+    ]
+    auth_required = bool(settings.admin_token) or bool(panel.master_password_hash)
+    if not as_owner:
+        return {
+            "how": (
+                "Операторы — отдельные пароли на странице Доступы; отозванный оператор "
+                "больше не входит. Секретный URL и токен владельца чат оператору не показывает."
+            ),
+            "auth_required": auth_required,
+            "operators": operators,
+        }
     return {
         "how": (
             "Панель открывается по секретному URL (entry_path). Владелец входит "
@@ -486,18 +512,8 @@ def list_operators(db: Session) -> dict[str, Any]:
         ),
         "entry_path": panel.entry_path,
         "owner_token": settings.admin_token or None,
-        "auth_required": bool(settings.admin_token) or bool(panel.master_password_hash),
-        "operators": [
-            {
-                "id": row.id,
-                "label": row.label,
-                "active": row.revoked_at is None,
-                "created_at": _when(row.created_at),
-                "revoked_at": _when(row.revoked_at),
-                "last_used_at": _when(row.last_used_at),
-            }
-            for row in rows
-        ],
+        "auth_required": auth_required,
+        "operators": operators,
     }
 
 
@@ -702,7 +718,256 @@ def account_logs(
     )
 
 
-def diagnose(db: Session, *, tail: int = LOG_TAIL) -> dict[str, Any]:
+def _aware(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _clip_list(rows: list[Any], key: str) -> dict[str, Any]:
+    clipped = rows[:SNAPSHOT_LIST_LIMIT]
+    payload: dict[str, Any] = {key: clipped}
+    omitted = len(rows) - len(clipped)
+    if omitted:
+        payload[f"{key}_omitted"] = omitted
+    return payload
+
+
+def _merge_hints(*blocks: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for block in blocks:
+        for hint in block.get("hints") or []:
+            if hint not in seen:
+                seen.add(hint)
+                out.append(hint)
+    return out
+
+
+def _posting_snapshot(db: Session, *, queue_idle: bool, foreign_alive: bool) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    counted = dict(db.execute(select(PostJob.status, func.count()).group_by(PostJob.status)).all())
+    posts_by_status = {_status_value(s): n for s, n in counted.items()}
+    awaiting_review = int(posts_by_status.get(PostJobStatus.awaiting_review.value, 0))
+    running = int(posts_by_status.get(PostJobStatus.running.value, 0))
+    failed_dead = int(posts_by_status.get(PostJobStatus.failed.value, 0)) + int(
+        posts_by_status.get(PostJobStatus.dead.value, 0)
+    )
+
+    queued_due = 0
+    queued = db.scalars(select(PostJob).where(PostJob.status == PostJobStatus.queued)).all()
+    for job in queued:
+        when = _aware(job.scheduled_for)
+        if when is not None and when <= now:
+            queued_due += 1
+
+    not_active = (
+        AccountStatus.challenge,
+        AccountStatus.cooldown,
+        AccountStatus.blocked,
+        AccountStatus.paused,
+    )
+    accounts_not_active = [
+        {"id": a.id, "username": a.username, "status": _status_value(a.status)}
+        for a in db.scalars(select(Account).where(Account.status.in_(not_active)).order_by(Account.id)).all()
+    ]
+    proxies_unhealthy = [
+        {"id": p.id, "label": p.label}
+        for p in db.scalars(select(Proxy).where(Proxy.is_healthy.is_(False)).order_by(Proxy.id)).all()
+    ]
+
+    hints: list[str] = []
+    if queued_due and queue_idle:
+        hints.append("очередь queued_due при мёртвом воркере — start_worker")
+    if queued_due and foreign_alive:
+        hints.append("чужой воркер жив (Docker/терминал) — не start_worker, очередь должна ехать")
+    if awaiting_review:
+        hints.append("ждут approve_job (hold_for_review)")
+    if failed_dead:
+        hints.append("failed/dead публикации — job_logs по id")
+    if accounts_not_active:
+        hints.append("аккаунт не active — account_logs / test_connection")
+    if proxies_unhealthy:
+        hints.append("прокси unhealthy — test_proxy; не списывать любую ошибку на прокси")
+
+    out: dict[str, Any] = {
+        "hints": hints,
+        "posts_by_status": posts_by_status,
+        "queued_due": queued_due,
+        "awaiting_review": awaiting_review,
+        "running": running,
+    }
+    out.update(_clip_list(accounts_not_active, "accounts_not_active"))
+    out.update(_clip_list(proxies_unhealthy, "proxies_unhealthy"))
+    return out
+
+
+_LOGIN_RUN_KINDS = (
+    DiagnosticRunKind.first_login,
+    DiagnosticRunKind.connection_test,
+    DiagnosticRunKind.mint_mobile_session,
+    DiagnosticRunKind.browser_session,
+)
+_NOT_ACTIVE = (
+    AccountStatus.challenge,
+    AccountStatus.cooldown,
+    AccountStatus.blocked,
+    AccountStatus.paused,
+)
+_LOGIN_BLOCKED = (AccountStatus.challenge, AccountStatus.cooldown, AccountStatus.blocked)
+
+
+def _session_missing(account: Account) -> bool:
+    from app.accounts.cookie_formats import STUDIO_PLATFORMS, studio_session_ready
+    from app.accounts.session_export import export_sessionid
+
+    platform = _account_platform(account)
+    if platform in STUDIO_PLATFORMS:
+        return not studio_session_ready(account.username, platform)
+    return export_sessionid(account.username, db_session_id=account.session_id) is None
+
+
+def _login_snapshot(db: Session) -> dict[str, Any]:
+    accounts = list(db.scalars(select(Account).order_by(Account.id)).all())
+    counted: dict[str, int] = {}
+    not_active: list[dict[str, Any]] = []
+    no_proxy: list[dict[str, Any]] = []
+    missing_session: list[dict[str, Any]] = []
+    missing_ig = False
+    missing_studio = False
+    blocked_login = False
+    for account in accounts:
+        status = _status_value(account.status)
+        counted[status] = counted.get(status, 0) + 1
+        platform = _account_platform(account)
+        row = {
+            "id": account.id,
+            "username": account.username,
+            "status": status,
+            "platform": platform,
+        }
+        if account.status in _NOT_ACTIVE:
+            not_active.append({**row, "cooldown_until": _when(account.cooldown_until)})
+        if account.status in _LOGIN_BLOCKED:
+            blocked_login = True
+        if account.proxy_id is None:
+            no_proxy.append({"id": account.id, "username": account.username, "platform": platform})
+        if _session_missing(account):
+            missing_session.append({"id": account.id, "username": account.username, "platform": platform})
+            if platform in ("youtube", "tiktok"):
+                missing_studio = True
+            else:
+                missing_ig = True
+
+    failed_stmt = (
+        select(DiagnosticRun, Account)
+        .join(Account, Account.id == DiagnosticRun.account_id)
+        .where(
+            DiagnosticRun.kind.in_(_LOGIN_RUN_KINDS),
+            DiagnosticRun.status.in_((DiagnosticRunStatus.fail, DiagnosticRunStatus.warn)),
+        )
+        .order_by(DiagnosticRun.created_at.desc())
+    )
+    failed_runs = [
+        {
+            "account_id": account.id,
+            "username": account.username,
+            "kind": _status_value(run.kind),
+            "status": _status_value(run.status),
+            "summary": _redact_diag_message(run.summary or ""),
+            "at": _when(run.created_at),
+        }
+        for run, account in db.execute(failed_stmt).all()
+    ]
+
+    hints: list[str] = []
+    if blocked_login:
+        hints.append("аккаунт challenge/cooldown/blocked — account_logs (first_login / connection_test)")
+    if missing_ig:
+        hints.append("нет сессии Instagram — get_session / first_login")
+    if missing_studio:
+        hints.append("нет state.json Studio — import_cookies или start_browser в run")
+    if failed_runs:
+        hints.append("failed diagnostic runs — account_logs по id")
+    if no_proxy:
+        hints.append("нет proxy_id — attach_proxy / ask_operator")
+
+    out: dict[str, Any] = {
+        "hints": hints,
+        "accounts_by_status": counted,
+    }
+    out.update(_clip_list(not_active, "not_active"))
+    out.update(_clip_list(no_proxy, "no_proxy"))
+    out.update(_clip_list(missing_session, "missing_session"))
+    out.update(_clip_list(failed_runs, "failed_runs"))
+    return out
+
+
+def _proxies_snapshot(db: Session) -> dict[str, Any]:
+    from app.geo.country_codes import countries_mismatch
+
+    proxies = list(db.scalars(select(Proxy).order_by(Proxy.id)).all())
+    unhealthy: list[dict[str, Any]] = []
+    never_checked: list[dict[str, Any]] = []
+    geo_mismatch: list[dict[str, Any]] = []
+    unhealthy_ids: set[int] = set()
+    labels: dict[int, str] = {}
+    for proxy in proxies:
+        labels[proxy.id] = proxy.label
+        row = {
+            "id": proxy.id,
+            "label": proxy.label,
+            "last_checked_at": _when(proxy.last_checked_at),
+            "advertised_country": proxy.country,
+            "last_geo_country": proxy.last_geo_country,
+        }
+        if not proxy.is_healthy:
+            unhealthy.append(row)
+            unhealthy_ids.add(proxy.id)
+        if proxy.last_checked_at is None:
+            never_checked.append({"id": proxy.id, "label": proxy.label})
+        if countries_mismatch(proxy.country, proxy.last_geo_country):
+            geo_mismatch.append(
+                {
+                    "id": proxy.id,
+                    "label": proxy.label,
+                    "advertised_country": proxy.country,
+                    "last_geo_country": proxy.last_geo_country,
+                }
+            )
+
+    accounts_on_unhealthy = (
+        [
+            {
+                "id": account.id,
+                "username": account.username,
+                "label": labels.get(account.proxy_id) or "",
+            }
+            for account in db.scalars(
+                select(Account).where(Account.proxy_id.in_(unhealthy_ids)).order_by(Account.id)
+            ).all()
+        ]
+        if unhealthy_ids
+        else []
+    )
+
+    hints: list[str] = []
+    if unhealthy:
+        hints.append("прокси unhealthy — test_proxy; не списывать любую ошибку на прокси")
+    if never_checked:
+        hints.append("прокси never_checked — test_proxy")
+    if geo_mismatch:
+        hints.append("geo_mismatch advertised vs last_geo_country — цитировать страны, TZ не выдумывать")
+
+    out: dict[str, Any] = {"hints": hints}
+    out.update(_clip_list(unhealthy, "unhealthy"))
+    out.update(_clip_list(never_checked, "never_checked"))
+    out.update(_clip_list(geo_mismatch, "geo_mismatch"))
+    out.update(_clip_list(accounts_on_unhealthy, "accounts_on_unhealthy"))
+    return out
+
+
+def diagnose(db: Session, *, tail: int = DIAGNOSE_LOG_TAIL) -> dict[str, Any]:
     from app.config import get_settings
     from app.scheduler.heartbeat import worker_status
     from app.services import runtime, worker_control
@@ -713,15 +978,25 @@ def diagnose(db: Session, *, tail: int = LOG_TAIL) -> dict[str, Any]:
     ollama = runtime.probe(settings)
     log_path = Path(settings.log_file) if settings.log_file else None
     app_log, app_log_reason = _tail_log(log_path, tail)
+    foreign_alive = beat.known and not beat.stale and not running.alive
+    queue_idle = (not running.alive) and (not beat.known or beat.stale)
+    posting = _posting_snapshot(db, queue_idle=queue_idle, foreign_alive=foreign_alive)
+    login = _login_snapshot(db)
+    proxies = _proxies_snapshot(db)
     return {
+        "hints": _merge_hints(posting, login, proxies),
         "worker": {
             "ours_alive": running.alive,
             "pid": running.pid,
             "heartbeat_known": beat.known,
             "seen_at": _when(beat.seen_at),
             "stale": beat.stale,
+            "foreign_alive": foreign_alive,
             "note": beat.note,
         },
+        "posting": posting,
+        "login": login,
+        "proxies": proxies,
         "ollama": {
             "reachable": ollama.reachable,
             "base_url": ollama.base_url,
@@ -1236,10 +1511,14 @@ def start_worker(db: Session) -> dict[str, Any]:
     beat = worker_status(db)
     ours = worker_control.status()
     if beat.known and not beat.stale and not ours.alive:
-        raise ToolError(
-            "Агент уже работает (терминал или Docker). "
-            "Панель может остановить только процесс, который запустила сама."
-        )
+        return {
+            "running": True,
+            "ours": False,
+            "skipped": True,
+            "pid": ours.pid,
+            "note": beat.note,
+            "сообщение": "очередь уже крутит чужой процесс (Docker/терминал), start не нужен",
+        }
     try:
         worker_control.start()
     except worker_control.WorkerProblem as exc:

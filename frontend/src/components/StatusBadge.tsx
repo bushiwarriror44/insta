@@ -39,7 +39,7 @@ const STYLES: Record<string, string> = {
 const LABELS: Record<string, string> = {
   active: "Активен",
   paused: "Пауза",
-  challenge: "Проверка",
+  challenge: "Челлендж",
   blocked: "Заблокирован",
   cooldown: "Пауза IG",
   awaiting_review: "На проверке",

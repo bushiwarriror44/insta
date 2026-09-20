@@ -33,6 +33,16 @@ def test_generate_fingerprint_country_fallback(app_env):
     assert fp.country_code == 1
 
 
+def test_generate_fingerprint_armenia(app_env):
+    fp = generate_fingerprint("AM", timezone_id="Asia/Yerevan")
+    assert fp.country == "AM"
+    assert fp.country_code == 374
+    assert fp.locale in ("hy_AM", "en_AM")
+    assert fp.timezone_offset == 14400
+    ds = fp.settings["device_settings"]
+    assert ds["app_version"] in {"428.0.0.47.67", "446.0.0.49.77", "448.0.0.0.20"}
+
+
 def test_generate_fingerprint_uuids_unique(app_env):
     a = generate_fingerprint("US")
     b = generate_fingerprint("US")

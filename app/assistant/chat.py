@@ -37,7 +37,10 @@ URL прокси, токен владельца, содержимое файло
 или что запланировано — сначала смотри. Спросили пароль, прокси или файл — \
 открой `account_details` / `list_proxies` / `read_project_file` и отдай как есть. \
 Спросили, что сломалось, что упало в коде или почему стек молчит — сначала \
-`diagnose`, не память. Конкретная публикация — `job_logs`. Логи входа аккаунта — \
+`diagnose`, не память. Сломался постинг — `diagnose`, затем ветка \
+«Если постинг сломался» из справочника. Сломался вход — `diagnose`, затем ветка \
+«Если вход сломался». Сломался прокси — `diagnose`, затем ветка «Если прокси сломался». \
+Конкретная публикация — `job_logs`. Логи входа аккаунта — \
 `account_logs`. Логи Docker/compose — `docker_logs`. Как работают доступы — `list_operators`. \
 Спросили, что ты умеешь, как и что для этого нужно — ответь блоком \
 «Я сам / Только в UI / Нужно от оператора» из справочника.
@@ -110,6 +113,7 @@ PATH_TITLES = {
     "/maintenance": "Обслуживание",
     "/operators": "Доступы",
     "/settings": "Настройки",
+    "/administration": "Администрирование",
 }
 TITLE_PATHS = {title: path for path, title in PATH_TITLES.items()}
 
@@ -301,7 +305,7 @@ TOOLS = [
     ),
     schema(
         "list_operators",
-        "Как устроены доступы: секретный URL, токен владельца, операторы.",
+        "Как устроены доступы. Владельцу — секретный URL и токен; оператору — только список операторов.",
         {},
         [],
     ),
@@ -557,8 +561,8 @@ TOOLS = [
     ),
     schema(
         "diagnose",
-        "Стек: воркер, Ollama, ошибки БД и хвост data/app.log. Вызови, когда сломалось. Не выдумывай, если лога нет.",
-        {"tail": {"type": "integer", "description": "сколько строк app.log, по умолчанию 80"}},
+        "Стек, постинг, вход и прокси: воркер, блоки posting / login / proxies (очередь, сессии, DiagnosticRun, geo, hints), Ollama, ошибки БД, хвост data/app.log. Вызови, когда сломался постинг, вход, прокси или стек. Не выдумывай, если лога нет.",
+        {"tail": {"type": "integer", "description": "сколько строк app.log, по умолчанию 24"}},
         [],
     ),
     schema(
@@ -599,7 +603,7 @@ TOOLS = [
     ),
     schema(
         "start_worker",
-        "Запустить воркер панели. Если уже крутится Docker/терминал — вернёт ошибку, не выдумывай.",
+        "Запустить воркер панели. Если уже крутится Docker/терминал — вернёт skipped, не ошибку: очередь должна ехать, второй процесс не нужен.",
         {},
         [],
     ),
@@ -905,6 +909,7 @@ def run_tool(
     settings: Settings | None = None,
     token: str | None = None,
     allow_browser: bool = False,
+    viewer_role: str | None = None,
 ) -> tuple[Any, Opened | None]:
     if name == "overview":
         return tools.overview(db), None
@@ -1028,7 +1033,7 @@ def run_tool(
     if name == "account_details":
         return tools.account_details(db, _row_id(args, "account_id")), None
     if name == "list_operators":
-        return tools.list_operators(db), None
+        return tools.list_operators(db, as_owner=viewer_role != "operator"), None
     if name == "list_project_files":
         return tools.list_project_files(_optional_text(args, "path")), None
     if name == "read_project_file":
@@ -1119,7 +1124,7 @@ def run_tool(
         return _ask_operator(args), None
     if name == "diagnose":
         tail = args.get("tail")
-        return tools.diagnose(db, tail=int(tail or tools.LOG_TAIL)), None
+        return tools.diagnose(db, tail=int(tail or tools.DIAGNOSE_LOG_TAIL)), None
     if name == "docker_logs":
         tail = args.get("tail")
         return tools.docker_logs(str(args.get("service") or ""), tail=int(tail or tools.LOG_TAIL)), None
@@ -1390,6 +1395,7 @@ class Step:
     kind: str
     text: str = ""
     questions: list[str] = field(default_factory=list)
+    name: str = ""
 
 
 def describe(name: str, args: dict[str, Any]) -> str:
@@ -1456,7 +1462,7 @@ def describe(name: str, args: dict[str, Any]) -> str:
         "attach_proxy": "привязываю прокси",
         "page_guide": "смотрю справочник страницы",
         "ask_operator": "уточняю у оператора",
-        "diagnose": "смотрю стек и логи",
+        "diagnose": "смотрю постинг, вход и прокси",
         "docker_logs": "читаю логи docker",
         "approve_job": "одобряю публикацию",
         "cancel_job": "отменяю публикацию",
@@ -1541,6 +1547,7 @@ def stream(
     job_id: int | None = None,
     allow_browser: bool = False,
     rounds: int | None = None,
+    viewer_role: str | None = None,
 ) -> Iterator[Step | Answer]:
     settings = settings or get_settings()
     if not settings.agent_base_url:
@@ -1595,7 +1602,7 @@ def stream(
             for call in calls:
                 name, args = _read_call(call)
                 used.append(name)
-                yield Step(kind="tool", text=describe(name, args))
+                yield Step(kind="tool", text=describe(name, args), name=name)
                 again = (name, json.dumps(args, sort_keys=True, default=str))
                 if again in asked:
                     thread.append(
@@ -1620,6 +1627,7 @@ def stream(
                         settings=settings,
                         token=token,
                         allow_browser=allow_browser,
+                        viewer_role=viewer_role,
                     )
                     if went is not None:
                         opened = went
@@ -1671,6 +1679,7 @@ def ask(
     job_id: int | None = None,
     allow_browser: bool = False,
     rounds: int | None = None,
+    viewer_role: str | None = None,
 ) -> Answer:
     last: Answer | None = None
     for step in stream(
@@ -1683,6 +1692,7 @@ def ask(
         job_id=job_id,
         allow_browser=allow_browser,
         rounds=rounds,
+        viewer_role=viewer_role,
     ):
         if isinstance(step, Answer):
             last = step

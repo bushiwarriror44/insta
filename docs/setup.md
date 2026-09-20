@@ -29,7 +29,7 @@ npm install
 npm run dev
 ```
 
-- API: `http://127.0.0.1:8000` (OpenAPI: `/api/docs`).
+- API: `http://127.0.0.1:8000` (схема: вкладка «Администрирование», JSON `/api/openapi.json`).
 - Vite: `http://127.0.0.1:5173` (`PANEL_BASE_URL`).
 - Панель открывается **не** с `/`, а с секретного пути (страница «Настройки»). Корень без пути — ошибка 500.
 
@@ -121,7 +121,9 @@ CLI внутри стека: `docker compose exec reels-api python -m app.cli st
 | `FAL_MODEL` | модель fal (Wan 2.5 по умолчанию) |
 | `HF_TOKEN` / `HF_VIDEO_MODEL` | Hugging Face Inference |
 | `POLLINATIONS_VIDEO_URL` | публичный T2V; пусто — выключен |
-| `WAN_BASE_URL` | свой GPU HTTP, не compose панели |
+| `WAN_BASE_URL` | свой GPU HTTP, не compose панели. Сборка образа чат+Wan: `docker/salad-gpu` |
+| `SALAD_API_KEY` | ключ Salad Public API для Start/Stop группы с `/administration`. В чат и логи не копировать |
+| `SALAD_ORGANIZATION` / `SALAD_PROJECT` / `SALAD_CONTAINER_GROUP` | slug-имена из кабинета Salad, не URL |
 | `HF_SPACE_ID` | optional Gradio Space, experimental |
 | `DEFAULT_DAILY_POST_CAP` и часы | дефолты новых аккаунтов |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | алерты (необязательно) |

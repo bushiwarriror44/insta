@@ -54,6 +54,8 @@ def test_playwright_context_kwargs_mobile():
     assert kwargs["has_touch"] is True
     assert kwargs["device_scale_factor"] == 3
     assert "Mobile Safari" in kwargs["user_agent"]
+    chrome = kwargs["user_agent"].split("Chrome/")[1].split(" ")[0]
+    assert 130 <= int(chrome.split(".")[0]) <= 140
     assert kwargs["viewport"]["width"] >= 320
     assert kwargs["viewport"]["height"] >= 640
 
@@ -69,6 +71,8 @@ def test_playwright_context_kwargs_desktop():
     assert kwargs["has_touch"] is False
     assert kwargs["device_scale_factor"] == 1
     assert "Windows NT" in kwargs["user_agent"]
+    chrome = kwargs["user_agent"].split("Chrome/")[1].split(" ")[0]
+    assert 130 <= int(chrome.split(".")[0]) <= 140
     assert kwargs["viewport"] == {"width": 1280, "height": 800}
 
 

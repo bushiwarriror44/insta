@@ -91,6 +91,7 @@ _GEO_PROFILES: dict[str, dict[str, Any]] = {
     "RU": {"locales": ["ru_RU"], "country_code": 7, "timezone_offsets": [10800]},
     "UA": {"locales": ["uk_UA"], "country_code": 380, "timezone_offsets": [7200]},
     "KZ": {"locales": ["ru_KZ", "kk_KZ"], "country_code": 7, "timezone_offsets": [18000]},
+    "AM": {"locales": ["hy_AM", "en_AM"], "country_code": 374, "timezone_offsets": [14400]},
 }
 
 
@@ -99,16 +100,9 @@ _GEO_PROFILES: dict[str, dict[str, Any]] = {
 # ``python -m app.cli refresh-app-versions`` (the CLI updates this list in
 # memory for the running process and validates the structure on disk).
 _APP_VERSIONS: list[tuple[str, str]] = [
-    ("336.0.0.40.90", "609053279"),
-    ("339.0.0.30.115", "613090673"),
-    ("342.0.0.32.101", "618306374"),
-    ("348.0.0.46.105", "627300534"),
-    ("351.1.0.39.105", "631903674"),
-    ("360.0.0.41.92", "643217145"),
-    ("367.0.0.27.86", "651420988"),
-    ("373.0.0.39.99", "658104210"),
-    ("380.0.0.42.108", "667231055"),
-    ("387.0.0.44.99", "675318876"),
+    ("428.0.0.47.67", "961145276"),
+    ("446.0.0.49.77", "385211303"),
+    ("448.0.0.0.20", "1065560286"),
 ]
 
 

@@ -6,7 +6,7 @@ export type AssistantFocus = {
 };
 
 export type AssistantStep =
-  | { type: "tool"; text: string }
+  | { type: "tool"; text: string; name?: string }
   | { type: "token"; text: string }
   | { type: "image"; text: string }
   | { type: "ask"; text?: string; questions: string[] }

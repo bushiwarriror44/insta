@@ -491,3 +491,24 @@ class WorkerProcessOut(BaseModel):
     pid: Optional[int] = None
     seen_at: Optional[datetime] = None
     note: str = ""
+
+
+class GpuOut(BaseModel):
+    configured: bool
+    status: Optional[str] = None
+    billing: bool = False
+    allocating_count: int = 0
+    creating_count: int = 0
+    running_count: int = 0
+    stopping_count: int = 0
+    chat_ok: bool = False
+    detail: str = ""
+
+
+class AdminNotesOut(BaseModel):
+    content: str
+    updated_at: Optional[datetime] = None
+
+
+class AdminNotesIn(BaseModel):
+    content: str = Field(default="", max_length=200_000)

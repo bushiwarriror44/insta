@@ -9,8 +9,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.api.deps import AuthPrincipal, DocsOwnerDep
 from app.api.routes import (
     accounts,
+    admin_notes,
     assistant,
     auth,
     browser,
@@ -18,6 +20,7 @@ from app.api.routes import (
     diagnostics,
     events,
     factory,
+    gpu,
     health,
     jobs,
     maintenance,
@@ -102,8 +105,9 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Reels Publisher Admin API",
         version="0.2.0",
-        docs_url="/api/docs",
-        openapi_url="/api/openapi.json",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
         lifespan=lifespan,
     )
 
@@ -131,10 +135,16 @@ def create_app() -> FastAPI:
     app.include_router(publications.router)
     app.include_router(events.router)
     app.include_router(factory.router)
+    app.include_router(gpu.router)
+    app.include_router(admin_notes.router)
     app.include_router(worker.router)
     app.include_router(assistant.router)
     app.include_router(screenshots.router)
     app.include_router(maintenance.router)
+
+    @app.get("/api/openapi.json", include_in_schema=False)
+    def openapi_json(_principal: AuthPrincipal = DocsOwnerDep):
+        return app.openapi()
 
     novnc_dir = Path("/usr/share/novnc")
     if novnc_dir.is_dir():

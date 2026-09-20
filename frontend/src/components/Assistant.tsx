@@ -13,6 +13,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { api, formatApiError } from "../api/client";
 import { ask } from "../api/assistant";
 import { library, search, type PromptGroup } from "../api/prompts";
+import { CHAT_MANUAL, pageHint, toolHint } from "../lib/agentManual";
 import { emitAssistantMutate } from "../lib/assistantMutate";
 import { panelPath } from "../lib/panelHref";
 import { SHOW_ASSISTANT } from "../lib/uiEvents";
@@ -57,7 +58,7 @@ const LOOKED_AT: Record<string, string> = {
   attach_proxy: "привязал прокси",
   page_guide: "посмотрел справочник страницы",
   ask_operator: "уточнил",
-  diagnose: "посмотрел стек и логи",
+  diagnose: "посмотрел постинг, вход и прокси",
   docker_logs: "прочитал логи docker",
   approve_job: "одобрил публикацию",
   cancel_job: "отменил публикацию",
@@ -209,12 +210,14 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [doing, setDoing] = useState<string[]>([]);
+  const [doingName, setDoingName] = useState<string | null>(null);
   const [writing, setWriting] = useState("");
   const [pending, setPending] = useState<string[]>([]);
   const [seconds, setSeconds] = useState(0);
   const [note, setNote] = useState<string | null>(null);
   const [groups, setGroups] = useState<PromptGroup[]>(() => library([]));
   const [browsing, setBrowsing] = useState(false);
+  const [readingManual, setReadingManual] = useState(false);
   const [needle, setNeedle] = useState("");
   const [hidden, setHidden] = useState(readHidden);
   const [asks, setAsks] = useState<string[]>([]);
@@ -290,9 +293,11 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
       setAsks([]);
       setAskAnswers({});
       setDoing([]);
+      setDoingName(null);
       setWriting("");
       setPending([]);
       setBrowsing(false);
+      setReadingManual(false);
       setBusy(true);
       const controller = new AbortController();
       stop.current = controller;
@@ -303,6 +308,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
           (step) => {
             if (step.type === "tool") {
               setDoing((seen) => [...seen, step.text]);
+              if (step.name) setDoingName(step.name);
             } else if (step.type === "token") {
               setWriting((soFar) => soFar + step.text);
             } else if (step.type === "image") {
@@ -356,6 +362,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         setBusy(false);
         setWriting("");
         setDoing([]);
+        setDoingName(null);
         setPending([]);
         box.current?.focus();
       }
@@ -440,6 +447,11 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                   <ThinkingSparkle quiet={Boolean(writing)} />
                   <span>{writing ? "Пишет…" : doing.length ? doing[doing.length - 1] : `Думает… ${seconds} с`}</span>
                 </div>
+                {!writing && doingName && toolHint(doingName) ? (
+                  <p data-testid="assistant-tool-hint" className="text-xs text-slate-500">
+                    {toolHint(doingName)}
+                  </p>
+                ) : null}
                 {doing.map((what, n) => (
                   <p key={n} className="text-xs text-slate-400">
                     {what}
@@ -488,9 +500,16 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
 
         <div className={`card bg-slate-950/95 p-3 shadow-xl backdrop-blur ${open ? "rounded-t-none border-t-0" : ""}`}>
           <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
-            <div className="flex items-center gap-2">
-              {busy && <ThinkingSparkle quiet={Boolean(writing)} />}
-              <h2 className="text-xs font-semibold text-slate-300">Спросить агента</h2>
+            <div className="min-w-0 flex-1 space-y-1">
+              <div className="flex items-center gap-2">
+                {busy && <ThinkingSparkle quiet={Boolean(writing)} />}
+                <h2 className="text-xs font-semibold text-slate-300">Спросить агента</h2>
+              </div>
+              {!busy ? (
+                <p data-testid="assistant-page-hint" className="text-xs text-slate-500">
+                  {pageHint(page)}
+                </p>
+              ) : null}
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-600">открывает страницы здесь, в этой вкладке</span>
@@ -512,9 +531,28 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
               className="input resize-none min-h-[40px]"
             />
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-              <button type="button" onClick={() => setBrowsing((seen) => !seen)} className="btn-ghost text-xs">
-                {browsing ? "Скрыть примеры" : "Что можно спросить"}
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBrowsing((seen) => !seen);
+                    setReadingManual(false);
+                  }}
+                  className="btn-ghost text-xs"
+                >
+                  {browsing ? "Скрыть примеры" : "Что можно спросить"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReadingManual((seen) => !seen);
+                    setBrowsing(false);
+                  }}
+                  className="btn-ghost text-xs"
+                >
+                  {readingManual ? "Скрыть мануал" : "Мануал"}
+                </button>
+              </div>
               <div className="flex items-center gap-2">
                 {busy && (
                   <button type="button" onClick={() => stop.current?.abort()} className="btn-ghost">
@@ -550,6 +588,23 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
               </div>
             </div>
           </form>
+          {readingManual && (
+            <div
+              className="mt-3 max-h-64 space-y-3 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950/50 p-4"
+              data-testid="assistant-manual"
+            >
+              {CHAT_MANUAL.map((section) => (
+                <div key={section.id}>
+                  <h3 className="text-xs font-medium text-slate-300">{section.title}</h3>
+                  <div className="mt-1 space-y-1.5 text-xs leading-relaxed text-slate-400">
+                    {section.body.map((paragraph) => (
+                      <p key={paragraph}>{paragraph}</p>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           {browsing && (
             <div className="mt-3 max-h-64 space-y-4 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950/50 p-4">
               <input

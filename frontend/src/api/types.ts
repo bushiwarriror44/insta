@@ -21,6 +21,11 @@ export interface PanelSettingsOut {
   master_password_set: boolean;
 }
 
+export interface AdminNotesOut {
+  content: string;
+  updated_at: string | null;
+}
+
 export interface PanelOperatorOut {
   id: number;
   label: string;
@@ -430,6 +435,18 @@ export interface WorkerProcessOut {
   pid: number | null;
   seen_at: string | null;
   note: string;
+}
+
+export interface GpuOut {
+  configured: boolean;
+  status: string | null;
+  billing: boolean;
+  allocating_count: number;
+  creating_count: number;
+  running_count: number;
+  stopping_count: number;
+  chat_ok: boolean;
+  detail: string;
 }
 
 export interface RenderBackendOut {

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.assistant.chat import run_tool
 from app.assistant.tools import ToolError, list_accounts, open_page, pause_account, plan_account
@@ -145,6 +145,27 @@ def test_list_operators_reads_entry_path_without_changing_it(db_session):
     assert after == before
 
 
+def test_list_operators_hides_gate_from_operator(db_session):
+    import json
+
+    from app.assistant.tools import list_operators
+    from app.panel.settings_store import get_or_create_panel_settings
+
+    secret = get_or_create_panel_settings(db_session).entry_path
+    out = list_operators(db_session, as_owner=False)
+    assert "entry_path" not in out
+    assert "owner_token" not in out
+    assert "operators" in out
+    assert "how" in out
+    leaked = secret in json.dumps(out)
+    assert not leaked
+
+    via_tool, opened = run_tool(db_session, "list_operators", {}, viewer_role="operator")
+    assert opened is None
+    assert "entry_path" not in via_tool
+    assert "owner_token" not in via_tool
+
+
 def test_open_account_and_post_use_panel_query(db_session, make_account, app_env):
     from app.assistant.tools import open_account, open_post
 
@@ -206,6 +227,7 @@ def test_open_page_russian_aliases():
     assert open_page("аккаунты").path == "/accounts"
     assert open_page("библиотека").path == "/publishing"
     assert open_page("активность").path == "/activity"
+    assert open_page("администрирование").path == "/administration"
 
 
 def test_list_proxies_includes_url(db_session, make_account):
@@ -821,6 +843,7 @@ def test_describe_covers_session_and_publish_tools():
         "проверяю и ставлю публикацию"
     )
     assert describe("test_proxies", {}) == "проверяю прокси"
+    assert describe("diagnose", {}) == "смотрю постинг, вход и прокси"
 
 
 def test_read_project_file_stays_inside_repo():
@@ -922,6 +945,55 @@ def test_stream_emits_ask_and_stops(db_session, monkeypatch):
     assert answers[-1].asks == ["какой username?"]
     assert "уточнен" in answers[-1].reply.lower() or "создать" in answers[-1].reply.lower()
     assert answers[-1].used == ["ask_operator"]
+
+
+def test_stream_tool_step_includes_name(db_session, monkeypatch):
+    from app.assistant import chat
+    from app.config import Settings
+
+    monkeypatch.setattr(chat, "_prepare_runtime", lambda settings: None)
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(chat, "http_client", lambda *a, **k: FakeClient())
+
+    n = {"i": 0}
+
+    def fake_complete(client, settings, thread, said, **_kwargs):
+        if False:
+            yield chat.Step(kind="token", text="")
+        n["i"] += 1
+        if n["i"] == 1:
+            return {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "function": {"name": "list_accounts", "arguments": "{}"},
+                    }
+                ],
+            }
+        return {"role": "assistant", "content": "ок"}
+
+    monkeypatch.setattr(chat, "_complete", fake_complete)
+    settings = Settings(_env_file=None)
+    steps = list(
+        chat.stream(
+            db_session,
+            [{"role": "user", "content": "сколько аккаунтов?"}],
+            settings=settings,
+        )
+    )
+    tools = [s for s in steps if isinstance(s, chat.Step) and s.kind == "tool"]
+    assert tools
+    assert tools[0].name == "list_accounts"
+    assert tools[0].text == "смотрю аккаунты"
 
 
 def test_stream_done_includes_created_account_ids(db_session, monkeypatch):
@@ -1050,6 +1122,258 @@ def test_diagnose_tails_app_log(db_session, monkeypatch):
     out = diagnose(db_session, tail=2)
     assert out["app_log"] == ["two", "three"]
     assert out["app_log_reason"] is None
+    assert "posting" in out
+
+
+def test_diagnose_puts_hints_before_app_log_and_caps_default_tail(
+    db_session, monkeypatch
+):
+    import json
+
+    from app.assistant.tools import DIAGNOSE_LOG_TAIL, diagnose
+    from app.config import settings
+    from app.services.runtime import Runtime
+
+    log_file = settings.log_file
+    assert log_file is not None
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    log_file.write_text("\n".join(f"L{i}" for i in range(40)) + "\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "app.services.runtime.probe",
+        lambda settings=None: Runtime(reachable=False, base_url="http://x", detail="test"),
+    )
+    out = diagnose(db_session)
+    assert list(out)[0] == "hints"
+    assert list(out)[-2:] == ["app_log", "app_log_reason"]
+    assert len(out["app_log"]) == DIAGNOSE_LOG_TAIL
+    blob = json.dumps(out, ensure_ascii=False)
+    assert blob.index('"hints"') < blob.index('"app_log"')
+
+
+def test_diagnose_caps_missing_session_list(db_session, make_account, monkeypatch):
+    from app.assistant.tools import SNAPSHOT_LIST_LIMIT, diagnose
+    from app.services.runtime import Runtime
+    from app.services.worker_control import Running
+
+    monkeypatch.setattr(
+        "app.services.runtime.probe",
+        lambda settings=None: Runtime(reachable=False, base_url="http://x", detail="test"),
+    )
+    monkeypatch.setattr("app.services.worker_control.status", lambda: Running(False))
+    for i in range(SNAPSHOT_LIST_LIMIT + 1):
+        make_account(username=f"miss{i}")
+    out = diagnose(db_session)
+    login = out["login"]
+    assert len(login["missing_session"]) == SNAPSHOT_LIST_LIMIT
+    assert login["missing_session_omitted"] == 1
+    assert any("first_login" in hint for hint in login["hints"])
+    assert any("first_login" in hint for hint in out["hints"])
+
+
+def test_diagnose_posting_snapshot_stale_worker_and_challenge(
+    db_session, make_account, make_proxy, app_env, monkeypatch
+):
+    from app.assistant.tools import diagnose
+    from app.db.models import AccountStatus
+    from app.services.runtime import Runtime
+    from app.services.worker_control import Running
+
+    monkeypatch.setattr(
+        "app.services.runtime.probe",
+        lambda settings=None: Runtime(reachable=False, base_url="http://x", detail="test"),
+    )
+    monkeypatch.setattr("app.services.worker_control.status", lambda: Running(False))
+
+    proxy = make_proxy(label="dead-px", is_healthy=False)
+    account = make_account(username="challenged", proxy=proxy, status=AccountStatus.challenge)
+    due = PostJob(
+        account_id=account.id,
+        source_video_path=str(app_env.video_source_dir / "clip.mp4"),
+        scheduled_for=datetime.now(timezone.utc) - timedelta(hours=1),
+        status=PostJobStatus.queued,
+        title="due",
+    )
+    later = PostJob(
+        account_id=account.id,
+        source_video_path=str(app_env.video_source_dir / "clip.mp4"),
+        scheduled_for=datetime.now(timezone.utc) + timedelta(days=1),
+        status=PostJobStatus.queued,
+        title="later",
+    )
+    db_session.add_all([due, later])
+    db_session.commit()
+
+    out = diagnose(db_session)
+    posting = out["posting"]
+    assert posting["queued_due"] == 1
+    assert posting["posts_by_status"]["queued"] == 2
+    assert posting["awaiting_review"] == 0
+    assert posting["accounts_not_active"] == [
+        {"id": account.id, "username": "challenged", "status": "challenge"}
+    ]
+    assert posting["proxies_unhealthy"] == [{"id": proxy.id, "label": "dead-px"}]
+    assert any("start_worker" in hint for hint in posting["hints"])
+    assert any("account_logs" in hint for hint in posting["hints"])
+    assert any("test_proxy" in hint for hint in posting["hints"])
+    assert out["worker"]["foreign_alive"] is False
+    assert not any("очередь должна ехать" in hint for hint in posting["hints"])
+
+
+def test_diagnose_foreign_worker_queued_due_does_not_ask_start(
+    db_session, make_account, app_env, monkeypatch
+):
+    from app.assistant.tools import diagnose
+    from app.db.models import WorkerBeat
+    from app.services.runtime import Runtime
+    from app.services.worker_control import Running
+
+    monkeypatch.setattr(
+        "app.services.runtime.probe",
+        lambda settings=None: Runtime(reachable=False, base_url="http://x", detail="test"),
+    )
+    monkeypatch.setattr("app.services.worker_control.status", lambda: Running(False))
+    db_session.add(
+        WorkerBeat(
+            name="worker",
+            seen_at=datetime.now(timezone.utc),
+            period_seconds=20.0,
+            note="docker",
+        )
+    )
+    account = make_account()
+    db_session.add(
+        PostJob(
+            account_id=account.id,
+            source_video_path=str(app_env.video_source_dir / "clip.mp4"),
+            scheduled_for=datetime.now(timezone.utc) - timedelta(hours=1),
+            status=PostJobStatus.queued,
+            title="due",
+        )
+    )
+    db_session.commit()
+
+    out = diagnose(db_session)
+    assert out["worker"]["foreign_alive"] is True
+    assert out["worker"]["ours_alive"] is False
+    assert out["worker"]["stale"] is False
+    assert out["posting"]["queued_due"] == 1
+    hints = out["posting"]["hints"]
+    assert any("очередь должна ехать" in hint for hint in hints)
+    assert any("не start_worker" in hint for hint in hints)
+    assert not any("мёртвом воркере" in hint for hint in hints)
+
+
+def test_diagnose_posting_awaiting_review_hint(db_session, make_account, app_env, monkeypatch):
+    from app.assistant.tools import diagnose
+    from app.services.runtime import Runtime
+    from app.services.worker_control import Running
+
+    monkeypatch.setattr(
+        "app.services.runtime.probe",
+        lambda settings=None: Runtime(reachable=False, base_url="http://x", detail="test"),
+    )
+    monkeypatch.setattr("app.services.worker_control.status", lambda: Running(True, 1))
+    from app.db.models import WorkerBeat
+
+    beat = WorkerBeat(
+        name="worker",
+        seen_at=datetime.now(timezone.utc),
+        period_seconds=20,
+        pid=1,
+        note="",
+    )
+    db_session.add(beat)
+    account = make_account()
+    job = PostJob(
+        account_id=account.id,
+        source_video_path=str(app_env.video_source_dir / "clip.mp4"),
+        scheduled_for=datetime.now(timezone.utc),
+        status=PostJobStatus.awaiting_review,
+        title="hold",
+    )
+    failed = PostJob(
+        account_id=account.id,
+        source_video_path=str(app_env.video_source_dir / "clip.mp4"),
+        scheduled_for=datetime.now(timezone.utc),
+        status=PostJobStatus.failed,
+        title="boom",
+        last_error="ffmpeg died",
+    )
+    db_session.add_all([job, failed])
+    db_session.commit()
+
+    out = diagnose(db_session)
+    posting = out["posting"]
+    assert posting["awaiting_review"] == 1
+    assert posting["queued_due"] == 0
+    assert any("approve_job" in hint for hint in posting["hints"])
+    assert any("job_logs" in hint for hint in posting["hints"])
+    assert not any("start_worker" in hint for hint in posting["hints"])
+
+
+def test_diagnose_login_and_proxy_snapshots(
+    db_session, make_account, make_proxy, monkeypatch
+):
+    from app.assistant.tools import diagnose
+    from app.db.models import (
+        Account,
+        AccountStatus,
+        DiagnosticRun,
+        DiagnosticRunKind,
+        DiagnosticRunStatus,
+        Platform,
+    )
+    from app.services.runtime import Runtime
+    from app.services.worker_control import Running
+
+    monkeypatch.setattr(
+        "app.services.runtime.probe",
+        lambda settings=None: Runtime(reachable=False, base_url="http://x", detail="test"),
+    )
+    monkeypatch.setattr("app.services.worker_control.status", lambda: Running(False))
+
+    proxy = make_proxy(label="dead-px", is_healthy=False, country="US")
+    proxy.last_geo_country = "DE"
+    proxy.last_checked_at = datetime.now(timezone.utc)
+    db_session.commit()
+
+    challenged = make_account(username="challenged", proxy=proxy, status=AccountStatus.challenge)
+    run = DiagnosticRun(
+        kind=DiagnosticRunKind.first_login,
+        account_id=challenged.id,
+        status=DiagnosticRunStatus.fail,
+        summary="Instagram не выдал sessionid — splash",
+    )
+    lonely = Account(username="noproxy", password="x")
+    studio = make_account(username="ytno", platform=Platform.youtube)
+    db_session.add_all([run, lonely])
+    db_session.commit()
+
+    out = diagnose(db_session)
+    login = out["login"]
+    proxies = out["proxies"]
+
+    assert any(row["username"] == "challenged" and row["status"] == "challenge" for row in login["not_active"])
+    assert login["failed_runs"]
+    assert login["failed_runs"][0]["kind"] == "first_login"
+    assert "splash" in (login["failed_runs"][0]["summary"] or "")
+    assert any(row["username"] == "noproxy" for row in login["no_proxy"])
+    assert any(row["username"] == "challenged" and row["platform"] == "instagram" for row in login["missing_session"])
+    assert any(row["username"] == "ytno" and row["platform"] == "youtube" for row in login["missing_session"])
+    assert any("account_logs" in hint for hint in login["hints"])
+    assert any("first_login" in hint for hint in login["hints"])
+    assert any("attach_proxy" in hint for hint in login["hints"])
+
+    assert proxies["unhealthy"]
+    assert proxies["unhealthy"][0]["label"] == "dead-px"
+    assert proxies["geo_mismatch"]
+    assert proxies["geo_mismatch"][0]["advertised_country"] == "US"
+    assert proxies["geo_mismatch"][0]["last_geo_country"] == "DE"
+    assert any(row["username"] == "challenged" for row in proxies["accounts_on_unhealthy"])
+    assert any("test_proxy" in hint for hint in proxies["hints"])
+    assert any("geo_mismatch" in hint for hint in proxies["hints"])
+    assert "url" not in proxies["unhealthy"][0]
+    assert "session_id" not in login["missing_session"][0]
 
 
 def test_tail_log_reads_from_end_not_whole_file(tmp_path, monkeypatch):
@@ -1125,10 +1449,16 @@ def test_approve_retry_and_cancel_job(db_session, make_account):
     assert retried["status"] == "queued"
 
 
-def test_start_worker_refuses_foreign_heartbeat(db_session):
+def test_start_worker_skips_when_foreign_heartbeat(db_session, monkeypatch):
     from app.assistant.tools import start_worker
     from app.db.models import WorkerBeat
+    from app.services.worker_control import Running
 
+    monkeypatch.setattr("app.services.worker_control.status", lambda: Running(False))
+    def _no_start():
+        raise AssertionError("must not spawn")
+
+    monkeypatch.setattr("app.services.worker_control.start", _no_start)
     db_session.add(
         WorkerBeat(
             name="worker",
@@ -1138,12 +1468,11 @@ def test_start_worker_refuses_foreign_heartbeat(db_session):
         )
     )
     db_session.commit()
-    try:
-        start_worker(db_session)
-    except ToolError as exc:
-        assert "Docker" in str(exc) or "терминал" in str(exc)
-    else:
-        raise AssertionError("expected ToolError")
+    out = start_worker(db_session)
+    assert out["skipped"] is True
+    assert out["ours"] is False
+    assert out["running"] is True
+    assert "start не нужен" in (out.get("сообщение") or "")
 
 
 def test_stop_worker_asks_before_stopping(db_session):

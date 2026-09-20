@@ -55,7 +55,12 @@ def get_or_create_panel_settings(db: Session) -> PanelSettings:
     row = db.get(PanelSettings, 1)
     if row is not None:
         return row
-    row = PanelSettings(id=1, entry_path=generate_entry_path(), master_password_hash=None)
+    row = PanelSettings(
+        id=1,
+        entry_path=generate_entry_path(),
+        master_password_hash=None,
+        admin_notes="",
+    )
     db.add(row)
     db.commit()
     db.refresh(row)

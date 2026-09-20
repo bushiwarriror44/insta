@@ -1,6 +1,6 @@
 # HTTP API панели
 
-Интерактивная схема: `http://127.0.0.1:8000/api/docs` (OpenAPI JSON: `/api/openapi.json`). Этот файл **не** дублирует весь OpenAPI — только вход и маршруты, которые путают с чатом.
+Интерактивная схема — вкладка **Администрирование** (`/administration`) в панели. OpenAPI JSON: `/api/openapi.json` (без пароля — открытый режим; иначе только владелец). Этот файл **не** дублирует весь OpenAPI — только вход и маршруты, которые путают с чатом.
 
 Заголовок почти везде:
 
@@ -37,7 +37,7 @@ CORS: `CORS_ALLOWED_ORIGINS` (Vite `:5173`, Docker UI `:3000`).
 
 ### Stream — `POST /api/assistant/stream`
 
-То же тело, что у чата. `Content-Type: text/event-stream`. Каждое событие: `data: {json}\n\n`. Виды: промежуточные `Step`, финал `type=done` с полями ответа, либо `type=error`.
+То же тело, что у чата. `Content-Type: text/event-stream`. Каждое событие: `data: {json}\n\n`. Виды: промежуточные `Step` (`type=tool` с `text` и `name` инструмента), финал `type=done` с полями ответа, либо `type=error`.
 
 ### Автономный run — `POST /api/assistant/run`
 
@@ -71,7 +71,7 @@ CORS: `CORS_ALLOWED_ORIGINS` (Vite `:5173`, Docker UI `:3000`).
 
 Из нижнего чата эти маршруты не вызываются. Run вызывает обёртки tools.
 
-## Соседние группы (смотреть в `/api/docs`)
+## Соседние группы (смотреть во вкладке Администрирование)
 
 Неполный указатель, чтобы не искать вслепую:
 
@@ -80,7 +80,9 @@ CORS: `CORS_ALLOWED_ORIGINS` (Vite `:5173`, Docker UI `:3000`).
 - `/api/jobs` — очередь публикаций, approve / cancel / retry, логи.
 - `/api/generations`, `/api/generations/backends`, `/api/compositions` — рендер (auto/fal/…) и склейка.
 - `POST /api/accounts/{id}/plan` | `/preview` | `/week` — контент-план.
-- `/api/worker/start` | `/stop` — воркер панели.
+- `/api/worker/start` | `/stop` — воркер панели (очередь), не GPU Salad.
+- `/api/gpu` | `/start` | `/stop` — контейнерная группа Salad (владелец / открытый режим). Ключ в ответах нет.
+- `/api/admin-notes` — блокнот на Администрировании (владелец / открытый режим). Чат не вызывает.
 - `/api/maintenance/runtime` — Ollama; `POST /api/maintenance/backups` — копия БД.
 - `/api/settings`, `/api/operators` — только владелец (секретный путь, мастер-пароль, операторы).
 
@@ -88,4 +90,4 @@ CORS: `CORS_ALLOWED_ORIGINS` (Vite `:5173`, Docker UI `:3000`).
 
 ## Безопасность примеров
 
-Не вставляйте в тикеты: `entry_path`, `ADMIN_TOKEN`, пароли, TOTP, URL прокси с логином, содержимое `state.json`. Для curl — `YOUR_ADMIN_TOKEN` и `http://USER:PASS@HOST:PORT`.
+Не вставляйте в тикеты: `entry_path`, `ADMIN_TOKEN`, `SALAD_API_KEY`, пароли, TOTP, URL прокси с логином, содержимое `state.json`. Для curl — `YOUR_ADMIN_TOKEN` и `http://USER:PASS@HOST:PORT`.

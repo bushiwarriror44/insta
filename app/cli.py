@@ -248,8 +248,8 @@ def cmd_refresh_app_versions(
     Format::
 
         [
-            {"version": "387.0.0.44.99", "code": "675318876"},
-            {"version": "390.1.0.39.92", "code": "682104221"}
+            {"version": "448.0.0.0.20", "code": "1065560286"},
+            {"version": "446.0.0.49.77", "code": "385211303"}
         ]
     """
     _bootstrap()

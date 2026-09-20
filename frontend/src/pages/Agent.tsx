@@ -9,6 +9,7 @@ import { Loader } from "../components/Loader";
 import { Modal } from "../components/Modal";
 import { PageHeader } from "../components/PageHeader";
 import { useToast } from "../context/ToastContext";
+import { AGENT_PAGE_MANUAL, agentWorkHint } from "../lib/agentManual";
 import { useAssistantMutate } from "../lib/assistantMutate";
 import { refreshNavBadges } from "../lib/uiEvents";
 import type { AccountOut } from "../api/types";
@@ -94,7 +95,39 @@ export function Agent() {
 
   return (
     <div className="space-y-6">
-      <PageHeader icon={Sparkles} title="Контент-агент" />
+      <PageHeader
+        icon={Sparkles}
+        title="Контент-агент"
+        description="План роликов (PlanJob). Нижний чат и тумблер воркера — другие процессы."
+      />
+      <p
+        role="status"
+        data-testid="agent-work-hint"
+        className="rounded-lg border border-slate-800 bg-slate-950/50 px-3 py-2 text-sm text-slate-400"
+      >
+        {agentWorkHint({
+          accounts: accounts.length,
+          brief,
+          questions: questions.length,
+          busy,
+          autoSchedule,
+        })}
+      </p>
+      <section className="card space-y-2 p-4" aria-labelledby="agent-manual-heading">
+        <h2 id="agent-manual-heading" className="text-lg font-semibold text-slate-100">
+          Мануал
+        </h2>
+        {AGENT_PAGE_MANUAL.map((section) => (
+          <details key={section.id} open className="rounded-lg border border-slate-800 bg-slate-950/50 px-3 py-2">
+            <summary className="cursor-pointer text-sm font-medium text-slate-200">{section.title}</summary>
+            <div className="mt-2 space-y-2 text-sm leading-relaxed text-slate-400">
+              {section.body.map((paragraph) => (
+                <p key={paragraph}>{paragraph}</p>
+              ))}
+            </div>
+          </details>
+        ))}
+      </section>
       <Card className="p-4">
         <h2 className="font-medium mb-3">Процесс агента</h2>
         <AgentToggle />

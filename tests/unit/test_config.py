@@ -30,6 +30,11 @@ def test_settings_reads_env_overrides(monkeypatch, tmp_path):
     monkeypatch.setenv("VIDEO_OUT_DIR", str(tmp_path / "alt-vo"))
     monkeypatch.setenv("LOG_FILE", str(tmp_path / "alt.log"))
     monkeypatch.setenv("PROXY_HEALTH_TIMEOUT_SEC", "20")
+    monkeypatch.setenv("WAN_BASE_URL", "https://example.invalid/generate")
+    monkeypatch.setenv("SALAD_API_KEY", "env-salad-key")
+    monkeypatch.setenv("SALAD_ORGANIZATION", "acme")
+    monkeypatch.setenv("SALAD_PROJECT", "gpu")
+    monkeypatch.setenv("SALAD_CONTAINER_GROUP", "insta-gpu")
 
     fresh = Settings()
     assert fresh.database_url == "sqlite:///custom.db"
@@ -40,6 +45,11 @@ def test_settings_reads_env_overrides(monkeypatch, tmp_path):
     assert fresh.proxy_health_timeout_sec == 20
     assert fresh.sessions_dir == tmp_path / "alt-s"
     assert (tmp_path / "alt-s").is_dir()
+    assert fresh.wan_base_url == "https://example.invalid/generate"
+    assert fresh.salad_api_key == "env-salad-key"
+    assert fresh.salad_organization == "acme"
+    assert fresh.salad_project == "gpu"
+    assert fresh.salad_container_group == "insta-gpu"
 
 
 def test_ensure_dir_creates_paths(tmp_path):

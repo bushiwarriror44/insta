@@ -740,6 +740,21 @@ export const api = {
     stop: () => request<import("./types").WorkerProcessOut>("/api/worker/stop", { method: "POST" }),
   },
 
+  gpu: {
+    status: () => request<import("./types").GpuOut>("/api/gpu"),
+    start: () => request<import("./types").GpuOut>("/api/gpu/start", { method: "POST" }),
+    stop: () => request<import("./types").GpuOut>("/api/gpu/stop", { method: "POST" }),
+  },
+
+  adminNotes: {
+    get: () => request<import("./types").AdminNotesOut>("/api/admin-notes"),
+    update: (content: string) =>
+      request<import("./types").AdminNotesOut>("/api/admin-notes", {
+        method: "PUT",
+        body: { content },
+      }),
+  },
+
   maintenance: {
     runtime: () => request<import("./types").RuntimeOut>("/api/maintenance/runtime"),
     setContext: (context: number, model?: string) =>

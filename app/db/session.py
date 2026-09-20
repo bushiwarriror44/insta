@@ -60,6 +60,7 @@ _PENDING_COLUMNS: list[tuple[str, str, str]] = [
     ("post_logs", "save_count", "INTEGER"),
     ("post_logs", "share_count", "INTEGER"),
     ("post_logs", "raw_stats_json", "TEXT"),
+    ("panel_settings", "admin_notes", "TEXT DEFAULT ''"),
 ]
 
 

@@ -8,10 +8,10 @@
 
 | Имя | Что нужно | Стоимость в `cost_usd` |
 | --- | --- | --- |
-| `fal` | `FAL_API_KEY`, модель Wan 2.5 5 или 10 с | прайс fal за секунду |
+| `fal` | `FAL_API_KEY`, модель Wan 2.5 5 или 10 с | прайс fal за секунду (`0.05` USD/с Wan 2.5 в коде) |
 | `huggingface` | свой `HF_TOKEN`, `HF_VIDEO_MODEL` | 0 |
 | `pollinations` | `POLLINATIONS_VIDEO_URL` (ключ необязателен) | 0 |
-| `local` | `WAN_BASE_URL` (Comfy/Wan на отдельной GPU, не в compose панели) | 0 |
+| `local` | `WAN_BASE_URL` (Comfy/Wan на отдельной GPU, не в compose панели). Образ чат+Wan для Salad: [`docker/salad-gpu`](../docker/salad-gpu/README.md) | 0 |
 | `hfspace` | `HF_SPACE_ID`, experimental | 0 |
 
 Чужие утекшие ключи и скрейп случайных GitHub-обёрток не подключаются.
@@ -22,7 +22,7 @@
 
 После постановки статус `queued`: рендерит **воркер**. В автономном run после `create_render` нужен `wait_render`, иначе `publish_now` упрётся в ещё не готовый файл.
 
-Таблица `/renders`: полоса статусов, селект движка, «Поставить рендер», «Отменить» (только `queued`), «Повторить». Чат: `list_renders`, `cancel_render` (с confirm), `retry_render` (`auto` снова идёт по цепочке).
+Таблица `/renders`: полоса статусов, селект движка, «Поставить рендер», «Отменить» (только `queued`), «Повторить». Чат: `list_renders`, `cancel_render` (с confirm), `retry_render` (`auto` снова идёт по цепочке). Что оплачивать и куда: [costs.md](costs.md).
 
 ## Склейка
 

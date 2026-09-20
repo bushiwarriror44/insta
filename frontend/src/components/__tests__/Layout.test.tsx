@@ -99,6 +99,7 @@ describe("Layout", () => {
     expect(screen.getByTestId("nav-activity")).toBeInTheDocument();
     expect(screen.getByTestId("nav-calendar")).toBeInTheDocument();
     expect(screen.getByTestId("nav-maintenance")).toBeInTheDocument();
+    expect(screen.getByTestId("nav-administration")).toBeInTheDocument();
     expect(screen.queryByTestId("nav-operators")).not.toBeInTheDocument();
     expect(screen.getByText("ACC")).toBeInTheDocument();
   });
@@ -115,6 +116,7 @@ describe("Layout", () => {
     renderAt();
     expect(screen.getByTestId("nav-operators")).toBeInTheDocument();
     expect(screen.getByTestId("nav-settings")).toBeInTheDocument();
+    expect(screen.getByTestId("nav-administration")).toBeInTheDocument();
   });
 
   it("hides operators nav for operator role", () => {
@@ -129,6 +131,7 @@ describe("Layout", () => {
     renderAt();
     expect(screen.queryByTestId("nav-operators")).not.toBeInTheDocument();
     expect(screen.queryByTestId("nav-settings")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("nav-administration")).not.toBeInTheDocument();
   });
 
   it("shows the open-mode hint when auth is not required", () => {

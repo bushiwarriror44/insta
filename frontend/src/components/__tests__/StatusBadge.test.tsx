@@ -21,6 +21,9 @@ describe("StatusBadge", () => {
 
     rerender(<StatusBadge value="cooldown" />);
     expect(screen.getByText("Пауза IG").className).toMatch(/orange/);
+
+    rerender(<StatusBadge value="challenge" />);
+    expect(screen.getByText("Челлендж").className).toMatch(/amber/);
   });
 
   it("uses neutral fallback for unknown values", () => {

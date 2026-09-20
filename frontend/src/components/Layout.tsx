@@ -1,4 +1,5 @@
 import {
+  BookOpen,
   CalendarDays,
   Clapperboard,
   Sparkles,
@@ -42,6 +43,7 @@ export function Layout() {
   const { state, logout, authRequired, role } = useAuth();
   const isAuthed = state.state === "authed";
   const isOwner = role === "owner";
+  const showAdmin = isOwner || !authRequired;
   const [dockHidden, setDockHidden] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -124,6 +126,23 @@ export function Layout() {
               ) : null}
             </NavLink>
           ))}
+          {showAdmin ? (
+            <NavLink
+              to="/administration"
+              data-testid="nav-administration"
+              className={({ isActive }) =>
+                clsx(
+                  "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                  isActive
+                    ? "bg-brand-500/15 text-brand-200"
+                    : "text-slate-300 hover:bg-slate-800/60 hover:text-white"
+                )
+              }
+            >
+              <BookOpen size={18} />
+              <span>Администрирование</span>
+            </NavLink>
+          ) : null}
           {isOwner ? (
             <>
               <NavLink

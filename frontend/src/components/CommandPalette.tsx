@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   Activity as ActivityIcon,
   Archive,
+  BookOpen,
   CalendarDays,
   Clapperboard,
   Film,
@@ -40,13 +41,19 @@ const PAGES: { label: string; to: string; icon: LucideIcon }[] = [
   { label: "Обслуживание", to: "/maintenance", icon: Wrench },
 ];
 
+const ADMIN_PAGE: { label: string; to: string; icon: LucideIcon } = {
+  label: "Администрирование",
+  to: "/administration",
+  icon: BookOpen,
+};
+
 const OWNER_PAGES: { label: string; to: string; icon: LucideIcon }[] = [
   { label: "Доступы", to: "/operators", icon: KeyRound },
   { label: "Настройки", to: "/settings", icon: SettingsIcon },
 ];
 
 export function CommandPalette({ onClose }: { onClose: () => void }) {
-  const { role } = useAuth();
+  const { role, authRequired } = useAuth();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const [accounts, setAccounts] = useState<AccountOut[]>([]);
@@ -86,7 +93,11 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   }, []);
 
   const commands = useMemo<Command[]>(() => {
-    const pages = role === "owner" ? [...PAGES, ...OWNER_PAGES] : PAGES;
+    const pages = [
+      ...PAGES,
+      ...(role === "owner" || !authRequired ? [ADMIN_PAGE] : []),
+      ...(role === "owner" ? OWNER_PAGES : []),
+    ];
     const all: Command[] = pages.map((page) => ({
       label: page.label,
       hint: "страница",
@@ -135,7 +146,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       (c) =>
         c.label.toLowerCase().includes(needle) || c.hint.toLowerCase().includes(needle)
     );
-  }, [accounts, clips, jobs, navigate, query, role]);
+  }, [accounts, authRequired, clips, jobs, navigate, query, role]);
 
   useEffect(() => setActive(0), [query, commands.length]);
 

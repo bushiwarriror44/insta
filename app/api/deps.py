@@ -127,8 +127,24 @@ def require_token(
     return principal
 
 
+def require_docs_owner(
+    principal: AuthPrincipal = Depends(resolve_principal),
+    db: Session = Depends(get_db),
+) -> AuthPrincipal:
+    """OpenAPI for the admin tab: open mode, or owner when auth is on."""
+    if not auth_is_required(db):
+        return principal
+    if principal.role != "owner":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Только владелец может смотреть схему API",
+        )
+    return principal
+
+
 AuthDep = Depends(require_token)
 OwnerDep = Depends(require_owner)
+DocsOwnerDep = Depends(require_docs_owner)
 
 
 def verify_ws_token(

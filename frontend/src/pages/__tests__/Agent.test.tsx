@@ -219,4 +219,40 @@ describe("Agent page", () => {
     expect(apiMock.factory.agentRun).toHaveBeenCalledWith(9);
     expect(screen.getByText("plan prompt")).toBeInTheDocument();
   });
+
+  it("renders the operator manual", async () => {
+    await renderReady();
+    expect(screen.getByRole("heading", { name: /^мануал$/i })).toBeInTheDocument();
+    expect(screen.getByText(/не нижний чат/i)).toBeInTheDocument();
+  });
+
+  it("hints when the brief is empty", async () => {
+    apiMock.accounts.list.mockResolvedValue([
+      { id: 1, username: "alice", platform: "instagram", brief: "" },
+    ]);
+    await renderReady();
+    expect(screen.getByTestId("agent-work-hint")).toHaveTextContent(/бриф пустой/i);
+  });
+
+  it("hints when the content agent has an open question", async () => {
+    apiMock.factory.questions.mockResolvedValue([question]);
+    await renderReady();
+    expect(await screen.findByText("Какая ниша?")).toBeInTheDocument();
+    expect(screen.getByTestId("agent-work-hint")).toHaveTextContent(/открытые вопросы/i);
+  });
+
+  it("hints while a plan is being queued", async () => {
+    let resolvePlan!: (value: unknown) => void;
+    apiMock.factory.plan.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePlan = resolve;
+        })
+    );
+    await renderReady();
+    fireEvent.click(screen.getByRole("button", { name: /запланировать/i }));
+    expect(await screen.findByText(/план в очереди planjob/i)).toBeInTheDocument();
+    resolvePlan({ id: 1, status: "queued" });
+    await waitFor(() => expect(screen.queryByText(/план в очереди planjob/i)).not.toBeInTheDocument());
+  });
 });

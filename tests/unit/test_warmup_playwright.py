@@ -43,6 +43,9 @@ def test_ua_for_device_uses_fingerprint_android_release():
     assert "Android 13" in ua
     assert "SM-S908B" in ua
     assert "Mobile Safari" in ua
+    chrome = ua.split("Chrome/")[1].split(" ")[0]
+    major = int(chrome.split(".")[0])
+    assert 130 <= major <= 140, chrome
 
 
 def test_ua_for_device_falls_back_when_no_fingerprint():

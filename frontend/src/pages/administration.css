@@ -1,0 +1,110 @@
+.admin-tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid rgb(30 41 59);
+}
+
+.admin-tab {
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  padding: 0.5rem 0.9rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: rgb(148 163 184);
+  cursor: pointer;
+}
+
+.admin-tab:hover {
+  color: rgb(226 232 240);
+}
+
+.admin-tab[aria-selected="true"] {
+  border-bottom-color: rgb(14 165 233);
+  color: rgb(226 232 240);
+}
+
+.swagger-panel .swagger-ui {
+  font-family: inherit;
+  color: #e2e8f0;
+}
+
+.swagger-panel .swagger-ui .topbar,
+.swagger-panel .swagger-ui .information-container .info .title small {
+  display: none;
+}
+
+.swagger-panel .swagger-ui .info,
+.swagger-panel .swagger-ui .info .title,
+.swagger-panel .swagger-ui .info p,
+.swagger-panel .swagger-ui .info li,
+.swagger-panel .swagger-ui .scheme-container,
+.swagger-panel .swagger-ui .opblock-tag,
+.swagger-panel .swagger-ui .opblock-summary-path,
+.swagger-panel .swagger-ui .opblock-summary-description,
+.swagger-panel .swagger-ui .opblock-description-wrapper p,
+.swagger-panel .swagger-ui .tab li,
+.swagger-panel .swagger-ui table thead tr td,
+.swagger-panel .swagger-ui table thead tr th,
+.swagger-panel .swagger-ui .parameter__name,
+.swagger-panel .swagger-ui .parameter__type,
+.swagger-panel .swagger-ui .response-col_status,
+.swagger-panel .swagger-ui .response-col_description,
+.swagger-panel .swagger-ui .model-title,
+.swagger-panel .swagger-ui .model,
+.swagger-panel .swagger-ui .prop-type,
+.swagger-panel .swagger-ui label,
+.swagger-panel .swagger-ui .renderedMarkdown p {
+  color: #e2e8f0;
+}
+
+.swagger-panel .swagger-ui .scheme-container,
+.swagger-panel .swagger-ui .opblock,
+.swagger-panel .swagger-ui .dialog-ux .modal-ux,
+.swagger-panel .swagger-ui section.models {
+  background: rgb(15 23 42 / 0.85);
+  border-color: rgb(30 41 59);
+  box-shadow: none;
+}
+
+.swagger-panel .swagger-ui .opblock .opblock-summary {
+  border-color: rgb(51 65 85);
+}
+
+.swagger-panel .swagger-ui .opblock-body pre,
+.swagger-panel .swagger-ui .highlight-code,
+.swagger-panel .swagger-ui textarea,
+.swagger-panel .swagger-ui input[type="text"],
+.swagger-panel .swagger-ui input[type="password"],
+.swagger-panel .swagger-ui select,
+.swagger-panel .swagger-ui .filter-container .operation-filter-input {
+  background: rgb(2 6 23);
+  color: #e2e8f0;
+  border-color: rgb(51 65 85);
+}
+
+.swagger-panel .swagger-ui .btn,
+.swagger-panel .swagger-ui .authorization__btn,
+.swagger-panel .swagger-ui .try-out__btn {
+  border-color: rgb(51 65 85);
+  color: #e2e8f0;
+}
+
+.swagger-panel .swagger-ui .btn.execute {
+  background: rgb(2 132 199);
+  border-color: rgb(14 165 233);
+  color: #fff;
+}
+
+.swagger-panel .swagger-ui .filter .operation-filter-input {
+  margin: 0 0 1rem;
+  width: 100%;
+}
+
+.swagger-panel .swagger-ui a {
+  color: #7dd3fc;
+}
+
+.swagger-panel .swagger-ui .microlight {
+  background: rgb(2 6 23) !important;
+}

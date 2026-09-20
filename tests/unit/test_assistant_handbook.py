@@ -64,6 +64,33 @@ def test_handbook_file_states_local_ollama_and_that_proxies_are_not_for_chat():
     assert "account_logs" in text
     assert "Только в UI" in text
     assert "процитируй как есть" in text.lower() or "Процитируй как есть" in text
+    assert "### Оплата" in text
+    assert "0.05" in text
+    assert "не касса" in text
+    assert "Stop" in text
+    assert "USDC" in text
+    assert "Карточка «Оплата»" in text
+    assert "GPU Salad" in text
+    assert "/api/gpu" in text
+    assert "Блокнот" in text
+    assert "### Если постинг сломался" in text
+    assert "queued_due" in text
+    assert "job_logs" in text
+    assert "start_worker" in text
+    assert "### Если вход сломался" in text
+    assert "### Если прокси сломался" in text
+    assert "account_logs" in text
+    assert "test_proxy" in text
+    assert "first_login" in text
+    posting = text.split("### Если постинг сломался", 1)[1].split("### ", 1)[0]
+    assert "proxies_unhealthy" not in posting
+    assert "Если вход сломался" in posting
+    assert "Если прокси сломался" in posting
+    assert "foreign_alive" in posting
+    accesses = text.split("## Страница: Доступы", 1)[1].split("## ", 1)[0]
+    assert "list_operators" in accesses
+    assert "entry_path" in accesses
+    assert "оператору" in accesses.lower()
 
 
 def test_system_prompt_requires_the_dont_know_phrase():
@@ -71,6 +98,9 @@ def test_system_prompt_requires_the_dont_know_phrase():
     assert "я не знаю ответ на этот вопрос" in SYSTEM_PROMPT
     assert "ask_operator" in SYSTEM_PROMPT
     assert "diagnose" in SYSTEM_PROMPT
+    assert "Если постинг сломался" in SYSTEM_PROMPT
+    assert "Если вход сломался" in SYSTEM_PROMPT
+    assert "Если прокси сломался" in SYSTEM_PROMPT
     assert "account_logs" in SYSTEM_PROMPT
     assert "docker_logs" in SYSTEM_PROMPT
     assert "процитируй как есть" in SYSTEM_PROMPT

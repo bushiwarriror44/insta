@@ -47,6 +47,9 @@ vi.mock("../pages/Operators", () => ({
 vi.mock("../pages/Settings", () => ({
   Settings: () => <div>SETTINGS_PAGE</div>,
 }));
+vi.mock("../pages/Administration", () => ({
+  Administration: () => <div>ADMINISTRATION_PAGE</div>,
+}));
 
 vi.mock("../context/ToastContext", () => ({
   useToast: () => ({ push: vi.fn() }),
@@ -229,6 +232,18 @@ describe("App routing", () => {
     });
     renderAt("/maintenance");
     expect(screen.getByText("MAINTENANCE_PAGE")).toBeInTheDocument();
+  });
+
+  it("renders Administration at /administration", () => {
+    useAuthMock.mockReturnValue({
+      state: { state: "open" },
+      authRequired: false,
+      logout: vi.fn(),
+      login: vi.fn(),
+      retryBootstrap: vi.fn(),
+    });
+    renderAt("/administration");
+    expect(screen.getByText("ADMINISTRATION_PAGE")).toBeInTheDocument();
   });
 
   it("renders Renders at /renders", () => {

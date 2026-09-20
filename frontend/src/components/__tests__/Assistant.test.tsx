@@ -195,6 +195,37 @@ describe("Assistant", () => {
     await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
   });
 
+  it("shows a tool hint while a named tool is running", async () => {
+    let release!: () => void;
+    askMock.mockImplementation(async (_messages, onStep) => {
+      onStep({ type: "tool", text: "ставлю план", name: "plan_account" });
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "поставь план");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect(await screen.findByTestId("assistant-tool-hint")).toHaveTextContent(/planjob/i);
+    expect(screen.queryByTestId("assistant-page-hint")).not.toBeInTheDocument();
+    release();
+    await waitFor(() => expect(screen.queryByTestId("assistant-tool-hint")).not.toBeInTheDocument());
+  });
+
+  it("shows a page hint on /agent", async () => {
+    renderDock(<Assistant />, "/agent");
+    expect(await screen.findByTestId("assistant-page-hint")).toHaveTextContent(/план роликов/i);
+  });
+
+  it("opens the chat manual", async () => {
+    const user = userEvent.setup();
+    renderDock();
+    await user.click(await screen.findByRole("button", { name: /^мануал$/i }));
+    expect(screen.getByTestId("assistant-manual")).toHaveTextContent(/sqlite/i);
+    expect(screen.getByText(/playwright из нижнего чата не стартует/i)).toBeInTheDocument();
+  });
+
   it("sends a preset prompt from the examples list", async () => {
     const user = userEvent.setup();
     renderDock();

@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.api.deps import AuthDep, get_db
+from app.api.deps import AuthDep, AuthPrincipal, get_db
 from app.assistant.chat import Answer, AssistantError, Step, ask, stream
 from app.config import Settings, get_settings
 
@@ -59,6 +59,7 @@ def talk(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
     authorization: Optional[str] = Header(default=None),
+    principal: AuthPrincipal = AuthDep,
 ) -> AssistantOut:
     try:
         answer = ask(
@@ -69,6 +70,7 @@ def talk(
             page=payload.page,
             account_id=payload.account_id,
             job_id=payload.job_id,
+            viewer_role=principal.role,
         )
     except AssistantError as exc:
         raise HTTPException(status_code=503 if exc.retryable else 409, detail=str(exc)) from exc
@@ -93,6 +95,7 @@ def run_prompt(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
     authorization: Optional[str] = Header(default=None),
+    principal: AuthPrincipal = AuthDep,
 ) -> AssistantOut:
     try:
         answer = ask(
@@ -104,6 +107,7 @@ def run_prompt(
             account_id=payload.account_id,
             job_id=payload.job_id,
             allow_browser=True,
+            viewer_role=principal.role,
         )
     except AssistantError as exc:
         raise HTTPException(status_code=503 if exc.retryable else 409, detail=str(exc)) from exc
@@ -116,8 +120,10 @@ def talk_streaming(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
     authorization: Optional[str] = Header(default=None),
+    principal: AuthPrincipal = AuthDep,
 ) -> StreamingResponse:
     token = _bearer(authorization)
+    viewer_role = principal.role
 
     def events() -> Iterator[str]:
         try:
@@ -129,6 +135,7 @@ def talk_streaming(
                 page=payload.page,
                 account_id=payload.account_id,
                 job_id=payload.job_id,
+                viewer_role=viewer_role,
             ):
                 if isinstance(step, Answer):
                     yield _event(
@@ -147,6 +154,8 @@ def talk_streaming(
                     payload_step: dict = {"type": step.kind, "text": step.text}
                     if step.questions:
                         payload_step["questions"] = step.questions
+                    if step.name:
+                        payload_step["name"] = step.name
                     yield _event(payload_step)
         except AssistantError as exc:
             yield _event({"type": "error", "detail": str(exc), "retryable": exc.retryable})

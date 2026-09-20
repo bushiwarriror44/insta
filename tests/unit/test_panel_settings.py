@@ -89,6 +89,29 @@ def test_settings_owner_only(auth_client):
     assert auth_client.get("/api/settings", headers=_h()).status_code == 200
 
 
+def test_openapi_owner_only(auth_client):
+    created = auth_client.post(
+        "/api/operators",
+        headers=_h(),
+        json={"label": "ops-docs"},
+    )
+    assert created.status_code == 201
+    op_headers = {"Authorization": f"Bearer {created.json()['password']}"}
+
+    assert auth_client.get("/api/openapi.json").status_code == 401
+    assert auth_client.get("/api/openapi.json", headers=op_headers).status_code == 403
+    spec = auth_client.get("/api/openapi.json", headers=_h())
+    assert spec.status_code == 200
+    assert spec.json().get("openapi")
+    assert auth_client.get("/api/docs").status_code == 404
+
+
+def test_openapi_open_mode(open_client):
+    spec = open_client.get("/api/openapi.json")
+    assert spec.status_code == 200
+    assert spec.json().get("openapi")
+
+
 def test_update_entry_path(auth_client):
     new_path = "/mySecretPath99"
     res = auth_client.put(

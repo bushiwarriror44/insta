@@ -47,6 +47,7 @@ def test_is_placeholder_timezone():
 def test_timezone_from_proxy_uses_country_when_proxy_utc():
     assert timezone_from_proxy("UTC", "PL") == "Europe/Warsaw"
     assert timezone_from_proxy(None, "DE") == "Europe/Berlin"
+    assert timezone_from_proxy("UTC", "AM") == "Asia/Yerevan"
 
 
 def test_timezone_from_proxy_keeps_explicit_iana():

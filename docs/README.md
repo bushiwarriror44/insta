@@ -26,6 +26,7 @@
 | [accounts-sessions.md](accounts-sessions.md) | Прокси, Instagram vs Studio, автовход, VNC |
 | [publishing.md](publishing.md) | Библиотека, очередь, статусы, uniquify |
 | [generation.md](generation.md) | цепочка рендера (`auto` / fal / HF / pollinations / local), склейка, контент-план |
+| [costs.md](costs.md) | что / когда / где / сколько платить (VPS, Salad, fal, прокси) |
 | [assistant.md](assistant.md) | Нижний чат vs `POST /api/assistant/run` и `cli ask` |
 | [cli.md](cli.md) | Команды `python -m app.cli …` |
 | [data-and-ops.md](data-and-ops.md) | Каталоги `data/`, логи, бэкап, Telegram |

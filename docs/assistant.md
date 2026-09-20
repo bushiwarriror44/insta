@@ -10,7 +10,7 @@
 | Автономный HTTP | `POST /api/assistant/run` | 12 (`RUN_ROUNDS`) | да |
 | CLI | `python -m app.cli ask "…"` | 12 | да |
 
-Чат UI шлёт `messages` (история), плюс по желанию `page`, `account_id`, `job_id`. Stream — тот же контракт, события SSE.
+Чат UI шлёт `messages` (история), плюс по желанию `page`, `account_id`, `job_id`. Stream — тот же контракт, события SSE. В доке кнопка «Мануал» и подсказка текущего экрана; во время tool-стрима — одно предложение про шаг. SSE `type=tool` несёт `name`.
 
 Run шлёт **один** `prompt`, без истории. Страницы панели `open_page` не обязан открывать. Живой Playwright можно стартовать.
 
@@ -57,7 +57,7 @@ Instagram: `first_login` / `mint_mobile_session` работают с парол�
 | `list_project_files` / `read_project_file` | файлы **внутри** репозитория и `data/` |
 | `get_session` | Instagram: sessionid; Studio: есть ли state.json и имена cookies |
 | `page_guide` | секция handbook другой страницы |
-| `diagnose` | воркер, Ollama, движки рендера, ошибки БД, хвост `data/app.log` |
+| `diagnose` | воркер, блоки posting / login / proxies, Ollama, движки рендера, ошибки БД, хвост `data/app.log` |
 | `docker_logs` | только `reels-api` / `reels-worker` / `reels-ollama` / `reels-frontend` / `reels-ollama-pull` |
 
 ### Открыть в UI (чат панели)

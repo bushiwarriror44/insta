@@ -52,6 +52,7 @@ describe("CommandPalette", () => {
   it("lists pages to jump to", async () => {
     renderPalette();
     expect(await screen.findByRole("button", { name: /Календарь/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Администрирование/ })).toBeInTheDocument();
   });
 
   it("finds an account by part of its name", async () => {
@@ -86,6 +87,7 @@ describe("CommandPalette", () => {
     expect(await screen.findByRole("button", { name: /Календарь/ })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Настройки/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Доступы/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Администрирование/ })).not.toBeInTheDocument();
   });
 
   it("puts an icon on the Dashboard row", async () => {

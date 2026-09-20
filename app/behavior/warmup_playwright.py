@@ -77,6 +77,15 @@ def _storage_dir(username: str) -> Path:
 # Fingerprint → browser parameter helpers.
 # ---------------------------------------------------------------------------
 
+# Match Playwright Chromium 130+; 122–126 UA against Chromium 130 left Instagram
+# on the Meta splash without a login form.
+_CHROME_MAJORS = [
+    "130.0.6723.117",
+    "131.0.6778.140",
+    "135.0.7049.95",
+    "140.0.7339.81",
+]
+_CHROME_FALLBACK = _CHROME_MAJORS[0]
 
 def _ua_for_device(device_settings: dict | None, fallback_ua: str | None) -> str:
     """Build a mobile Chrome UA aligned with the persistent Android device.
@@ -88,10 +97,7 @@ def _ua_for_device(device_settings: dict | None, fallback_ua: str | None) -> str
     if device_settings:
         android_release = device_settings.get("android_release", "13")
         model = device_settings.get("model", "SM-S908B")
-        # Pin a recent stable mobile Chrome major; rotated occasionally per call
-        # to avoid a single static UA across all sessions.
-        chrome_majors = ["122.0.6261.105", "124.0.6367.171", "125.0.6422.165", "126.0.6478.122"]
-        chrome_major = random.choice(chrome_majors)
+        chrome_major = random.choice(_CHROME_MAJORS)
         return (
             f"Mozilla/5.0 (Linux; Android {android_release}; {model}) "
             f"AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -100,8 +106,8 @@ def _ua_for_device(device_settings: dict | None, fallback_ua: str | None) -> str
     if fallback_ua:
         return fallback_ua
     return (
-        "Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.6367.171 Mobile Safari/537.36"
+        f"Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 "
+        f"(KHTML, like Gecko) Chrome/{_CHROME_FALLBACK} Mobile Safari/537.36"
     )
 
 
@@ -125,8 +131,7 @@ def _viewport_from_resolution(resolution: str | None) -> dict[str, int]:
 
 def _desktop_ua() -> str:
     """Desktop Chrome UA — Instagram web login is more reliable than mobile."""
-    chrome_majors = ["122.0.6261.105", "124.0.6367.171", "125.0.6422.165", "126.0.6478.122"]
-    chrome_major = random.choice(chrome_majors)
+    chrome_major = random.choice(_CHROME_MAJORS)
     return (
         f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         f"(KHTML, like Gecko) Chrome/{chrome_major} Safari/537.36"
@@ -371,19 +376,37 @@ async def _login_form_visible(page) -> bool:
     return (await _login_field_locator(page, password=False)) is not None
 
 
+async def _wait_login_inputs(page, timeout_ms: int) -> bool:
+    """True when a username/email field becomes visible (splash has cleared)."""
+    try:
+        await page.wait_for_selector(
+            'input[name="username"], input[name="email"], input[autocomplete="username"]',
+            state="visible",
+            timeout=max(1, timeout_ms),
+        )
+        return True
+    except Exception:
+        return False
+
+
 async def _ensure_login_page(page, *, fast: bool = False) -> None:
     """Navigate to Instagram login and wait until the form is interactable."""
-    goto_timeout = 25_000 if fast else 45_000
-    wait_until = "commit" if fast else "domcontentloaded"
+    goto_timeout = 25_000 if fast else 60_000
+    wait_until = "commit" if fast else "load"
     post_nav_wait = (0.2, 0.5) if fast else (1.0, 2.0)
     link_wait = (0.2, 0.5) if fast else (1.0, 2.0)
     poll_sleep = 0.4 if fast else 0.8
-    deadline_sec = 12.0 if fast else 25.0
+    deadline_sec = 12.0 if fast else 60.0
 
     if "accounts/login" not in (page.url or ""):
         await page.goto(_INSTAGRAM_LOGIN_URL, wait_until=wait_until, timeout=goto_timeout)
     await _human_wait(*post_nav_wait)
     await _accept_cookie_banner(page)
+
+    remaining_ms = int(max(1.0, deadline_sec) * 1000)
+    if await _wait_login_inputs(page, min(remaining_ms, 45_000 if not fast else 8_000)):
+        if await _login_form_visible(page):
+            return
 
     deadline = time.monotonic() + deadline_sec
     while time.monotonic() < deadline:
@@ -404,10 +427,14 @@ async def _ensure_login_page(page, *, fast: bool = False) -> None:
                 await page.goto(
                     _INSTAGRAM_LOGIN_URL,
                     wait_until=wait_until,
-                    timeout=goto_timeout if fast else 30_000,
+                    timeout=goto_timeout if fast else 45_000,
                 )
             except Exception:
                 pass
+        leftover_ms = int(max(0.0, deadline - time.monotonic()) * 1000)
+        if leftover_ms > 500 and await _wait_login_inputs(page, min(leftover_ms, 8_000)):
+            if await _login_form_visible(page):
+                return
         await asyncio.sleep(poll_sleep)
 
     raise RuntimeError(
@@ -919,7 +946,7 @@ async def _async_first_login(
                 logger.warning("playwright.stealth_failed", error=str(exc))
 
         try:
-            await page.goto(_INSTAGRAM_LOGIN_URL, wait_until="domcontentloaded", timeout=45000)
+            await page.goto(_INSTAGRAM_LOGIN_URL, wait_until="load", timeout=60000)
         except Exception as exc:
             logger.error("playwright.goto_failed", error=str(exc))
             await context.close()
