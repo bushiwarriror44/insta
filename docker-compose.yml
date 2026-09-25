@@ -37,7 +37,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: insta-reels-publisher:latest
+    image: insta-reels-worker:latest
     container_name: insta-reels-worker
     restart: unless-stopped
     mem_limit: 2g
@@ -62,7 +62,7 @@ services:
       start_period: 45s
 
   reels-api:
-    image: insta-reels-publisher:latest
+    image: insta-reels-api:latest
     build:
       context: .
       dockerfile: Dockerfile
