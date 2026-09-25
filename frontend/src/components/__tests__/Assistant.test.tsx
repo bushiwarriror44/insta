@@ -298,4 +298,71 @@ describe("Assistant", () => {
     expect(await screen.findByLabelText("Остановить воркер?")).toBeInTheDocument();
     expect(screen.getAllByText(/нужны уточнения/i).length).toBeGreaterThan(0);
   });
+
+  it("keeps printed text when the stream errors", async () => {
+    askMock.mockImplementation(async (_messages, onStep) => {
+      onStep({ type: "tool", text: "посмотрел аккаунты", name: "list_accounts" });
+      onStep({ type: "token", text: "уже напечатано" });
+      onStep({ type: "error", detail: "шлюз Salad оборвал ответ", retryable: true });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "привет");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect(await screen.findByText("уже напечатано")).toBeInTheDocument();
+    expect(screen.getByText("Ответ оборвался на шлюзе.")).toBeInTheDocument();
+    expect(screen.getByText("посмотрел аккаунты")).toBeInTheDocument();
+    expect(screen.queryByText("шлюз Salad оборвал ответ")).not.toBeInTheDocument();
+  });
+
+  it("keeps printed text when the connection drops", async () => {
+    askMock.mockImplementation(async (_messages, onStep) => {
+      onStep({ type: "token", text: "кусок ответа" });
+      throw new Error("network");
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "привет");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect(await screen.findByText("кусок ответа")).toBeInTheDocument();
+    expect(screen.getByText("Ответ оборвался на шлюзе.")).toBeInTheDocument();
+    expect(screen.queryByText(/network/i)).not.toBeInTheDocument();
+  });
+
+  it("shows reasoning above the answer and collapses it once the answer starts", async () => {
+    let release: (() => void) | undefined;
+    askMock.mockImplementation(
+      (_messages, onStep) =>
+        new Promise<void>((resolve) => {
+          onStep({ type: "think", text: "сначала проверяю панель" });
+          release = () => {
+            onStep({ type: "token", text: "готово" });
+            onStep({
+              type: "done",
+              reply: "готово",
+              open_url: null,
+              opened: null,
+              used: [],
+              images: [],
+              thinking: "сначала проверяю панель",
+            });
+            resolve();
+          };
+        })
+    );
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "привет");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    const summary = await screen.findByText("Рассуждение");
+    expect(summary.closest("details")).toHaveAttribute("open");
+    expect(screen.getByText("сначала проверяю панель")).toBeInTheDocument();
+    release?.();
+    await waitFor(() => {
+      expect(screen.getAllByText("Рассуждение")).toHaveLength(1);
+      expect(screen.getByText("Рассуждение").closest("details")).not.toHaveAttribute("open");
+    });
+    await user.click(screen.getByText("Рассуждение"));
+    expect(screen.getByText("Рассуждение").closest("details")).toHaveAttribute("open");
+  });
 });

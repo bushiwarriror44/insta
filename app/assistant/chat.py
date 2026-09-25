@@ -900,6 +900,8 @@ class Answer:
     images: list[str] = field(default_factory=list)
     asks: list[str] = field(default_factory=list)
     created: dict[str, list[int]] = field(default_factory=lambda: {"accounts": [], "proxies": []})
+    thinking: str = ""
+    cut: str = ""
 
 
 def run_tool(
@@ -1592,6 +1594,7 @@ def stream(
     ]
     opened: Opened | None = None
     used: list[str] = []
+    thoughts: list[str] = []
     images: list[str] = []
     created = _empty_created()
     asked: set[tuple[str, str]] = set()
@@ -1604,6 +1607,10 @@ def stream(
         for _ in range(limit):
             said: list[str] = []
             message = yield from _complete(client, settings, thread, said, tools=specs)
+            round_thought = str(message.pop("thinking", "") or "")
+            cut = str(message.pop("cut", "") or "")
+            if round_thought:
+                thoughts.append(round_thought)
             calls = message.get("tool_calls") or []
             if not calls:
                 yield Answer(
@@ -1612,6 +1619,8 @@ def stream(
                     used=used,
                     images=images,
                     created=created,
+                    thinking="\n".join(thoughts),
+                    cut=cut,
                 )
                 return
 
@@ -1782,10 +1791,12 @@ def _complete(
     touch(settings)
     url = f"{settings.agent_base_url.rstrip('/')}/chat/completions"
     content: list[str] = []
+    thought: list[str] = []
     calls: dict[int, dict[str, Any]] = {}
     thinking = Thinking()
     include_think = True
     retried = False
+    cut = False
     while True:
         body = _chat_body(settings, thread, include_think=include_think, tools=tools)
         try:
@@ -1794,7 +1805,7 @@ def _complete(
                     response.read()
                     include_think = False
                     continue
-                if response.status_code in {520, 524} and not retried and not content and not calls:
+                if response.status_code in {520, 524} and not retried and not content and not thought and not calls:
                     response.read()
                     retried = True
                     continue
@@ -1803,25 +1814,45 @@ def _complete(
                     delta = _delta(line)
                     if delta is None:
                         continue
+                    for key in ("reasoning", "thinking"):
+                        extra = delta.get(key)
+                        if isinstance(extra, str) and extra:
+                            thought.append(extra)
+                            yield Step(kind="think", text=extra)
                     piece = delta.get("content") or ""
                     if piece:
-                        content.append(piece)
-                        said.append(piece)
-                        for word in thinking.public(piece):
-                            yield Step(kind="token", text=word)
+                        for kind, text in thinking.feed(piece):
+                            if kind == "think":
+                                thought.append(text)
+                                yield Step(kind="think", text=text)
+                            else:
+                                content.append(text)
+                                said.append(text)
+                                yield Step(kind="token", text=text)
                     for part in delta.get("tool_calls") or []:
                         _gather(calls, part)
         except httpx.RequestError as exc:
             # Salad's gateway closes the stream at ~100s. A cut before any
             # token is worth one retry: the weights are already in VRAM.
-            if content and not calls:
-                break
+            for kind, text in thinking.flush():
+                if kind == "think":
+                    thought.append(text)
+                    yield Step(kind="think", text=text)
+                else:
+                    content.append(text)
+                    said.append(text)
+                    yield Step(kind="token", text=text)
             if _calls_ready(calls):
+                break
+            if content or thought:
+                cut = True
                 break
             if not retried and _stream_cut(exc):
                 retried = True
                 content.clear()
+                thought.clear()
                 calls.clear()
+                thinking = Thinking()
                 continue
             if _stream_cut(exc):
                 raise AssistantError(
@@ -1832,33 +1863,94 @@ def _complete(
                 f"не дозвониться до модели по адресу {url}: {exc}",
                 retryable=True,
             ) from exc
+        else:
+            for kind, text in thinking.flush():
+                if kind == "think":
+                    thought.append(text)
+                    yield Step(kind="think", text=text)
+                else:
+                    content.append(text)
+                    said.append(text)
+                    yield Step(kind="token", text=text)
         break
 
-    message: dict[str, Any] = {"role": "assistant", "content": "".join(content)}
-    if calls:
+    message: dict[str, Any] = {
+        "role": "assistant",
+        "content": "".join(content),
+        "thinking": "".join(thought).strip(),
+        "cut": CUT_NOTE if cut else "",
+    }
+    if calls and not cut:
         message["tool_calls"] = [calls[i] for i in sorted(calls)]
     return message
 
 
-class Thinking:
-    def __init__(self) -> None:
-        self.buffer = ""
-        self.done = False
+OPEN_THINK = "<think>"
+CLOSE_THINK = "</think>"
+CUT_NOTE = "Ответ оборвался на шлюзе."
 
-    def public(self, piece: str) -> list[str]:
-        if self.done:
-            return [piece]
-        self.buffer += piece
-        if not "<think>".startswith(self.buffer[: len("<think>")]):
-            self.done = True
-            out, self.buffer = self.buffer, ""
-            return [out]
-        if "</think>" in self.buffer:
-            self.done = True
-            out = self.buffer.split("</think>", 1)[1]
-            self.buffer = ""
-            return [out] if out else []
-        return []
+
+def _partial_suffix(text: str, marker: str) -> int:
+    for size in range(len(marker) - 1, 0, -1):
+        if text.endswith(marker[:size]):
+            return size
+    return 0
+
+
+class Thinking:
+    """Split a qwen-style `<think>` channel from the answer the operator sees."""
+
+    def __init__(self) -> None:
+        self.buf = ""
+        self.inside = False
+        self.decided = False
+
+    def feed(self, piece: str) -> list[tuple[str, str]]:
+        if not piece:
+            return []
+        if self.decided and not self.inside:
+            return [("token", piece)]
+        self.buf += piece
+        out: list[tuple[str, str]] = []
+        while self.buf:
+            if not self.inside and not self.decided:
+                if self.buf.startswith(OPEN_THINK):
+                    self.inside = True
+                    self.decided = True
+                    self.buf = self.buf[len(OPEN_THINK) :]
+                    continue
+                if OPEN_THINK.startswith(self.buf):
+                    return out
+                self.decided = True
+                out.append(("token", self.buf))
+                self.buf = ""
+                return out
+            if self.inside:
+                end = self.buf.find(CLOSE_THINK)
+                if end == -1:
+                    hold = _partial_suffix(self.buf, CLOSE_THINK)
+                    emit = self.buf[:-hold] if hold else self.buf
+                    self.buf = self.buf[-hold:] if hold else ""
+                    if emit:
+                        out.append(("think", emit))
+                    return out
+                if end:
+                    out.append(("think", self.buf[:end]))
+                self.buf = self.buf[end + len(CLOSE_THINK) :]
+                self.inside = False
+                continue
+            out.append(("token", self.buf))
+            self.buf = ""
+        return out
+
+    def flush(self) -> list[tuple[str, str]]:
+        if not self.buf:
+            return []
+        kind = "think" if self.inside or not self.decided and self.buf.startswith("<") else "token"
+        text, self.buf = self.buf, ""
+        self.inside = False
+        self.decided = True
+        return [(kind, text)]
 
 
 def _raise_for(response: httpx.Response, url: str) -> None:

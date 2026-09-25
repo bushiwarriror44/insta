@@ -98,3 +98,71 @@ def test_complete_says_the_gateway_cut_the_reply(app_env, monkeypatch):
         except AssistantError as exc:
             assert "оборвал" in str(exc)
             assert "incomplete" not in str(exc)
+
+
+class _CutAfterText(httpx.SyncByteStream):
+    def __iter__(self):
+        yield b'data: {"choices":[{"delta":{"content":"\xd1\x83\xd0\xb6\xd0\xb5"}}]}\n\n'
+        raise httpx.RemoteProtocolError("incomplete chunked read")
+
+
+class PartialThenCut(httpx.BaseTransport):
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=_CutAfterText())
+
+
+def test_complete_keeps_printed_text_when_the_stream_cuts(app_env, monkeypatch):
+    monkeypatch.setattr(settings, "agent_base_url", "https://example/v1", raising=True)
+    said: list[str] = []
+    with httpx.Client(transport=PartialThenCut()) as client:
+        gen = _complete(
+            client,
+            settings,
+            [{"role": "user", "content": "hi"}],
+            said,
+            tools=[],
+        )
+        try:
+            while True:
+                next(gen)
+        except StopIteration as stop:
+            message = stop.value
+    assert message["content"] == "уже"
+    assert message["cut"] == "Ответ оборвался на шлюзе."
+    assert said == ["уже"]
+    assert "tool_calls" not in message
+
+
+class ThinkThenAnswer(httpx.BaseTransport):
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        body = (
+            'data: {"choices":[{"delta":{"content":"<think>сначала"}}]}\n\n'
+            'data: {"choices":[{"delta":{"reasoning":" и ещё","content":"</think>потом"}}]}\n\n'
+            "data: [DONE]\n\n"
+        )
+        return httpx.Response(200, text=body)
+
+
+def test_complete_splits_reasoning_from_the_answer(app_env, monkeypatch):
+    monkeypatch.setattr(settings, "agent_base_url", "https://example/v1", raising=True)
+    said: list[str] = []
+    kinds: list[str] = []
+    with httpx.Client(transport=ThinkThenAnswer()) as client:
+        gen = _complete(
+            client,
+            settings,
+            [{"role": "user", "content": "hi"}],
+            said,
+            tools=[],
+        )
+        try:
+            while True:
+                kinds.append(next(gen).kind)
+        except StopIteration as stop:
+            message = stop.value
+    assert message["thinking"] == "сначала и ещё"
+    assert message["content"] == "потом"
+    assert message["cut"] == ""
+    assert said == ["потом"]
+    assert kinds == ["think", "think", "token"]
+

@@ -148,6 +148,8 @@ def talk_streaming(
                             "images": step.images,
                             "asks": step.asks,
                             "created": step.created,
+                            "thinking": step.thinking,
+                            "cut": step.cut,
                         }
                     )
                 elif isinstance(step, Step):

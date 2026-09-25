@@ -128,11 +128,37 @@ const MUTATE_TOOLS = new Set([
   "plan_account",
 ]);
 
+const CUT_LINE = "Ответ оборвался на шлюзе.";
+
 interface Said {
   role: "user" | "assistant";
   content: string;
   used?: string[];
   images?: string[];
+  thinking?: string;
+  steps?: string[];
+  cut?: string;
+}
+
+function Reason({ text, live }: { text: string; live: boolean }) {
+  const [open, setOpen] = useState(live);
+  const wasLive = useRef(live);
+  useEffect(() => {
+    if (live && !wasLive.current) setOpen(true);
+    if (!live && wasLive.current) setOpen(false);
+    wasLive.current = live;
+  }, [live]);
+  if (!text.trim()) return null;
+  return (
+    <details
+      open={open}
+      onToggle={(event) => setOpen((event.target as HTMLDetailsElement).open)}
+      className="mb-1"
+    >
+      <summary className="cursor-pointer text-xs text-slate-500">Рассуждение</summary>
+      <p className="mt-1 max-h-36 overflow-y-auto whitespace-pre-wrap text-xs text-slate-400">{text}</p>
+    </details>
+  );
 }
 
 function openInPlace(navigate: (to: string) => void, url: string) {
@@ -161,7 +187,14 @@ function readThread(): Said[] {
 
 function writeThread(thread: Said[]) {
   try {
-    const slim = thread.slice(-40).map(({ role, content, used }) => ({ role, content, used }));
+    const slim = thread.slice(-40).map(({ role, content, used, thinking, steps, cut }) => ({
+      role,
+      content,
+      used,
+      thinking,
+      steps,
+      cut,
+    }));
     window.localStorage.setItem(THREAD_KEY, JSON.stringify(slim));
   } catch {
     /* ignore quota / private mode */
@@ -212,6 +245,10 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const [doing, setDoing] = useState<string[]>([]);
   const [doingName, setDoingName] = useState<string | null>(null);
   const [writing, setWriting] = useState("");
+  const [draftThink, setDraftThink] = useState("");
+  const writingRef = useRef("");
+  const thinkRef = useRef("");
+  const doingRef = useRef<string[]>([]);
   const [pending, setPending] = useState<string[]>([]);
   const [seconds, setSeconds] = useState(0);
   const [note, setNote] = useState<string | null>(null);
@@ -257,7 +294,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
 
   useEffect(() => {
     tail.current?.scrollIntoView?.({ block: "end" });
-  }, [thread, writing, doing, pending, asks, askAnswers]);
+  }, [thread, writing, draftThink, doing, pending, asks, askAnswers]);
 
   useEffect(() => () => stop.current?.abort(), []);
 
@@ -301,6 +338,10 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
       setDoing([]);
       setDoingName(null);
       setWriting("");
+      setDraftThink("");
+      writingRef.current = "";
+      thinkRef.current = "";
+      doingRef.current = [];
       setPending([]);
       setBrowsing(false);
       setReadingManual(false);
@@ -308,6 +349,24 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
       const controller = new AbortController();
       stop.current = controller;
       let answered = false;
+      const keepPartial = (detail: string) => {
+        const text = writingRef.current;
+        const thinking = thinkRef.current.trim();
+        const steps = doingRef.current;
+        const kept = Boolean(text || thinking || steps.length);
+        answered = true;
+        setThread([
+          ...asked,
+          ...notes,
+          {
+            role: "assistant",
+            content: text || (kept ? "" : detail),
+            thinking: thinking || undefined,
+            steps: steps.length ? steps : undefined,
+            cut: text || thinking ? CUT_LINE : undefined,
+          },
+        ]);
+      };
       try {
         await ask(
           asked.map(({ role, content }) => ({ role, content })),
@@ -315,20 +374,30 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
             if (step.type === "status") {
               pushStatus(step.text);
             } else if (step.type === "tool") {
-              setDoing((seen) => [...seen, step.text]);
+              doingRef.current = [...doingRef.current, step.text];
+              setDoing(doingRef.current);
               if (step.name) setDoingName(step.name);
+            } else if (step.type === "think") {
+              thinkRef.current += step.text;
+              setDraftThink(thinkRef.current);
             } else if (step.type === "token") {
-              setWriting((soFar) => soFar + step.text);
+              writingRef.current += step.text;
+              setWriting(writingRef.current);
             } else if (step.type === "image") {
               setPending((seen) => [...seen, step.text]);
             } else if (step.type === "ask") {
               setAsks(step.questions ?? []);
               setAskAnswers({});
             } else if (step.type === "error") {
-              answered = true;
-              setThread([...asked, ...notes, { role: "assistant", content: step.detail }]);
+              if (writingRef.current || thinkRef.current.trim() || doingRef.current.length) {
+                keepPartial(step.detail);
+              } else {
+                answered = true;
+                setThread([...asked, ...notes, { role: "assistant", content: step.detail }]);
+              }
             } else if (step.type === "done") {
               answered = true;
+              const thinking = (step.thinking || thinkRef.current).trim();
               setThread([
                 ...asked,
                 ...notes,
@@ -337,6 +406,8 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                   content: step.reply,
                   used: step.used,
                   images: step.images,
+                  thinking: thinking || undefined,
+                  cut: step.cut || undefined,
                 },
               ]);
               if (step.asks?.length) {
@@ -360,16 +431,28 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         );
       } catch (err) {
         if (!controller.signal.aborted) {
-          setThread([...asked, ...notes, { role: "assistant", content: formatApiError(err) }]);
-          answered = true;
+          if (writingRef.current || thinkRef.current.trim() || doingRef.current.length) {
+            keepPartial(formatApiError(err));
+          } else {
+            setThread([...asked, ...notes, { role: "assistant", content: formatApiError(err) }]);
+            answered = true;
+          }
         }
       } finally {
         if (!answered && !controller.signal.aborted) {
-          setThread([...asked, ...notes, { role: "assistant", content: "Ответа не было." }]);
+          if (writingRef.current || thinkRef.current.trim() || doingRef.current.length) {
+            keepPartial("Ответа не было.");
+          } else {
+            setThread([...asked, ...notes, { role: "assistant", content: "Ответа не было." }]);
+          }
         }
         stop.current = null;
         setBusy(false);
         setWriting("");
+        setDraftThink("");
+        writingRef.current = "";
+        thinkRef.current = "";
+        doingRef.current = [];
         setDoing([]);
         setDoingName(null);
         setPending([]);
@@ -430,10 +513,25 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
           >
             {thread.map((message, n) => (
               <div key={n}>
-                <p className={message.role === "user" ? "text-sm text-slate-400" : "whitespace-pre-wrap text-sm text-slate-100"}>
-                  {message.role === "user" && <span className="mr-2 text-xs text-slate-600">вы</span>}
-                  {message.content}
-                </p>
+                {message.role === "assistant" && message.thinking ? (
+                  <Reason text={message.thinking} live={false} />
+                ) : null}
+                {message.content ? (
+                  <p className={message.role === "user" ? "text-sm text-slate-400" : "whitespace-pre-wrap text-sm text-slate-100"}>
+                    {message.role === "user" && <span className="mr-2 text-xs text-slate-600">вы</span>}
+                    {message.content}
+                  </p>
+                ) : null}
+                {message.cut ? <p className="mt-1 text-xs text-slate-500">{message.cut}</p> : null}
+                {message.steps && message.steps.length > 0 && (
+                  <div className="mt-1 space-y-0.5">
+                    {message.steps.map((what, i) => (
+                      <p key={i} className="text-xs text-slate-600">
+                        {what}
+                      </p>
+                    ))}
+                  </div>
+                )}
                 {message.used && message.used.length > 0 && (
                   <p className="mt-0.5 text-xs text-slate-600">
                     {[...new Set(message.used.map((t) => LOOKED_AT[t] ?? t))].join(", ")}
@@ -454,12 +552,24 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
               <div role="status" className="space-y-2">
                 <div className="flex items-center gap-2 text-sm text-slate-400">
                   <ThinkingSparkle quiet={Boolean(writing)} />
-                  <span>{writing ? "Пишет…" : doing.length ? doing[doing.length - 1] : `Думает… ${seconds} с`}</span>
+                  <span>
+                    {writing
+                      ? "Пишет…"
+                      : draftThink
+                        ? "Рассуждает…"
+                        : doing.length
+                          ? doing[doing.length - 1]
+                          : `Думает… ${seconds} с`}
+                  </span>
                 </div>
                 {!writing && doingName && toolHint(doingName) ? (
                   <p data-testid="assistant-tool-hint" className="text-xs text-slate-500">
                     {toolHint(doingName)}
                   </p>
+                ) : null}
+                {draftThink ? <Reason text={draftThink} live={!writing} /> : null}
+                {writing ? (
+                  <p className="whitespace-pre-wrap text-sm text-slate-100">{writing}</p>
                 ) : null}
                 {doing.map((what, n) => (
                   <p key={n} className="text-xs text-slate-400">
@@ -473,9 +583,6 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                     ))}
                   </div>
                 )}
-                {writing ? (
-                  <p className="whitespace-pre-wrap text-sm text-slate-100">{writing}</p>
-                ) : null}
               </div>
             )}
             {!busy && note && <p className="text-xs text-slate-400">{note}</p>}

@@ -8,6 +8,7 @@ export type AssistantFocus = {
 export type AssistantStep =
   | { type: "tool"; text: string; name?: string }
   | { type: "token"; text: string }
+  | { type: "think"; text: string }
   | { type: "image"; text: string }
   | { type: "ask"; text?: string; questions: string[] }
   | {
@@ -19,6 +20,8 @@ export type AssistantStep =
       images: string[];
       asks?: string[];
       created?: { accounts?: number[]; proxies?: number[] };
+      thinking?: string;
+      cut?: string;
     }
     | { type: "status"; text: string }
     | { type: "error"; detail: string; retryable: boolean };
