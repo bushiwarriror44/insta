@@ -490,10 +490,12 @@ def test_stream_auto_continues_after_a_partial_cut(app_env, monkeypatch, db_sess
     monkeypatch.setattr(chat, "http_client", lambda *a, **k: FakeClient())
     n = {"i": 0}
     prompts: list[str] = []
+    think_flags: list[bool] = []
 
-    def fake_complete(client, settings_obj, thread, said, **_kwargs):
+    def fake_complete(client, settings_obj, thread, said, **kwargs):
         if False:
             yield chat.Step(kind="token", text="")
+        think_flags.append(kwargs.get("include_think", True))
         n["i"] += 1
         if n["i"] == 1:
             said.append("первая часть")
@@ -525,6 +527,8 @@ def test_stream_auto_continues_after_a_partial_cut(app_env, monkeypatch, db_sess
     assert answer.cut == ""
     assert n["i"] == 2
     assert any("Продолжи" in text for text in prompts)
+    assert think_flags[0] is True
+    assert think_flags[1] is False
 
 
 def test_stream_keeps_cut_after_continue_budget(app_env, monkeypatch, db_session):

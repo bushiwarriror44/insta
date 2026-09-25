@@ -876,17 +876,51 @@ def test_ask_operator_returns_questions(db_session):
     assert opened is None
     assert result["ask"] is True
     assert result["questions"] == ["какой username?", "какой proxy_label?"]
+    assert result["fields"] == []
     assert "создать" in result["why"]
+
+
+def test_ask_operator_fields_fill_questions(db_session):
+    result, opened = run_tool(
+        db_session,
+        "ask_operator",
+        {
+            "reason": "добавить аккаунт",
+            "fields": [
+                {"id": "proxy_label", "label": "Метка прокси", "kind": "text"},
+                {"id": "proxy_url", "label": "URL прокси", "kind": "text"},
+                {
+                    "id": "platform",
+                    "label": "Площадка",
+                    "kind": "select",
+                    "options": ["instagram", "youtube", "tiktok"],
+                },
+                {"id": "username", "label": "Username", "kind": "text"},
+                {"id": "password", "label": "Пароль", "kind": "password"},
+            ],
+        },
+    )
+    assert opened is None
+    assert result["ask"] is True
+    assert result["questions"] == [
+        "Метка прокси",
+        "URL прокси",
+        "Площадка",
+        "Username",
+        "Пароль",
+    ]
+    assert result["fields"][0]["id"] == "proxy_label"
+    assert result["fields"][2]["kind"] == "select"
+    assert result["fields"][4]["kind"] == "password"
 
 
 def test_ask_operator_rejects_empty(db_session):
     try:
         run_tool(db_session, "ask_operator", {"questions": []})
     except ToolError as exc:
-        assert "вопрос" in str(exc)
+        assert "вопрос" in str(exc) or "field" in str(exc)
     else:
         raise AssertionError("expected ToolError")
-
 
 def test_page_guide_returns_another_page_section(db_session):
     result, opened = run_tool(db_session, "page_guide", {"page": "operators"})

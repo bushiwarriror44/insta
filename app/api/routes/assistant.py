@@ -156,6 +156,8 @@ def talk_streaming(
                     payload_step: dict = {"type": step.kind, "text": step.text}
                     if step.questions:
                         payload_step["questions"] = step.questions
+                    if step.fields:
+                        payload_step["fields"] = step.fields
                     if step.name:
                         payload_step["name"] = step.name
                     if step.detail:

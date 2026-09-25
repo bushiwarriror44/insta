@@ -173,6 +173,53 @@ describe("Assistant", () => {
     expect(followUp.at(-1)?.content).toContain("alice");
   });
 
+  it("renders a setup form from ask fields and sends field ids", async () => {
+    askMock.mockImplementationOnce(async (_messages, onStep) => {
+      onStep({
+        type: "ask",
+        text: "заполните форму",
+        questions: ["Метка прокси", "Username"],
+        fields: [
+          { id: "proxy_label", label: "Метка прокси", kind: "text" },
+          { id: "username", label: "Username", kind: "text" },
+          {
+            id: "platform",
+            label: "Площадка",
+            kind: "select",
+            options: ["instagram", "youtube", "tiktok"],
+          },
+          { id: "password", label: "Пароль", kind: "password" },
+        ],
+      });
+      onStep({
+        type: "done",
+        reply: "Нужны уточнения, чтобы продолжить.",
+        open_url: null,
+        opened: null,
+        used: ["ask_operator"],
+        images: [],
+        asks: ["Метка прокси", "Username"],
+      });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "форма");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    await user.type(await screen.findByLabelText("Метка прокси"), "res-1");
+    await user.type(screen.getByLabelText("Username"), "alice");
+    await user.selectOptions(screen.getByLabelText("Площадка"), "instagram");
+    await user.type(screen.getByLabelText("Пароль"), "secret");
+    await user.click(screen.getByRole("button", { name: /^ответить$/i }));
+    await waitFor(() => expect(askMock).toHaveBeenCalledTimes(2));
+    const followUp = askMock.mock.calls[1][0] as Array<{ role: string; content: string }>;
+    const body = followUp.at(-1)?.content ?? "";
+    expect(body).toContain("Уточнения:");
+    expect(body).toContain("proxy_label: res-1");
+    expect(body).toContain("username: alice");
+    expect(body).toContain("platform: instagram");
+    expect(body).toContain("password: secret");
+  });
+
   it("spins a sparkle while the agent is working", async () => {
     let release!: () => void;
     askMock.mockImplementation(

@@ -11,7 +11,7 @@ import clsx from "clsx";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { api, formatApiError } from "../api/client";
-import { ask } from "../api/assistant";
+import { ask, type AskField } from "../api/assistant";
 import { library, search, type PromptGroup } from "../api/prompts";
 import { CHAT_MANUAL, pageHint, toolHint } from "../lib/agentManual";
 import { emitAssistantMutate } from "../lib/assistantMutate";
@@ -198,7 +198,8 @@ interface Live {
   pending: string[];
   seconds: number;
   asks: string[];
-  askAnswers: Record<number, string>;
+  askFields: AskField[] | null;
+  askAnswers: Record<string, string>;
   note: string | null;
   progressText: string | null;
   progressDetail: string | null;
@@ -215,6 +216,7 @@ function emptyLive(): Live {
     pending: [],
     seconds: 0,
     asks: [],
+    askFields: null,
     askAnswers: {},
     note: null,
     progressText: null,
@@ -467,6 +469,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
       patchLive(id, {
         note: null,
         asks: [],
+        askFields: null,
         askAnswers: {},
         doing: [],
         doingName: null,
@@ -548,7 +551,11 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                 return { ...prev, [id]: { ...current, pending: [...current.pending, step.text] } };
               });
             } else if (step.type === "ask") {
-              patchLive(id, { asks: step.questions ?? [], askAnswers: {} });
+              patchLive(id, {
+                asks: step.questions ?? [],
+                askFields: step.fields?.length ? step.fields : null,
+                askAnswers: {},
+              });
             } else if (step.type === "error") {
               if (writingRef.current[id] || (thinkRef.current[id] ?? "").trim() || (doingRef.current[id] ?? []).length) {
                 keepPartial(step.detail);
@@ -572,7 +579,18 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                   cut: step.cut || undefined,
                 },
               ]);
-              if (step.asks?.length) patchLive(id, { asks: step.asks, askAnswers: {} });
+              if (step.asks?.length) {
+                setLive((prev) => {
+                  const current = prev[id] ?? emptyLive();
+                  return {
+                    ...prev,
+                    [id]: {
+                      ...current,
+                      asks: current.asks.length ? current.asks : step.asks ?? [],
+                    },
+                  };
+                });
+              }
               if (step.used?.some((name) => MUTATE_TOOLS.has(name))) {
                 emitAssistantMutate(step.created);
               }
@@ -638,6 +656,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const pending = view.pending;
   const seconds = view.seconds;
   const asks = view.asks;
+  const askFields = view.askFields;
   const askAnswers = view.askAnswers;
   const note = view.note;
   const progressText = view.progressText;
@@ -646,7 +665,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const anyBusy = Object.values(live).some((item) => item.busy);
 
   const setAskAnswers = (
-    update: Record<number, string> | ((prev: Record<number, string>) => Record<number, string>)
+    update: Record<string, string> | ((prev: Record<string, string>) => Record<string, string>)
   ) => {
     if (!chat) return;
     const id = chat.id;
@@ -727,8 +746,10 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
 
   const answerAsks = (e: FormEvent) => {
     e.preventDefault();
-    const lines = asks.map((question, i) => `${question}: ${(askAnswers[i] ?? "").trim()}`);
-    if (lines.some((line) => line.endsWith(":"))) return;
+    const lines = askFields?.length
+      ? askFields.map((field) => `${field.id}: ${(askAnswers[field.id] ?? "").trim()}`)
+      : asks.map((question, i) => `${question}: ${(askAnswers[String(i)] ?? "").trim()}`);
+    if (lines.some((line) => /:\s*$/.test(line))) return;
     void send(`Уточнения:\n${lines.join("\n")}`);
   };
 
@@ -879,21 +900,64 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
             {!busy && asks.length > 0 && (
               <form onSubmit={answerAsks} className="space-y-2 rounded-lg border border-slate-800 bg-slate-900/80 p-3">
                 <p className="text-xs text-slate-400">Нужны уточнения</p>
-                {asks.map((question, i) => (
-                  <label key={`${question}-${i}`} className="block space-y-1">
-                    <span className="text-xs text-slate-300">{question}</span>
-                    <input
-                      className="input"
-                      value={askAnswers[i] ?? ""}
-                      onChange={(e) => setAskAnswers((prev) => ({ ...prev, [i]: e.target.value }))}
-                      aria-label={question}
-                    />
-                  </label>
-                ))}
+                {askFields?.length
+                  ? askFields.map((field) => (
+                      <label key={field.id} className="block space-y-1">
+                        <span className="text-xs text-slate-300">{field.label}</span>
+                        {field.kind === "select" ? (
+                          <select
+                            className="input"
+                            value={askAnswers[field.id] ?? ""}
+                            onChange={(e) =>
+                              setAskAnswers((prev) => ({ ...prev, [field.id]: e.target.value }))
+                            }
+                            aria-label={field.label}
+                          >
+                            <option value="">Выберите…</option>
+                            {(field.options?.length
+                              ? field.options
+                              : ["instagram", "youtube", "tiktok"]
+                            ).map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            className="input"
+                            type={field.kind === "password" ? "password" : "text"}
+                            value={askAnswers[field.id] ?? ""}
+                            onChange={(e) =>
+                              setAskAnswers((prev) => ({ ...prev, [field.id]: e.target.value }))
+                            }
+                            aria-label={field.label}
+                            autoComplete="off"
+                          />
+                        )}
+                      </label>
+                    ))
+                  : asks.map((question, i) => (
+                      <label key={`${question}-${i}`} className="block space-y-1">
+                        <span className="text-xs text-slate-300">{question}</span>
+                        <input
+                          className="input"
+                          value={askAnswers[String(i)] ?? ""}
+                          onChange={(e) =>
+                            setAskAnswers((prev) => ({ ...prev, [String(i)]: e.target.value }))
+                          }
+                          aria-label={question}
+                        />
+                      </label>
+                    ))}
                 <button
                   type="submit"
                   className="btn-primary"
-                  disabled={asks.some((_, i) => !(askAnswers[i] ?? "").trim())}
+                  disabled={
+                    askFields?.length
+                      ? askFields.some((field) => !(askAnswers[field.id] ?? "").trim())
+                      : asks.some((_, i) => !(askAnswers[String(i)] ?? "").trim())
+                  }
                 >
                   <Send className="h-4 w-4" />
                   Ответить

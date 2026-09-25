@@ -1,5 +1,12 @@
 import { ApiError, API_BASE, getAuthHeaders } from "./client";
 
+export type AskField = {
+  id: string;
+  label: string;
+  kind?: "text" | "password" | "select";
+  options?: string[];
+};
+
 export type AssistantFocus = {
   account_id?: number;
   job_id?: number;
@@ -10,7 +17,7 @@ export type AssistantStep =
   | { type: "token"; text: string }
   | { type: "think"; text: string }
   | { type: "image"; text: string }
-  | { type: "ask"; text?: string; questions: string[] }
+  | { type: "ask"; text?: string; questions: string[]; fields?: AskField[] }
   | {
       type: "done";
       reply: string;

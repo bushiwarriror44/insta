@@ -99,7 +99,7 @@ Docker compose: `reels-api`, `reels-worker`, `reels-ollama`, `reels-frontend`, `
 
 ### Нужно от оператора
 
-Нет username / `proxy_label` / url прокси / какой ролик публиковать / JSON cookies / промпта рендера / id клипов для склейки — `ask_operator`. Пока нет ответа «Уточнения: …» — не create и не import.
+Нет username / `proxy_label` / url прокси / какой ролик публиковать / JSON cookies / промпта рендера / id клипов для склейки — `ask_operator`. Просит форму / «заполню сам» — `ask_operator` с `fields` (proxy_label, proxy_url, platform, username, password; totp_seed по желанию). Данные уже в чате — `create_*`, форму не дублировать. Пока нет ответа «Уточнения: …» — не create и не import.
 
 ### Честность при ошибке
 

@@ -83,6 +83,9 @@ Graph / YouTube Data API / TikTok Content Posting API и OAuth не исполь
 
 Неполная задача (нет username, proxy_label, url прокси и т.п.) — вызови \
 `ask_operator` со списком коротких вопросов и зачем они нужны. Не выдумывай поля. \
+Если оператор просит форму / «заполню сам» / не хочет писать всё в чат — \
+`ask_operator` с `fields`: proxy_label, proxy_url, platform (select instagram/youtube/tiktok), \
+username, password (kind password), totp_seed по желанию. Данные уже текстом — create_*, форму не дублируй. \
 Пока оператор не ответил сообщением «Уточнения: …» — не вызывай create_*. \
 Несколько аккаунтов или прокси в одном сообщении — `create_accounts` / `create_proxies` \
 (JSON-массив `items`, до 20). Если ни у одной строки нет обязательных полей — `ask_operator`. \
@@ -559,7 +562,10 @@ TOOLS = [
     ),
     schema(
         "ask_operator",
-        "Спросить оператора, когда не хватает обязательных полей. Не выдумывай значения. После ответов — create/update.",
+        "Спросить оператора, когда не хватает обязательных полей. Не выдумывай значения. "
+        "Если оператор просит форму / «заполню сам» — передай fields "
+        "(proxy_label, proxy_url, platform, username, password; totp_seed по желанию). "
+        "Если данные уже в чате — create_*, форму не дублируй. После ответов «Уточнения: …» — create/update.",
         {
             "questions": {
                 "type": "array",
@@ -567,8 +573,28 @@ TOOLS = [
                 "description": "Короткие вопросы: чего не хватает",
             },
             "reason": {"type": "string", "description": "Зачем нужны ответы"},
+            "fields": {
+                "type": "array",
+                "description": "Форма в чате: id, label, kind text|password|select, options для select",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "label": {"type": "string"},
+                        "kind": {
+                            "type": "string",
+                            "enum": ["text", "password", "select"],
+                        },
+                        "options": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                    },
+                    "required": ["id", "label"],
+                },
+            },
         },
-        ["questions"],
+        [],
     ),
     schema(
         "diagnose",
@@ -1408,19 +1434,51 @@ def _optional_bool(args: dict[str, Any], key: str) -> bool | None:
     raise ToolError(f"{key} должен быть true/false, а пришло {raw!r}")
 
 
+def _ask_fields(raw: Any) -> list[dict[str, Any]]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ToolError("fields должен быть списком объектов")
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ToolError("каждое field — объект с id и label")
+        field_id = str(item.get("id") or "").strip()
+        label = str(item.get("label") or "").strip()
+        if not field_id or not label:
+            raise ToolError("у field нужны id и label")
+        kind = str(item.get("kind") or "text").strip().lower()
+        if kind not in {"text", "password", "select"}:
+            kind = "text"
+        entry: dict[str, Any] = {"id": field_id, "label": label, "kind": kind}
+        options = item.get("options")
+        if isinstance(options, list):
+            cleaned = [str(opt).strip() for opt in options if str(opt).strip()]
+            if cleaned:
+                entry["options"] = cleaned
+        out.append(entry)
+    return out
+
+
 def _ask_operator(args: dict[str, Any]) -> dict[str, Any]:
+    fields = _ask_fields(args.get("fields"))
     raw = args.get("questions")
     if isinstance(raw, str):
         raw = [raw]
+    if raw is None:
+        raw = []
     if not isinstance(raw, list):
         raise ToolError("questions должен быть списком строк")
     questions = [str(q).strip() for q in raw if str(q).strip()]
+    if not questions and fields:
+        questions = [field["label"] for field in fields]
     if not questions:
-        raise ToolError("нужен хотя бы один вопрос")
+        raise ToolError("нужен хотя бы один вопрос или field")
     return {
         "ask": True,
         "questions": questions,
         "why": str(args.get("reason") or "").strip(),
+        "fields": fields,
     }
 
 
@@ -1429,6 +1487,7 @@ class Step:
     kind: str
     text: str = ""
     questions: list[str] = field(default_factory=list)
+    fields: list[dict[str, Any]] = field(default_factory=list)
     name: str = ""
     ratio: float | None = None
     detail: str = ""
@@ -1671,7 +1730,12 @@ def stream(
                     ]
                     more_said: list[str] = []
                     message = yield from _complete(
-                        client, settings, round_thread, more_said, tools=specs
+                        client,
+                        settings,
+                        round_thread,
+                        more_said,
+                        tools=specs,
+                        include_think=False,
                     )
                     more_thought = str(message.pop("thinking", "") or "")
                     cut = str(message.pop("cut", "") or "")
@@ -1741,8 +1805,9 @@ def stream(
                 )
                 if isinstance(result, dict) and result.get("ask"):
                     questions = list(result.get("questions") or [])
+                    fields = list(result.get("fields") or [])
                     why = str(result.get("why") or "").strip()
-                    yield Step(kind="ask", text=why, questions=questions)
+                    yield Step(kind="ask", text=why, questions=questions, fields=fields)
                     yield Answer(
                         reply=why or "Нужны уточнения, чтобы продолжить.",
                         opened=opened,
@@ -1938,6 +2003,7 @@ def _complete(
     said: list[str],
     *,
     tools: list[dict[str, Any]] | None = None,
+    include_think: bool = True,
 ) -> Iterator[Step]:
     from app.services.salad_idle import touch
 
@@ -1947,7 +2013,6 @@ def _complete(
     thought: list[str] = []
     calls: dict[int, dict[str, Any]] = {}
     thinking = Thinking()
-    include_think = True
     include_options = True
     retried = False
     media_retried = False
