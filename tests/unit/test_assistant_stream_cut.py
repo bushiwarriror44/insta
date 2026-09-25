@@ -258,3 +258,120 @@ def test_complete_says_the_host_rejected_the_format(app_env, monkeypatch):
     assert "формат" in text
     assert "Unsupported" not in text
 
+
+class BodyThenOk(httpx.BaseTransport):
+    def __init__(self) -> None:
+        self.n = 0
+        self.second: httpx.Request | None = None
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        self.n += 1
+        if self.n == 1:
+            return httpx.Response(200, text="Unsupported Media Type")
+        self.second = request
+        body = 'data: {"choices":[{"delta":{"content":"ок"}}]}\n\ndata: [DONE]\n\n'
+        return httpx.Response(200, text=body)
+
+
+def test_complete_retries_when_the_body_is_the_media_phrase(app_env, monkeypatch):
+    monkeypatch.setattr(settings, "agent_base_url", "https://example/v1", raising=True)
+    transport = BodyThenOk()
+    with httpx.Client(transport=transport) as client:
+        gen = _complete(
+            client,
+            settings,
+            [{"role": "user", "content": "hi"}],
+            [],
+            tools=[],
+        )
+        try:
+            while True:
+                next(gen)
+        except StopIteration as stop:
+            message = stop.value
+    assert transport.n == 2
+    assert message["content"] == "ок"
+    assert "Unsupported" not in message["content"]
+    assert transport.second is not None
+    sent = json.loads(transport.second.content.decode())
+    assert "think" not in sent
+    assert "options" not in sent
+
+
+class AlwaysBody(httpx.BaseTransport):
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="Unsupported Media Type")
+
+
+def test_complete_hides_a_media_phrase_body(app_env, monkeypatch):
+    monkeypatch.setattr(settings, "agent_base_url", "https://example/v1", raising=True)
+    with httpx.Client(transport=AlwaysBody()) as client:
+        gen = _complete(
+            client,
+            settings,
+            [{"role": "user", "content": "hi"}],
+            [],
+            tools=[],
+        )
+        try:
+            next(gen)
+            raise AssertionError("expected the format error")
+        except AssistantError as exc:
+            text = str(exc)
+    assert "формат" in text
+    assert "Unsupported" not in text
+
+
+class PlainDisconnect(httpx.BaseTransport):
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("Name or service not known")
+
+
+def test_complete_hides_a_plain_disconnect(app_env, monkeypatch):
+    monkeypatch.setattr(settings, "agent_base_url", "https://example/v1", raising=True)
+    with httpx.Client(transport=PlainDisconnect()) as client:
+        gen = _complete(
+            client,
+            settings,
+            [{"role": "user", "content": "hi"}],
+            [],
+            tools=[],
+        )
+        try:
+            next(gen)
+            raise AssertionError("expected a connection error")
+        except AssistantError as exc:
+            text = str(exc)
+    assert text == "не дозвониться до модели. Напишите ещё раз."
+    assert "incomplete" not in text
+    assert "peer closed" not in text
+    assert "example" not in text
+
+
+class CauseCut(httpx.BaseTransport):
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        try:
+            raise RuntimeError("incomplete chunked read")
+        except RuntimeError as inner:
+            raise RuntimeError("connection failed") from inner
+
+
+def test_complete_reads_the_stream_cut_from_the_cause(app_env, monkeypatch):
+    monkeypatch.setattr(settings, "agent_base_url", "https://example/v1", raising=True)
+    with httpx.Client(transport=CauseCut()) as client:
+        gen = _complete(
+            client,
+            settings,
+            [{"role": "user", "content": "hi"}],
+            [],
+            tools=[],
+        )
+        try:
+            next(gen)
+            raise AssertionError("expected the cut to surface")
+        except AssistantError as exc:
+            text = str(exc)
+    assert "оборвал" in text
+    assert "incomplete" not in text
+    assert "peer closed" not in text
+

@@ -1787,9 +1787,33 @@ def _chat_body(
     return body
 
 
+FORMAT_ERROR = "хост модели отклонил формат запроса. Напишите ещё раз."
+MEDIA_PHRASE = "unsupported media type"
+
+
+def _exc_text(exc: BaseException) -> str:
+    chunks: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        chunks.append(str(current))
+        nxt = current.__cause__ or current.__context__
+        current = nxt
+    return "\n".join(chunks).lower()
+
+
 def _stream_cut(exc: BaseException) -> bool:
-    text = str(exc).lower()
+    text = _exc_text(exc)
     return "incomplete chunked" in text or "peer closed" in text
+
+
+def _only_media(parts: list[str]) -> bool:
+    text = "".join(parts).strip().lower()
+    if MEDIA_PHRASE not in text:
+        return False
+    rest = text.replace(MEDIA_PHRASE, "")
+    return not rest.strip(" \t\r\n.:;,-")
 
 
 def _calls_ready(calls: dict[int, dict[str, Any]]) -> bool:
@@ -1843,49 +1867,61 @@ def _complete(
                     "content": json.dumps(body).encode(),
                     "headers": {"Content-Type": "application/json"},
                 }
+            media_line = False
             with client.stream("POST", url, **stream_kwargs) as response:
                 if response.status_code == 400 and include_think:
                     response.read()
                     include_think = False
                     continue
-                if (
-                    response.status_code == 415
-                    and not media_retried
-                    and not content
-                    and not thought
-                    and not calls
-                ):
-                    response.read()
-                    media_retried = True
-                    include_think = False
-                    include_options = False
-                    continue
                 if response.status_code in {520, 524} and not retried and not content and not thought and not calls:
                     response.read()
                     retried = True
                     continue
-                _raise_for(response, url)
-                for line in response.iter_lines():
-                    delta = _delta(line)
-                    if delta is None:
-                        continue
-                    for key in ("reasoning", "thinking", "reasoning_content"):
-                        extra = delta.get(key)
-                        if isinstance(extra, str) and extra:
-                            thought.append(extra)
-                            yield Step(kind="think", text=extra)
-                    piece = delta.get("content") or ""
-                    if piece:
-                        for kind, text in thinking.feed(piece):
-                            if kind == "think":
-                                thought.append(text)
-                                yield Step(kind="think", text=text)
-                            else:
-                                content.append(text)
-                                said.append(text)
-                                yield Step(kind="token", text=text)
-                    for part in delta.get("tool_calls") or []:
-                        _gather(calls, part)
+                if response.status_code != 415:
+                    _raise_for(response, url)
+                if response.status_code == 415 or _only_media([response.reason_phrase or ""]):
+                    response.read()
+                    media_line = True
+                else:
+                    for line in response.iter_lines():
+                        if _delta(line) is None and _only_media([line]):
+                            media_line = True
+                            break
+                        delta = _delta(line)
+                        if delta is None:
+                            continue
+                        for key in ("reasoning", "thinking", "reasoning_content"):
+                            extra = delta.get(key)
+                            if isinstance(extra, str) and extra:
+                                thought.append(extra)
+                                yield Step(kind="think", text=extra)
+                        piece = delta.get("content") or ""
+                        if piece:
+                            fed = thinking.feed(piece)
+                            if any(kind == "token" and _only_media([text]) for kind, text in fed) and not any(
+                                part.strip() and not _only_media([part]) for part in content
+                            ):
+                                media_line = True
+                                break
+                            for kind, text in fed:
+                                if kind == "think":
+                                    thought.append(text)
+                                    yield Step(kind="think", text=text)
+                                else:
+                                    content.append(text)
+                                    said.append(text)
+                                    yield Step(kind="token", text=text)
+                        for part in delta.get("tool_calls") or []:
+                            _gather(calls, part)
+            if media_line and not any(part.strip() and not _only_media([part]) for part in content):
+                if not media_retried and not thought and not calls:
+                    media_retried = True
+                    include_think = False
+                    include_options = False
+                    content.clear()
+                    thinking = Thinking()
+                    continue
+                raise AssistantError(FORMAT_ERROR, retryable=True)
         except AssistantError:
             raise
         except Exception as exc:
@@ -1919,7 +1955,7 @@ def _complete(
                     retryable=True,
                 ) from exc
             raise AssistantError(
-                f"не дозвониться до модели по адресу {url}: {exc}",
+                "не дозвониться до модели. Напишите ещё раз.",
                 retryable=True,
             ) from exc
         else:
@@ -1927,10 +1963,20 @@ def _complete(
                 if kind == "think":
                     thought.append(text)
                     yield Step(kind="think", text=text)
-                else:
+                elif not _only_media([text]):
                     content.append(text)
                     said.append(text)
                     yield Step(kind="token", text=text)
+            if _only_media(content) and not media_retried and not thought and not calls:
+                content.clear()
+                said.clear()
+                media_retried = True
+                include_think = False
+                include_options = False
+                thinking = Thinking()
+                continue
+            if _only_media(content):
+                raise AssistantError(FORMAT_ERROR, retryable=True)
         break
 
     message: dict[str, Any] = {
