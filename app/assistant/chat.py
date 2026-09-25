@@ -1749,6 +1749,24 @@ def _chat_body(
     return body
 
 
+def _stream_cut(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return "incomplete chunked" in text or "peer closed" in text
+
+
+def _calls_ready(calls: dict[int, dict[str, Any]]) -> bool:
+    if not calls:
+        return False
+    for call in calls.values():
+        name, args = _read_call(call)
+        raw = (call.get("function") or {}).get("arguments")
+        if not name:
+            return False
+        if isinstance(raw, str) and raw.strip() and not args and raw.strip() not in {"{}", "null"}:
+            return False
+    return True
+
+
 def _complete(
     client: httpx.Client,
     settings: Settings,
@@ -1765,6 +1783,7 @@ def _complete(
     calls: dict[int, dict[str, Any]] = {}
     thinking = Thinking()
     include_think = True
+    retried = False
     while True:
         body = _chat_body(settings, thread, include_think=include_think, tools=tools)
         try:
@@ -1787,6 +1806,22 @@ def _complete(
                     for part in delta.get("tool_calls") or []:
                         _gather(calls, part)
         except httpx.RequestError as exc:
+            # Salad's gateway closes the stream at ~100s. A cut before any
+            # token is worth one retry: the weights are already in VRAM.
+            if content and not calls:
+                break
+            if _calls_ready(calls):
+                break
+            if not retried and _stream_cut(exc):
+                retried = True
+                content.clear()
+                calls.clear()
+                continue
+            if _stream_cut(exc):
+                raise AssistantError(
+                    "шлюз Salad оборвал ответ модели. Напишите ещё раз — она уже в памяти.",
+                    retryable=True,
+                ) from exc
             raise AssistantError(
                 f"не дозвониться до модели по адресу {url}: {exc}",
                 retryable=True,
