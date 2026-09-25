@@ -131,6 +131,15 @@ const MUTATE_TOOLS = new Set([
 ]);
 
 const CUT_LINE = "Ответ оборвался на шлюзе.";
+const FORMAT_LINE = "хост модели отклонил формат запроса. Напишите ещё раз.";
+const MEDIA_PHRASE = "unsupported media type";
+
+function onlyMediaPhrase(text: string): boolean {
+  const trimmed = text.trim().toLowerCase();
+  if (!trimmed.includes(MEDIA_PHRASE)) return false;
+  const rest = trimmed.split(MEDIA_PHRASE).join("");
+  return rest.replace(/[\s.:;,\-]/g, "") === "";
+}
 
 interface Said {
   role: "user" | "assistant";
@@ -469,6 +478,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         const printed = writingRef.current[id] ?? "";
         const thinking = (thinkRef.current[id] ?? "").trim();
         const steps = doingRef.current[id] ?? [];
+        const media = onlyMediaPhrase(printed);
         const kept = Boolean(printed || thinking || steps.length);
         answered = true;
         replaceMessages(id, [
@@ -476,10 +486,10 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
           ...notes,
           {
             role: "assistant",
-            content: printed || (kept ? "" : detail),
+            content: media ? FORMAT_LINE : printed || (kept ? "" : detail),
             thinking: thinking || undefined,
             steps: steps.length ? steps : undefined,
-            cut: printed || thinking ? CUT_LINE : undefined,
+            cut: media ? undefined : printed || thinking ? CUT_LINE : undefined,
           },
         ]);
       };
@@ -516,12 +526,13 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
             } else if (step.type === "done") {
               answered = true;
               const thinking = (step.thinking || thinkRef.current[id] || "").trim();
+              const reply = onlyMediaPhrase(step.reply) ? FORMAT_LINE : step.reply;
               replaceMessages(id, [
                 ...asked,
                 ...notes,
                 {
                   role: "assistant",
-                  content: step.reply,
+                  content: reply,
                   used: step.used,
                   images: step.images,
                   thinking: thinking || undefined,

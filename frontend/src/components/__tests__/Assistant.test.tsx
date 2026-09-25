@@ -315,6 +315,24 @@ describe("Assistant", () => {
     expect(screen.queryByText("шлюз Salad оборвал ответ")).not.toBeInTheDocument();
   });
 
+  it("replaces a media-type phrase with the Russian sentence", async () => {
+    askMock.mockImplementation(async (_messages, onStep) => {
+      onStep({ type: "token", text: "Unsupported" });
+      onStep({ type: "token", text: " Media Type" });
+      onStep({
+        type: "error",
+        detail: "хост модели отклонил формат запроса. Напишите ещё раз.",
+        retryable: true,
+      });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "привет");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect(await screen.findByText(/формат запроса/i)).toBeInTheDocument();
+    expect(screen.queryByText(/unsupported media type/i)).not.toBeInTheDocument();
+  });
+
   it("keeps printed text when the connection drops", async () => {
     askMock.mockImplementation(async (_messages, onStep) => {
       onStep({ type: "token", text: "кусок ответа" });

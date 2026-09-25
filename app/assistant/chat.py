@@ -1816,6 +1816,48 @@ def _only_media(parts: list[str]) -> bool:
     return not rest.strip(" \t\r\n.:;,-")
 
 
+def _still_media(parts: list[str]) -> bool:
+    text = "".join(parts).strip().lower()
+    return bool(text) and MEDIA_PHRASE.startswith(text)
+
+
+def _real_answer(parts: list[str]) -> bool:
+    return any(part.strip() and not _only_media([part]) for part in parts)
+
+
+def _flush_held(held: list[str], content: list[str], said: list[str]) -> list[Step]:
+    steps = [Step(kind="token", text=part) for part in held]
+    content.extend(held)
+    said.extend(held)
+    held.clear()
+    return steps
+
+
+def _hold_token(
+    held: list[str], content: list[str], said: list[str], text: str
+) -> list[Step] | None:
+    """Hold pieces that could still be only the media phrase. None means drop them."""
+    if _real_answer(content) and _only_media([text]):
+        return []
+    held.append(text)
+    pending = [*content, *held]
+    if not _real_answer(content) and _only_media(pending):
+        held.clear()
+        return None
+    if not _real_answer(content) and _still_media(pending):
+        return []
+    return _flush_held(held, content, said)
+
+
+def _release_held(held: list[str], content: list[str], said: list[str]) -> list[Step] | None:
+    if not held:
+        return []
+    if not _real_answer(content) and _only_media([*content, *held]):
+        held.clear()
+        return None
+    return _flush_held(held, content, said)
+
+
 def _calls_ready(calls: dict[int, dict[str, Any]]) -> bool:
     if not calls:
         return False
@@ -1858,6 +1900,8 @@ def _complete(
             include_options=include_options,
             tools=tools,
         )
+        held: list[str] = []
+        media_line = False
         try:
             # A 415 means the gateway refused the JSON shape. The retry is a
             # plain OpenAI body with an explicit content type and length.
@@ -1867,7 +1911,6 @@ def _complete(
                     "content": json.dumps(body).encode(),
                     "headers": {"Content-Type": "application/json"},
                 }
-            media_line = False
             with client.stream("POST", url, **stream_kwargs) as response:
                 if response.status_code == 400 and include_think:
                     response.read()
@@ -1897,20 +1940,19 @@ def _complete(
                                 yield Step(kind="think", text=extra)
                         piece = delta.get("content") or ""
                         if piece:
-                            fed = thinking.feed(piece)
-                            if any(kind == "token" and _only_media([text]) for kind, text in fed) and not any(
-                                part.strip() and not _only_media([part]) for part in content
-                            ):
-                                media_line = True
-                                break
-                            for kind, text in fed:
+                            for kind, text in thinking.feed(piece):
                                 if kind == "think":
                                     thought.append(text)
                                     yield Step(kind="think", text=text)
-                                else:
-                                    content.append(text)
-                                    said.append(text)
-                                    yield Step(kind="token", text=text)
+                                    continue
+                                outcome = _hold_token(held, content, said, text)
+                                if outcome is None:
+                                    media_line = True
+                                    break
+                                for step in outcome:
+                                    yield step
+                            if media_line:
+                                break
                         for part in delta.get("tool_calls") or []:
                             _gather(calls, part)
             if media_line and not any(part.strip() and not _only_media([part]) for part in content):
@@ -1919,6 +1961,8 @@ def _complete(
                     include_think = False
                     include_options = False
                     content.clear()
+                    said.clear()
+                    held.clear()
                     thinking = Thinking()
                     continue
                 raise AssistantError(FORMAT_ERROR, retryable=True)
@@ -1934,9 +1978,32 @@ def _complete(
                     thought.append(text)
                     yield Step(kind="think", text=text)
                 else:
-                    content.append(text)
-                    said.append(text)
-                    yield Step(kind="token", text=text)
+                    outcome = _hold_token(held, content, said, text)
+                    if outcome is None:
+                        media_line = True
+                        break
+                    for step in outcome:
+                        yield step
+            if not media_line:
+                outcome = _release_held(held, content, said)
+                if outcome is None:
+                    media_line = True
+                else:
+                    for step in outcome:
+                        yield step
+            if media_line and not _real_answer(content):
+                if not media_retried and not thought and not calls:
+                    media_retried = True
+                    include_think = False
+                    include_options = False
+                    content.clear()
+                    said.clear()
+                    held.clear()
+                    thought.clear()
+                    calls.clear()
+                    thinking = Thinking()
+                    continue
+                raise AssistantError(FORMAT_ERROR, retryable=True)
             if _calls_ready(calls):
                 break
             if content or thought:
@@ -1963,19 +2030,30 @@ def _complete(
                 if kind == "think":
                     thought.append(text)
                     yield Step(kind="think", text=text)
-                elif not _only_media([text]):
-                    content.append(text)
-                    said.append(text)
-                    yield Step(kind="token", text=text)
-            if _only_media(content) and not media_retried and not thought and not calls:
-                content.clear()
-                said.clear()
-                media_retried = True
-                include_think = False
-                include_options = False
-                thinking = Thinking()
-                continue
-            if _only_media(content):
+                    continue
+                outcome = _hold_token(held, content, said, text)
+                if outcome is None:
+                    media_line = True
+                    break
+                for step in outcome:
+                    yield step
+            if not media_line:
+                outcome = _release_held(held, content, said)
+                if outcome is None:
+                    media_line = True
+                else:
+                    for step in outcome:
+                        yield step
+            if (media_line or _only_media(content)) and not _real_answer(content):
+                if not media_retried and not thought and not calls:
+                    content.clear()
+                    said.clear()
+                    held.clear()
+                    media_retried = True
+                    include_think = False
+                    include_options = False
+                    thinking = Thinking()
+                    continue
                 raise AssistantError(FORMAT_ERROR, retryable=True)
         break
 

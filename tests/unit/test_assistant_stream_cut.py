@@ -375,3 +375,80 @@ def test_complete_reads_the_stream_cut_from_the_cause(app_env, monkeypatch):
     assert "incomplete" not in text
     assert "peer closed" not in text
 
+
+def _sse(*parts: str) -> str:
+    lines = []
+    for part in parts:
+        payload = json.dumps({"choices": [{"delta": {"content": part}}]}, ensure_ascii=False)
+        lines.append(f"data: {payload}\n\n")
+    lines.append("data: [DONE]\n\n")
+    return "".join(lines)
+
+
+class SplitThenOk(httpx.BaseTransport):
+    def __init__(self) -> None:
+        self.n = 0
+        self.second: httpx.Request | None = None
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        self.n += 1
+        if self.n == 1:
+            return httpx.Response(200, text=_sse("Unsupported", " Media Type"))
+        self.second = request
+        return httpx.Response(200, text=_sse("ок"))
+
+
+def test_complete_holds_a_split_media_phrase(app_env, monkeypatch):
+    monkeypatch.setattr(settings, "agent_base_url", "https://example/v1", raising=True)
+    transport = SplitThenOk()
+    with httpx.Client(transport=transport) as client:
+        gen = _complete(
+            client,
+            settings,
+            [{"role": "user", "content": "hi"}],
+            [],
+            tools=[],
+        )
+        steps = []
+        try:
+            while True:
+                steps.append(next(gen))
+        except StopIteration as stop:
+            message = stop.value
+    assert transport.n == 2
+    assert message["content"] == "ок"
+    assert "Unsupported" not in message["content"]
+    assert all("Unsupported" not in step.text for step in steps)
+    assert transport.second is not None
+    sent = json.loads(transport.second.content.decode())
+    assert "think" not in sent
+    assert "options" not in sent
+
+
+class AlwaysSplit(httpx.BaseTransport):
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=_sse("Unsupported", " Media Type"))
+
+
+def test_complete_hides_a_split_media_phrase(app_env, monkeypatch):
+    monkeypatch.setattr(settings, "agent_base_url", "https://example/v1", raising=True)
+    with httpx.Client(transport=AlwaysSplit()) as client:
+        gen = _complete(
+            client,
+            settings,
+            [{"role": "user", "content": "hi"}],
+            [],
+            tools=[],
+        )
+        steps = []
+        try:
+            while True:
+                steps.append(next(gen))
+        except StopIteration:
+            raise AssertionError("expected the format error") from None
+        except AssistantError as exc:
+            text = str(exc)
+    assert "формат" in text
+    assert "Unsupported" not in text
+    assert all("Unsupported" not in step.text for step in steps)
+
