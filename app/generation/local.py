@@ -49,6 +49,9 @@ class LocalVideoBackend(VideoBackend):
     ) -> GenerationResult:
         if not self.healthcheck():
             raise GenerationError(self.health_detail())
+        from app.services.salad_idle import touch
+
+        touch(self.settings)
         report = on_progress or (lambda _: None)
         report(Progress(STAGE_SUBMITTED))
         headers: dict[str, str] = {"Content-Type": "application/json"}

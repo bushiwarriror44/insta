@@ -287,6 +287,12 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
       const question = text.trim();
       if (!question || busy) return;
       const asked: Said[] = [...thread, { role: "user", content: question }];
+      const notes: Said[] = [];
+      const pushStatus = (text: string) => {
+        if (notes.some((line) => line.content === text)) return;
+        notes.push({ role: "assistant", content: text });
+        setThread([...asked, ...notes]);
+      };
       setThread(asked);
       setDraft("");
       setNote(null);
@@ -306,7 +312,9 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         await ask(
           asked.map(({ role, content }) => ({ role, content })),
           (step) => {
-            if (step.type === "tool") {
+            if (step.type === "status") {
+              pushStatus(step.text);
+            } else if (step.type === "tool") {
               setDoing((seen) => [...seen, step.text]);
               if (step.name) setDoingName(step.name);
             } else if (step.type === "token") {
@@ -318,11 +326,12 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
               setAskAnswers({});
             } else if (step.type === "error") {
               answered = true;
-              setThread([...asked, { role: "assistant", content: step.detail }]);
+              setThread([...asked, ...notes, { role: "assistant", content: step.detail }]);
             } else if (step.type === "done") {
               answered = true;
               setThread([
                 ...asked,
+                ...notes,
                 {
                   role: "assistant",
                   content: step.reply,
@@ -351,12 +360,12 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         );
       } catch (err) {
         if (!controller.signal.aborted) {
-          setThread([...asked, { role: "assistant", content: formatApiError(err) }]);
+          setThread([...asked, ...notes, { role: "assistant", content: formatApiError(err) }]);
           answered = true;
         }
       } finally {
         if (!answered && !controller.signal.aborted) {
-          setThread([...asked, { role: "assistant", content: "Ответа не было." }]);
+          setThread([...asked, ...notes, { role: "assistant", content: "Ответа не было." }]);
         }
         stop.current = null;
         setBusy(false);

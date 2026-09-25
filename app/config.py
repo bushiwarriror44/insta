@@ -107,6 +107,9 @@ class Settings(BaseSettings):
     salad_organization: str = Field(default="")
     salad_project: str = Field(default="")
     salad_container_group: str = Field(default="")
+    # 0 disables idle Stop. Running still bills until this many minutes after
+    # the later of "group became running" and the last chat or local render.
+    salad_idle_stop_minutes: int = Field(default=20, ge=0, le=24 * 60)
     hf_space_id: str = Field(default="")
     hf_space_api_name: str = Field(default="predict")
     generation_poll_seconds: float = Field(default=5.0)

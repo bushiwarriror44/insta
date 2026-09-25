@@ -112,6 +112,9 @@ export function SaladGpuCard() {
         Start/Stop контейнерной группы из панели, без кабинета Salad. Это не тумблер воркера в
         шапке. Пока Running — идут GPU-часы. Не пользуешься — Stop. Start после Stop снова качает
         образ.
+        {gpu.configured && (gpu.idle_stop_minutes ?? 0) > 0
+          ? ` Авто-Stop через ${gpu.idle_stop_minutes} мин простоя (чат или local-рендер).`
+          : ""}
       </p>
       <div className="flex flex-wrap items-center gap-3">
         <span

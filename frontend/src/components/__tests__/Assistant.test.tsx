@@ -90,6 +90,30 @@ describe("Assistant", () => {
     expect(await screen.findByText("привет")).toBeInTheDocument();
   });
 
+  it("keeps the warmup line above the reply", async () => {
+    askMock.mockImplementation(async (_messages, onStep) => {
+      onStep({ type: "status", text: "Запускаю видеокарту, подождите" });
+      onStep({ type: "status", text: "Запускаю видеокарту, подождите" });
+      onStep({ type: "status", text: "Прогреваю модель, подождите" });
+      onStep({
+        type: "done",
+        reply: "я здесь",
+        open_url: null,
+        opened: null,
+        used: [],
+        images: [],
+      });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "привет");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect(await screen.findByText("я здесь")).toBeInTheDocument();
+    expect(screen.getByText("Запускаю видеокарту, подождите")).toBeInTheDocument();
+    expect(screen.getByText("Прогреваю модель, подождите")).toBeInTheDocument();
+    expect(screen.getAllByText("Запускаю видеокарту, подождите")).toHaveLength(1);
+  });
+
   it("asks for clarifications and sends them as the next message", async () => {
     askMock.mockImplementationOnce(async (_messages, onStep) => {
       onStep({ type: "ask", questions: ["какой username?"], text: "нужен логин" });

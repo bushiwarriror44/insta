@@ -124,6 +124,7 @@ CLI внутри стека: `docker compose exec reels-api python -m app.cli st
 | `WAN_BASE_URL` | свой GPU HTTP, не compose панели. Сборка образа чат+Wan: `docker/salad-gpu` |
 | `SALAD_API_KEY` | ключ Salad Public API для Start/Stop группы с `/administration`. В чат и логи не копировать |
 | `SALAD_ORGANIZATION` / `SALAD_PROJECT` / `SALAD_CONTAINER_GROUP` | slug-имена из кабинета Salad, не URL |
+| `SALAD_IDLE_STOP_MINUTES` | авто-Stop группы после простоя (чат или local-рендер); `0` выключает. Start снова качает образ |
 | `HF_SPACE_ID` | optional Gradio Space, experimental |
 | `DEFAULT_DAILY_POST_CAP` и часы | дефолты новых аккаунтов |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | алерты (необязательно) |

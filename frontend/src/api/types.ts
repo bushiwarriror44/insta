@@ -447,6 +447,7 @@ export interface GpuOut {
   stopping_count: number;
   chat_ok: boolean;
   detail: string;
+  idle_stop_minutes?: number;
 }
 
 export interface RenderBackendOut {

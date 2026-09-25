@@ -35,6 +35,7 @@ def test_settings_reads_env_overrides(monkeypatch, tmp_path):
     monkeypatch.setenv("SALAD_ORGANIZATION", "acme")
     monkeypatch.setenv("SALAD_PROJECT", "gpu")
     monkeypatch.setenv("SALAD_CONTAINER_GROUP", "insta-gpu")
+    monkeypatch.setenv("SALAD_IDLE_STOP_MINUTES", "15")
 
     fresh = Settings()
     assert fresh.database_url == "sqlite:///custom.db"
@@ -50,6 +51,7 @@ def test_settings_reads_env_overrides(monkeypatch, tmp_path):
     assert fresh.salad_organization == "acme"
     assert fresh.salad_project == "gpu"
     assert fresh.salad_container_group == "insta-gpu"
+    assert fresh.salad_idle_stop_minutes == 15
 
 
 def test_ensure_dir_creates_paths(tmp_path):

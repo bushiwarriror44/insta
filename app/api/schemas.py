@@ -503,6 +503,7 @@ class GpuOut(BaseModel):
     stopping_count: int = 0
     chat_ok: bool = False
     detail: str = ""
+    idle_stop_minutes: int = 0
 
 
 class AdminNotesOut(BaseModel):

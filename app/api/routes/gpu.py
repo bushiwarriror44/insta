@@ -32,6 +32,7 @@ def _payload(state: salad_gpu.GroupState | None, settings: Settings) -> GpuOut:
         return GpuOut(
             configured=ready,
             detail="" if ready else "Задайте SALAD_API_KEY и имена группы в .env",
+            idle_stop_minutes=int(settings.salad_idle_stop_minutes),
         )
     return GpuOut(
         configured=True,
@@ -43,6 +44,7 @@ def _payload(state: salad_gpu.GroupState | None, settings: Settings) -> GpuOut:
         stopping_count=state.stopping_count,
         chat_ok=_chat_ok(settings),
         detail=state.detail,
+        idle_stop_minutes=int(settings.salad_idle_stop_minutes),
     )
 
 

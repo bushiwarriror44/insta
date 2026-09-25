@@ -18,6 +18,7 @@ from app.config import Settings, get_settings
 from app.services import ollama_control
 from app.services.http import client as http_client
 from app.services.runtime import probe
+from app.services.salad_gpu import SaladProblem, configured as salad_configured, prepare_for_chat
 
 ROUNDS = 6
 RUN_ROUNDS = 12
@@ -1550,7 +1551,23 @@ def stream(
     viewer_role: str | None = None,
 ) -> Iterator[Step | Answer]:
     settings = settings or get_settings()
-    if not settings.agent_base_url:
+    if salad_configured(settings):
+        base = ""
+        try:
+            ready = prepare_for_chat(settings)
+            while True:
+                try:
+                    line = next(ready)
+                except StopIteration as stop:
+                    base = str(stop.value or "")
+                    break
+                yield Step(kind="status", text=line)
+        except SaladProblem as exc:
+            raise AssistantError(str(exc), retryable=True) from exc
+        if not base:
+            raise AssistantError("Salad не вернул адрес группы", retryable=True)
+        settings = settings.model_copy(update={"agent_base_url": base})
+    elif not settings.agent_base_url:
         raise AssistantError(
             "модель не настроена — задайте AGENT_BASE_URL, например http://localhost:11434/v1"
         )
@@ -1740,6 +1757,9 @@ def _complete(
     *,
     tools: list[dict[str, Any]] | None = None,
 ) -> Iterator[Step]:
+    from app.services.salad_idle import touch
+
+    touch(settings)
     url = f"{settings.agent_base_url.rstrip('/')}/chat/completions"
     content: list[str] = []
     calls: dict[int, dict[str, Any]] = {}

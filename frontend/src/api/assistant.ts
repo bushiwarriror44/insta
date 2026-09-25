@@ -20,7 +20,8 @@ export type AssistantStep =
       asks?: string[];
       created?: { accounts?: number[]; proxies?: number[] };
     }
-  | { type: "error"; detail: string; retryable: boolean };
+    | { type: "status"; text: string }
+    | { type: "error"; detail: string; retryable: boolean };
 
 export async function ask(
   messages: Array<{ role: string; content: string }>,

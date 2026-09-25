@@ -1,7 +1,8 @@
 """FastAPI entrypoint for the admin web UI."""
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 from pathlib import Path
 
@@ -38,7 +39,7 @@ from app.db import SessionLocal, init_db
 from app.logging_setup import configure_logging, get_logger
 from app.panel.settings_store import auth_is_required, get_or_create_panel_settings
 from app.scheduler.heartbeat import worker_status
-from app.services import ollama_control, worker_control
+from app.services import ollama_control, salad_idle, worker_control
 
 logger = get_logger(__name__)
 
@@ -78,6 +79,15 @@ def _maybe_start_worker() -> None:
         db.close()
 
 
+async def _salad_idle_loop() -> None:
+    while True:
+        await asyncio.sleep(salad_idle.POLL_SECONDS)
+        try:
+            await asyncio.to_thread(salad_idle.tick)
+        except Exception:
+            logger.warning("salad.idle_tick_failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
@@ -97,8 +107,14 @@ async def lifespan(app: FastAPI):
     )
     _maybe_start_ollama()
     _maybe_start_worker()
-    yield
-    logger.info("api.shutdown")
+    idle_task = asyncio.create_task(_salad_idle_loop())
+    try:
+        yield
+    finally:
+        idle_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await idle_task
+        logger.info("api.shutdown")
 
 
 def create_app() -> FastAPI:

@@ -78,11 +78,19 @@ describe("SaladGpuCard", () => {
 
   it("stops a running group after confirm that hours and chat stop", async () => {
     vi.mocked(api.gpu.status).mockResolvedValue(
-      idle({ configured: true, status: "running", billing: true, running_count: 1, chat_ok: true })
+      idle({
+        configured: true,
+        status: "running",
+        billing: true,
+        running_count: 1,
+        chat_ok: true,
+        idle_stop_minutes: 20,
+      })
     );
     vi.mocked(api.gpu.stop).mockResolvedValue(idle({ configured: true, status: "stopped" }));
     render(<SaladGpuCard />);
     expect(await screen.findByText(/running — идут gpu-часы/i)).toBeInTheDocument();
+    expect(screen.getByText(/авто-stop через 20 мин простоя/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^start$/i })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: /^stop$/i }));
     expect(window.confirm).toHaveBeenCalledWith(expect.stringMatching(/часы остановятся/i));

@@ -68,6 +68,6 @@ Ollama: поле «Контекст», «Применить». «Копии ба
 
 ## Администрирование `/administration` (владелец)
 
-Вкладки: «Обзор» (GPU Salad Start/Stop через Salad Public API `GET/POST /api/gpu` — не тумблер воркера; Running = GPU-часы; без `SALAD_API_KEY` кнопки выключены; «Оплата»; «Реализация»), «Блокнот» (одна заметка в SQLite `panel_settings.admin_notes`, автосохранение; чат не читает и не пишет; не класть пароли и ключи — они в `.env`), «API» (Swagger по `/api/openapi.json`, Try it out в живой API, Bearer из сессии). `/api/docs` нет. В открытом режиме без пароля вкладка есть. Оператору скрыта.
+Вкладки: «Обзор» (GPU Salad Start/Stop через Salad Public API `GET/POST /api/gpu` — не тумблер воркера; Running = GPU-часы; без `SALAD_API_KEY` кнопки выключены; при `SALAD_IDLE_STOP_MINUTES` > 0 группа сама Stop после простоя, Start снова качает образ; «Оплата»; «Реализация»), «Блокнот» (одна заметка в SQLite `panel_settings.admin_notes`, автосохранение; чат не читает и не пишет; не класть пароли и ключи — они в `.env`), «API» (Swagger по `/api/openapi.json`, Try it out в живой API, Bearer из сессии). `/api/docs` нет. В открытом режиме без пароля вкладка есть. Оператору скрыта.
 
 Дальше: [publishing.md](publishing.md), [assistant.md](assistant.md).

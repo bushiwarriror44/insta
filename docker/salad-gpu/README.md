@@ -42,6 +42,20 @@ cd /opt/insta && docker compose up -d --force-recreate reels-api reels-worker
 
 Проверка с VPS: `curl -sS https://НОВЫЙ-ХОСТ.salad.cloud/` → `Ollama is running`. Рендер в панели — backend `local`.
 
-Не пользуешься — **Stop** группы, иначе идёт почасовка. Start снова качает образ на новый ПК.
+Не пользуешься — **Stop** группы, иначе идёт почасовка. Start снова качает образ на новый ПК. Панель сама гасит группу после простоя (`SALAD_IDLE_STOP_MINUTES`, по умолчанию 20): см. карточку GPU Salad.
 
-Stop/Start из панели: карточка **GPU Salad** на `/administration` (`SALAD_API_KEY` + имена org/project/group в `.env` админ-VPS). Это не тумблер «Агент» в шапке (тот крутит `reels-worker`). API при старте группу сам не поднимает. Ключ в чат и документы не копировать.
+## Прогрев qwen3:32b без пересборки
+
+Шлюз Salad рвёт публичный HTTPS примерно через 100 с. Пока 32B грузится в VRAM, чат снаружи получает 524. Прогрев идёт **внутри** контейнера, на `127.0.0.1:11434`.
+
+В текущем образе nginx слушает только IPv4 `:8080`, Ollama уже на `[::]:11434`. Для чата порт шлюза — **11434**, auth выкл. `/generate` (Wan) с этого порта не открывается.
+
+Группа → Edit → Command, вставить целиком (заменяет пустой Command, `start.sh` всё равно стартует):
+
+```text
+/bin/bash -c 'set -eu; /opt/gpu/start.sh & spid=$!; ( i=0; while [ "$i" -lt 90 ]; do curl -sf http://127.0.0.1:11434/ >/dev/null && break; i=$((i+1)); sleep 2; done; python -c '"'"'import json,urllib.request; b=json.dumps({"model":"qwen3:32b","prompt":"hi","stream":False,"keep_alive":"30m"}).encode(); urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:11434/api/generate", data=b, headers={"Content-Type":"application/json"}), timeout=600).read()'"'"' ) >/tmp/warmup.log 2>&1 & wait "$spid"'
+```
+
+Save перезапускает реплику. Образ на Hub не пересобирать. Старые группы держать Stop.
+
+Stop/Start из панели: карточка **GPU Salad** на `/administration` (`SALAD_API_KEY` + имена org/project/group в `.env` админ-VPS). Нижний чат сам поднимает группу и один раз прописывает команду прогрева. Это не тумблер «Агент» в шапке (тот крутит `reels-worker`). Ключ в чат и документы не копировать.
