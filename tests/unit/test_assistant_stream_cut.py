@@ -1,6 +1,8 @@
 """A Salad gateway cut mid-stream is one retry, not a dead host."""
 from __future__ import annotations
 
+import json
+
 import httpx
 
 from app.assistant.chat import AssistantError, _complete
@@ -165,4 +167,94 @@ def test_complete_splits_reasoning_from_the_answer(app_env, monkeypatch):
     assert message["cut"] == ""
     assert said == ["потом"]
     assert kinds == ["think", "think", "token"]
+
+
+class PlainCut(httpx.BaseTransport):
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        raise RuntimeError(
+            "peer closed connection without sending complete message body (incomplete chunked read)"
+        )
+
+
+def test_complete_hides_a_non_httpx_stream_cut(app_env, monkeypatch):
+    monkeypatch.setattr(settings, "agent_base_url", "https://example/v1", raising=True)
+    with httpx.Client(transport=PlainCut()) as client:
+        gen = _complete(
+            client,
+            settings,
+            [{"role": "user", "content": "hi"}],
+            [],
+            tools=[],
+        )
+        try:
+            next(gen)
+            raise AssertionError("expected the cut to surface")
+        except AssistantError as exc:
+            text = str(exc)
+    assert "оборвал" in text
+    assert "incomplete" not in text
+    assert "peer closed" not in text
+
+
+class MediaThenOk(httpx.BaseTransport):
+    def __init__(self) -> None:
+        self.n = 0
+        self.second: httpx.Request | None = None
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        self.n += 1
+        if self.n == 1:
+            return httpx.Response(415, text="Unsupported Media Type")
+        self.second = request
+        body = 'data: {"choices":[{"delta":{"content":"ок"}}]}\n\ndata: [DONE]\n\n'
+        return httpx.Response(200, text=body)
+
+
+def test_complete_retries_415_without_extra_fields(app_env, monkeypatch):
+    monkeypatch.setattr(settings, "agent_base_url", "https://example/v1", raising=True)
+    transport = MediaThenOk()
+    with httpx.Client(transport=transport) as client:
+        gen = _complete(
+            client,
+            settings,
+            [{"role": "user", "content": "hi"}],
+            [],
+            tools=[],
+        )
+        try:
+            while True:
+                next(gen)
+        except StopIteration as stop:
+            message = stop.value
+    assert transport.n == 2
+    assert message["content"] == "ок"
+    assert transport.second is not None
+    sent = json.loads(transport.second.content.decode())
+    assert "think" not in sent
+    assert "options" not in sent
+    assert "application/json" in transport.second.headers["content-type"]
+
+
+class AlwaysMedia(httpx.BaseTransport):
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        return httpx.Response(415, text="Unsupported Media Type")
+
+
+def test_complete_says_the_host_rejected_the_format(app_env, monkeypatch):
+    monkeypatch.setattr(settings, "agent_base_url", "https://example/v1", raising=True)
+    with httpx.Client(transport=AlwaysMedia()) as client:
+        gen = _complete(
+            client,
+            settings,
+            [{"role": "user", "content": "hi"}],
+            [],
+            tools=[],
+        )
+        try:
+            next(gen)
+            raise AssertionError("expected the format error")
+        except AssistantError as exc:
+            text = str(exc)
+    assert "формат" in text
+    assert "Unsupported" not in text
 

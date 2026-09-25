@@ -1767,6 +1767,7 @@ def _chat_body(
     thread: list[dict[str, Any]],
     *,
     include_think: bool = True,
+    include_options: bool = True,
     tools: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
@@ -1776,9 +1777,11 @@ def _chat_body(
         "temperature": 0.1,
         "max_tokens": 1024,
         "stream": True,
-        # 32k context on a 24 GB card OOMs and Salad answers 520.
-        "options": {"num_ctx": 8192},
     }
+    # 32k context on a 24 GB card OOMs and Salad answers 520.
+    # `options` is not in the OpenAI schema; a gateway may answer 415.
+    if include_options:
+        body["options"] = {"num_ctx": 8192}
     if include_think:
         body["think"] = True
     return body
@@ -1819,15 +1822,43 @@ def _complete(
     calls: dict[int, dict[str, Any]] = {}
     thinking = Thinking()
     include_think = True
+    include_options = True
     retried = False
+    media_retried = False
     cut = False
     while True:
-        body = _chat_body(settings, thread, include_think=include_think, tools=tools)
+        body = _chat_body(
+            settings,
+            thread,
+            include_think=include_think,
+            include_options=include_options,
+            tools=tools,
+        )
         try:
-            with client.stream("POST", url, json=body) as response:
+            # A 415 means the gateway refused the JSON shape. The retry is a
+            # plain OpenAI body with an explicit content type and length.
+            stream_kwargs: dict[str, Any] = {"json": body}
+            if media_retried:
+                stream_kwargs = {
+                    "content": json.dumps(body).encode(),
+                    "headers": {"Content-Type": "application/json"},
+                }
+            with client.stream("POST", url, **stream_kwargs) as response:
                 if response.status_code == 400 and include_think:
                     response.read()
                     include_think = False
+                    continue
+                if (
+                    response.status_code == 415
+                    and not media_retried
+                    and not content
+                    and not thought
+                    and not calls
+                ):
+                    response.read()
+                    media_retried = True
+                    include_think = False
+                    include_options = False
                     continue
                 if response.status_code in {520, 524} and not retried and not content and not thought and not calls:
                     response.read()
@@ -1855,9 +1886,13 @@ def _complete(
                                 yield Step(kind="token", text=text)
                     for part in delta.get("tool_calls") or []:
                         _gather(calls, part)
-        except httpx.RequestError as exc:
+        except AssistantError:
+            raise
+        except Exception as exc:
             # Salad's gateway closes the stream at ~100s. A cut before any
             # token is worth one retry: the weights are already in VRAM.
+            if not isinstance(exc, httpx.RequestError) and not _stream_cut(exc):
+                raise
             for kind, text in thinking.flush():
                 if kind == "think":
                     thought.append(text)
@@ -1995,6 +2030,11 @@ def _raise_for(response: httpx.Response, url: str) -> None:
         )
     if response.status_code >= 500:
         raise AssistantError(f"ошибка хоста модели {response.status_code}", retryable=True)
+    if response.status_code == 415:
+        raise AssistantError(
+            "хост модели отклонил формат запроса. Напишите ещё раз.",
+            retryable=True,
+        )
     raise AssistantError(f"модель отклонила запрос: {response.text[:200]}")
 
 
