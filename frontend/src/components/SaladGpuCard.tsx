@@ -69,7 +69,9 @@ export function SaladGpuCard() {
 
   const startEnabled = canStart(gpu) && !busy;
   const stopEnabled = canStop(gpu) && !busy;
-  const pulse = gpu.status === "running" || gpu.status === "deploying" || gpu.status === "pending";
+  const pulse =
+    !loadError &&
+    (gpu.status === "running" || gpu.status === "deploying" || gpu.status === "pending");
 
   return (
     <section className="card space-y-3 p-4" aria-labelledby="gpu-heading">
@@ -88,15 +90,23 @@ export function SaladGpuCard() {
         <span
           className={clsx(
             "h-2.5 w-2.5 shrink-0 rounded-full",
-            gpu.billing ? "bg-amber-400 animate-pulse" : pulse ? "bg-sky-400 animate-pulse" : "bg-slate-500"
+            loadError
+              ? "bg-rose-400"
+              : gpu.billing
+                ? "bg-amber-400 animate-pulse"
+                : pulse
+                  ? "bg-sky-400 animate-pulse"
+                  : "bg-slate-500"
           )}
         />
         <div className="min-w-[12rem] flex-1">
           <div className="text-sm text-slate-100">{statusLabel(gpu)}</div>
           <div className="text-xs text-slate-500">
-            {gpu.configured
-              ? `Инстансы: running ${gpu.running_count}, creating ${gpu.creating_count}, allocating ${gpu.allocating_count}, stopping ${gpu.stopping_count}. Чат ${gpu.chat_ok ? "отвечает" : "не отвечает"}.`
-              : "Ключ и имена группы задаются в .env на админ-VPS."}
+            {loadError
+              ? "статус не обновился"
+              : gpu.configured
+                ? `Инстансы: running ${gpu.running_count}, creating ${gpu.creating_count}, allocating ${gpu.allocating_count}, stopping ${gpu.stopping_count}. Чат ${gpu.chat_ok ? "отвечает" : "не отвечает"}.`
+                : "Ключ и имена группы задаются в .env на админ-VPS."}
           </div>
         </div>
         <button

@@ -186,6 +186,52 @@ def test_wan_ok_is_false_when_the_host_is_down(auth_client, monkeypatch):
 
 
 @respx.mock
+def test_wan_ok_false_on_404_edge(auth_client, monkeypatch):
+    _configure(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "wan_base_url", "https://wan.example/generate", raising=True)
+    respx.get(GROUP_URL).mock(return_value=httpx.Response(200, json=_state("running", running=1)))
+    respx.get("https://wan.example/generate").mock(return_value=httpx.Response(404, text="missing"))
+    res = auth_client.get("/api/gpu", headers=_h())
+    assert res.status_code == 200
+    assert res.json()["wan_ok"] is False
+
+
+@respx.mock
+def test_wan_ok_true_on_405_post_only(auth_client, monkeypatch):
+    _configure(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "wan_base_url", "https://wan.example/generate", raising=True)
+    respx.get(GROUP_URL).mock(return_value=httpx.Response(200, json=_state("running", running=1)))
+    respx.get("https://wan.example/generate").mock(return_value=httpx.Response(405, text="method"))
+    res = auth_client.get("/api/gpu", headers=_h())
+    assert res.status_code == 200
+    assert res.json()["wan_ok"] is True
+
+
+@respx.mock
+def test_stopped_forces_probes_false(auth_client, monkeypatch):
+    _configure(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "agent_base_url", "https://gpu.example/v1", raising=True)
+    monkeypatch.setattr(settings, "wan_base_url", "https://wan.example/generate", raising=True)
+    respx.get(GROUP_URL).mock(return_value=httpx.Response(200, json=_state("stopped")))
+    respx.get("https://gpu.example/api/tags").mock(
+        return_value=httpx.Response(200, json={"models": []})
+    )
+    respx.get("https://wan.example/generate").mock(return_value=httpx.Response(405, text="method"))
+    res = auth_client.get("/api/gpu", headers=_h())
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "stopped"
+    assert body["chat_ok"] is False
+    assert body["wan_ok"] is False
+
+
+@respx.mock
 def test_get_running_and_key_stays_off_the_wire_body(auth_client, monkeypatch):
     _configure(monkeypatch)
     respx.get(GROUP_URL).mock(
@@ -269,12 +315,21 @@ def test_stop_conflict_when_already_stopped(auth_client, monkeypatch):
 
 
 @respx.mock
-def test_salad_403_does_not_echo_key(auth_client, monkeypatch):
+def test_salad_403_returns_probes_without_echoing_key(auth_client, monkeypatch):
     _configure(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "wan_base_url", "https://wan.example/generate", raising=True)
     respx.get(GROUP_URL).mock(
         return_value=httpx.Response(403, json={"message": "nope", "key": SECRET})
     )
+    respx.get("https://wan.example/generate").mock(return_value=httpx.Response(404, text="gone"))
     res = auth_client.get("/api/gpu", headers=_h())
-    assert res.status_code == 403
-    assert res.json()["detail"] == "Salad отказал в доступе"
+    assert res.status_code == 200
+    body = res.json()
+    assert body["configured"] is True
+    assert body["status"] is None
+    assert body["detail"] == "Salad отказал в доступе"
+    assert body["wan_ok"] is False
     assert SECRET not in res.text
+    assert "wan.example" not in res.text

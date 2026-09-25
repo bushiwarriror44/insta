@@ -42,6 +42,7 @@ PHASE_OLLAMA = "Жду Ollama"
 PHASE_MODEL = "Гружу модель в память"
 POLL_S = 5.0
 START_WAIT_S = 25 * 60
+PULL_WAIT_S = 90 * 60
 WARM_WAIT_S = 20 * 60
 PREP_PHASES = 4
 _MODEL_NAME = re.compile(r"[A-Za-z0-9_.:-]{1,80}")
@@ -86,6 +87,10 @@ class GroupState:
     @property
     def billing(self) -> bool:
         return self.status == "running"
+
+    @property
+    def still_pulling(self) -> bool:
+        return self.status in {"pending", "deploying"} or self.creating_count > 0
 
 
 def configured(settings: Settings | None = None) -> bool:
@@ -436,11 +441,25 @@ def prepare_for_chat(
                     raise
                 state = get_group(settings)
             _touch(settings)
-        deadline = clock() + START_WAIT_S
+        wait_started = clock()
+        non_pull_started: float | None = None
         while state.status != "running":
-            if clock() > deadline or state.status == "failed":
-                raise SaladProblem("Видеокарта не успела запуститься")
-            yield emit(_launch_title(state), 2, soft_s=START_WAIT_S, extra=state.status)
+            if state.status == "failed":
+                raise SaladProblem("Запуск видеокарты на Salad не удался.")
+            if state.still_pulling:
+                non_pull_started = None
+                if clock() - wait_started > PULL_WAIT_S:
+                    raise SaladProblem(
+                        "Образ всё ещё качается на узел. Подождите и спросите ещё раз — Start уже идёт."
+                    )
+                soft = PULL_WAIT_S
+            else:
+                if non_pull_started is None:
+                    non_pull_started = clock()
+                if clock() - non_pull_started > START_WAIT_S:
+                    raise SaladProblem("Видеокарта не успела запуститься")
+                soft = START_WAIT_S
+            yield emit(_launch_title(state), 2, soft_s=soft, extra=state.status)
             pause(POLL_S)
             state = get_group(settings)
             _touch(settings)

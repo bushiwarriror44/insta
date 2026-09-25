@@ -10,6 +10,7 @@ import { canStart, canStop, chatLine, statusLabel, wanLine } from "../lib/gpuLab
 import { GpuConfirm } from "./GpuConfirm";
 
 const POLL_MS = 8000;
+const OPEN_POLL_MS = 2000;
 
 const IDLE: GpuOut = {
   configured: false,
@@ -30,17 +31,22 @@ export function ConnectionMenu() {
   const [gpu, setGpu] = useState<GpuOut>(IDLE);
   const [busy, setBusy] = useState<"start" | "stop" | null>(null);
   const [ask, setAsk] = useState<"start" | "stop" | null>(null);
+  const [loadError, setLoadError] = useState("");
 
   const reload = useCallback(async () => {
     try {
       const next = await api.gpu.status();
-      if (next && typeof next.configured === "boolean") setGpu(next);
-    } catch {
-      /* keep the last status */
+      if (!next || typeof next.configured !== "boolean") {
+        throw new Error("Некорректный ответ /api/gpu");
+      }
+      setGpu(next);
+      setLoadError("");
+    } catch (err) {
+      setLoadError(formatApiError(err));
     }
   }, []);
 
-  usePollWhenVisible(reload, POLL_MS);
+  usePollWhenVisible(reload, open ? OPEN_POLL_MS : POLL_MS);
 
   async function confirm() {
     if (!ask || busy) return;
@@ -48,7 +54,11 @@ export function ConnectionMenu() {
     setBusy(action);
     try {
       const next = action === "start" ? await api.gpu.start() : await api.gpu.stop();
-      if (next && typeof next.configured === "boolean") setGpu(next);
+      if (!next || typeof next.configured !== "boolean") {
+        throw new Error("Некорректный ответ /api/gpu");
+      }
+      setGpu(next);
+      setLoadError("");
       push(action === "start" ? "Группа Salad запускается" : "Группа Salad останавливается", "success");
     } catch (err) {
       push(formatApiError(err), "error");
@@ -59,7 +69,7 @@ export function ConnectionMenu() {
     }
   }
 
-  const live = gpu.status === "running" && gpu.chat_ok;
+  const live = !loadError && gpu.status === "running" && gpu.chat_ok;
   const startEnabled = canStart(gpu) && !busy;
   const stopEnabled = canStop(gpu) && !busy;
 
@@ -102,6 +112,9 @@ export function ConnectionMenu() {
               </span>
             </li>
           </ul>
+          {loadError ? (
+            <p className="mt-2 text-xs text-rose-300">статус не обновился: {loadError}</p>
+          ) : null}
           <div className="mt-3 flex gap-2">
             <button
               type="button"

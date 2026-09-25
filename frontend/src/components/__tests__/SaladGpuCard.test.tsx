@@ -98,4 +98,11 @@ describe("SaladGpuCard", () => {
     await waitFor(() => expect(api.gpu.stop).toHaveBeenCalled());
     expect(await screen.findByText(/stopped — не тарится/i)).toBeInTheDocument();
   });
+
+  it("shows статус не обновился when the poll fails", async () => {
+    vi.mocked(api.gpu.status).mockRejectedValue(new Error("сеть"));
+    render(<SaladGpuCard />);
+    expect(await screen.findByText(/статус не обновился/i)).toBeInTheDocument();
+    expect(screen.getByText(/сеть/i)).toBeInTheDocument();
+  });
 });

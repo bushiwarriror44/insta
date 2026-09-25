@@ -234,3 +234,89 @@ def test_prepare_reports_deploying_and_model_phases(app_env, monkeypatch):
     assert any(line.milestone and line.title == PHASE_PULL for line in lines)
     assert any(0 < line.ratio < 1 for line in lines)
     assert base == f"{ORIGIN}/v1"
+
+
+def test_prepare_waits_through_a_long_image_pull(app_env, monkeypatch):
+    _enable(monkeypatch)
+    clock = {"t": 0.0}
+    calls = {"n": 0}
+
+    def tick() -> float:
+        return clock["t"]
+
+    def sequence(settings=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return GroupState(status="stopped", dns=HOST, port=GATEWAY_PORT, command=("gpu-warmup",))
+        if clock["t"] < salad_gpu.PULL_WAIT_S - 60:
+            return GroupState(
+                status="deploying",
+                dns=HOST,
+                port=GATEWAY_PORT,
+                command=("gpu-warmup",),
+                creating_count=1,
+            )
+        return GroupState(status="running", dns=HOST, port=GATEWAY_PORT, command=("gpu-warmup",), running_count=1)
+
+    def pause(_s: float) -> None:
+        clock["t"] += 10 * 60
+
+    monkeypatch.setattr(salad_gpu, "get_group", sequence)
+    monkeypatch.setattr(salad_gpu, "start_group", lambda settings=None: sequence())
+    with respx.mock:
+        respx.get(f"{ORIGIN}/").mock(return_value=httpx.Response(200, text="Ollama is running"))
+        respx.get(f"{ORIGIN}/api/ps").mock(
+            return_value=httpx.Response(200, json={"models": [{"name": "qwen3:32b"}]})
+        )
+        gen = salad_gpu.prepare_for_chat(settings, pause=pause, clock=tick)
+        lines = []
+        try:
+            while True:
+                lines.append(next(gen))
+        except StopIteration as stop:
+            base = stop.value
+    assert PHASE_PULL in _titles(lines)
+    assert clock["t"] > salad_gpu.START_WAIT_S
+    assert base == f"{ORIGIN}/v1"
+
+
+def test_prepare_says_image_still_pulling_after_pull_budget(app_env, monkeypatch):
+    _enable(monkeypatch)
+    clock = {"t": 0.0}
+
+    def jump() -> float:
+        clock["t"] += salad_gpu.PULL_WAIT_S + 1
+        return clock["t"]
+
+    monkeypatch.setattr(
+        salad_gpu,
+        "get_group",
+        lambda settings=None: GroupState(
+            status="deploying",
+            dns=HOST,
+            port=GATEWAY_PORT,
+            command=("gpu-warmup",),
+            creating_count=1,
+        ),
+    )
+    gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None, clock=jump)
+    with pytest.raises(SaladProblem, match="всё ещё качается"):
+        next(gen)
+
+
+def test_prepare_says_start_failed_when_salad_marks_failed(app_env, monkeypatch):
+    _enable(monkeypatch)
+    calls = {"n": 0}
+
+    def sequence(settings=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return GroupState(status="stopped", dns=HOST, port=GATEWAY_PORT, command=("gpu-warmup",))
+        return GroupState(status="failed", dns=HOST, port=GATEWAY_PORT, command=("gpu-warmup",))
+
+    monkeypatch.setattr(salad_gpu, "get_group", sequence)
+    monkeypatch.setattr(salad_gpu, "start_group", lambda settings=None: sequence())
+    gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None)
+    with pytest.raises(SaladProblem, match="не удался"):
+        while True:
+            next(gen)

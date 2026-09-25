@@ -58,4 +58,13 @@ describe("ConnectionMenu", () => {
     await user.click(screen.getByRole("button", { name: /^нет$/i }));
     expect(api.gpu.stop).not.toHaveBeenCalled();
   });
+
+  it("shows статус не обновился when the poll fails", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.gpu.status).mockRejectedValue(new Error("сеть"));
+    render(<ConnectionMenu />);
+    await user.click(await screen.findByRole("button", { name: /подключение/i }));
+    expect(await screen.findByText(/статус не обновился/i)).toBeInTheDocument();
+    expect(screen.getByText(/сеть/i)).toBeInTheDocument();
+  });
 });

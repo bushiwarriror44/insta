@@ -13,6 +13,9 @@ from app.services.runtime import native
 
 router = APIRouter(prefix="/api/gpu", tags=["gpu"], dependencies=[DocsOwnerDep])
 
+# Group is down — probes must not claim Ollama/Wan are live.
+_DOWN = frozenset({"stopped", "succeeded", "failed"})
+
 
 def _wan_ok(settings: Settings) -> bool | None:
     url = (settings.wan_base_url or "").strip()
@@ -23,7 +26,8 @@ def _wan_ok(settings: Settings) -> bool | None:
             response = client.get(url)
     except httpx.RequestError:
         return False
-    return response.status_code < 500
+    # 2xx = health; 405 = POST-only /generate is up. 404 from Salad edge ≠ live Wan.
+    return 200 <= response.status_code < 300 or response.status_code == 405
 
 
 def _chat_ok(settings: Settings) -> bool:
@@ -47,6 +51,12 @@ def _payload(state: salad_gpu.GroupState | None, settings: Settings) -> GpuOut:
             wan_ok=_wan_ok(settings),
             idle_stop_minutes=int(settings.salad_idle_stop_minutes),
         )
+    chat_ok = _chat_ok(settings)
+    wan_ok = _wan_ok(settings)
+    if state.status in _DOWN:
+        chat_ok = False
+        if wan_ok is not None:
+            wan_ok = False
     return GpuOut(
         configured=True,
         status=state.status,
@@ -55,8 +65,8 @@ def _payload(state: salad_gpu.GroupState | None, settings: Settings) -> GpuOut:
         creating_count=state.creating_count,
         running_count=state.running_count,
         stopping_count=state.stopping_count,
-        chat_ok=_chat_ok(settings),
-        wan_ok=_wan_ok(settings),
+        chat_ok=chat_ok,
+        wan_ok=wan_ok,
         detail=state.detail,
         idle_stop_minutes=int(settings.salad_idle_stop_minutes),
     )
@@ -74,7 +84,14 @@ def read_gpu() -> GpuOut:
     try:
         return _payload(salad_gpu.get_group(settings), settings)
     except salad_gpu.SaladProblem as exc:
-        raise _http_error(exc) from exc
+        # Keep probes fresh so the Connection menu does not stick on a stale snapshot.
+        return GpuOut(
+            configured=True,
+            detail=str(exc),
+            chat_ok=_chat_ok(settings),
+            wan_ok=_wan_ok(settings),
+            idle_stop_minutes=int(settings.salad_idle_stop_minutes),
+        )
 
 
 @router.post("/start", response_model=GpuOut)
