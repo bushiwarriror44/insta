@@ -106,6 +106,8 @@ def _safe_detail(status_code: int, payload: Any) -> str:
         return "Группа Salad не найдена"
     if status_code == 429:
         return "Salad лимит запросов, позже"
+    if status_code == 415:
+        return "Salad отклонил формат запроса."
     if isinstance(payload, dict):
         for key in ("message", "title", "detail", "error"):
             value = payload.get(key)
@@ -243,12 +245,15 @@ def patch_gateway(settings: Settings, state: GroupState) -> GroupState:
         with http_client(settings, timeout=TIMEOUT) as client:
             response = client.patch(
                 url,
-                headers={**_headers(settings), "Content-Type": "application/json"},
-                json=body,
+                headers={**_headers(settings), "Content-Type": "application/merge-patch+json"},
+                content=json.dumps(body).encode(),
             )
     except httpx.RequestError:
         log.warning("salad.patch_failed")
         raise SaladProblem("Salad не отвечает") from None
+    if response.status_code == 415:
+        log.warning("salad.patch_rejected", status=response.status_code)
+        return state
     if response.status_code >= 400:
         _raise_http(response)
     return get_group(settings)

@@ -32,6 +32,12 @@ def _group(status: str, *, command: tuple[str, ...] = ("gpu-warmup",), port: int
     return GroupState(status=status, dns=HOST, port=port, command=command, running_count=1)
 
 
+def test_safe_detail_hides_a_415_body():
+    text = salad_gpu._safe_detail(415, {"message": "Unsupported Media Type"})
+    assert text == "Salad отклонил формат запроса."
+    assert "Unsupported" not in text
+
+
 def test_warmup_script_marks_itself_and_names_the_model():
     script = warmup_script("qwen3:32b")
     assert "gpu-warmup" in script
@@ -104,10 +110,38 @@ def test_prepare_patches_command_once_when_the_marker_is_missing(app_env, monkey
     assert route.called
     sent = route.calls[0].request
     raw = sent.read().decode()
+    assert sent.headers["content-type"].startswith("application/merge-patch+json")
     assert "gpu-warmup" in raw
     assert str(GATEWAY_PORT) in raw
     assert WARM_STATUS in lines
     assert "salad-secret" not in raw
+
+
+def test_prepare_continues_when_the_patch_is_415(app_env, monkeypatch):
+    _enable(monkeypatch)
+    bare = _group("running", command=(), port=8888)
+    monkeypatch.setattr(salad_gpu, "get_group", lambda settings=None: bare)
+    with respx.mock:
+        route = respx.patch(salad_gpu._group_url(settings)).mock(
+            return_value=httpx.Response(
+                415,
+                json={"message": "Unsupported Media Type"},
+            )
+        )
+        respx.get(f"{ORIGIN}/").mock(return_value=httpx.Response(200, text="Ollama is running"))
+        respx.get(f"{ORIGIN}/api/ps").mock(
+            return_value=httpx.Response(200, json={"models": [{"name": "qwen3:32b"}]})
+        )
+        gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None)
+        try:
+            while True:
+                next(gen)
+        except StopIteration as stop:
+            base = stop.value
+    assert route.called
+    sent = route.calls[0].request
+    assert sent.headers["content-type"].startswith("application/merge-patch+json")
+    assert base == f"{ORIGIN}/v1"
 
 
 def test_prepare_does_not_patch_when_warmup_is_already_installed(app_env, monkeypatch):
