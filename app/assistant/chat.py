@@ -1658,8 +1658,31 @@ def stream(
                 thoughts.append(round_thought)
             calls = message.get("tool_calls") or []
             if not calls:
+                reply = str(message.get("content") or "".join(said))
+                continues = 0
+                while cut and continues < MAX_CONTINUES and (reply.strip() or thoughts):
+                    continues += 1
+                    yield Step(kind="status", text=CONTINUE_STATUS)
+                    prior = reply.strip() or "…"
+                    round_thread = [
+                        *thread,
+                        {"role": "assistant", "content": prior},
+                        {"role": "user", "content": CONTINUE_PROMPT},
+                    ]
+                    more_said: list[str] = []
+                    message = yield from _complete(
+                        client, settings, round_thread, more_said, tools=specs
+                    )
+                    more_thought = str(message.pop("thinking", "") or "")
+                    cut = str(message.pop("cut", "") or "")
+                    if more_thought:
+                        thoughts.append(more_thought)
+                    chunk = str(message.get("content") or "".join(more_said))
+                    reply = _join_continue(reply, chunk)
+                    if message.get("tool_calls") and not cut:
+                        break
                 yield Answer(
-                    reply=_clean(message.get("content") or "".join(said)),
+                    reply=_clean(reply),
                     opened=opened,
                     used=used,
                     images=images,
@@ -2123,9 +2146,37 @@ def _complete(
     return message
 
 
+CUT_NOTE = "Ответ оборвался на шлюзе."
+CONTINUE_STATUS = "Продолжаю ответ…"
+CONTINUE_PROMPT = (
+    "Продолжи ответ с того места, где оборвался. "
+    "Не повторяй уже написанное. Не начинай сначала."
+)
+MAX_CONTINUES = 3
+
+
+def _join_continue(prior: str, nxt: str) -> str:
+    """Glue a continuation onto prior text without repeating an overlapping prefix."""
+    prior = prior or ""
+    raw = nxt or ""
+    stripped = raw.strip()
+    if not prior:
+        return stripped
+    if not stripped:
+        return prior
+    max_check = min(len(prior), len(stripped), 240)
+    for size in range(max_check, 0, -1):
+        if prior.endswith(stripped[:size]):
+            return prior + stripped[size:]
+    if prior.endswith(("\n", " ", "\t")) or stripped[:1] in {"\n", "\t"}:
+        return prior + stripped
+    if raw[:1] == " ":
+        return f"{prior} {stripped}"
+    return f"{prior}\n{stripped}"
+
+
 OPEN_THINK = "<think>"
 CLOSE_THINK = "</think>"
-CUT_NOTE = "Ответ оборвался на шлюзе."
 
 
 def _partial_suffix(text: str, marker: str) -> int:

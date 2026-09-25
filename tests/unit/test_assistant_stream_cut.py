@@ -463,3 +463,155 @@ def test_complete_hides_a_split_media_phrase(app_env, monkeypatch):
     assert "Unsupported" not in text
     assert all("Unsupported" not in step.text for step in steps)
 
+
+def test_join_continue_drops_overlapping_prefix():
+    from app.assistant.chat import _join_continue
+
+    assert _join_continue("уже знаю что", "что делать дальше") == "уже знаю что делать дальше"
+    assert _join_continue("привет", " мир") == "привет мир"
+    assert _join_continue("", "старт") == "старт"
+
+
+def test_stream_auto_continues_after_a_partial_cut(app_env, monkeypatch, db_session):
+    from app.assistant import chat
+    from app.config import Settings
+
+    monkeypatch.setattr(chat, "salad_configured", lambda _s=None: False)
+    monkeypatch.setattr(chat, "_prepare_runtime", lambda _s: None)
+    monkeypatch.setattr(settings, "agent_base_url", "https://example/v1", raising=True)
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(chat, "http_client", lambda *a, **k: FakeClient())
+    n = {"i": 0}
+    prompts: list[str] = []
+
+    def fake_complete(client, settings_obj, thread, said, **_kwargs):
+        if False:
+            yield chat.Step(kind="token", text="")
+        n["i"] += 1
+        if n["i"] == 1:
+            said.append("первая часть")
+            yield chat.Step(kind="token", text="первая часть")
+            return {
+                "role": "assistant",
+                "content": "первая часть",
+                "thinking": "",
+                "cut": chat.CUT_NOTE,
+            }
+        prompts.append(thread[-1]["content"])
+        said.append(" и хвост")
+        yield chat.Step(kind="token", text=" и хвост")
+        return {"role": "assistant", "content": " и хвост", "thinking": "", "cut": ""}
+
+    monkeypatch.setattr(chat, "_complete", fake_complete)
+    steps = list(
+        chat.stream(
+            db_session,
+            [{"role": "user", "content": "hi"}],
+            settings=Settings(_env_file=None),
+            rounds=1,
+        )
+    )
+    assert any(step.kind == "status" and "Продолжаю" in step.text for step in steps if hasattr(step, "kind"))
+    answer = steps[-1]
+    assert isinstance(answer, chat.Answer)
+    assert answer.reply == "первая часть и хвост"
+    assert answer.cut == ""
+    assert n["i"] == 2
+    assert any("Продолжи" in text for text in prompts)
+
+
+def test_stream_keeps_cut_after_continue_budget(app_env, monkeypatch, db_session):
+    from app.assistant import chat
+    from app.config import Settings
+
+    monkeypatch.setattr(chat, "salad_configured", lambda _s=None: False)
+    monkeypatch.setattr(chat, "_prepare_runtime", lambda _s: None)
+    monkeypatch.setattr(settings, "agent_base_url", "https://example/v1", raising=True)
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(chat, "http_client", lambda *a, **k: FakeClient())
+    n = {"i": 0}
+
+    def fake_complete(client, settings_obj, thread, said, **_kwargs):
+        if False:
+            yield chat.Step(kind="token", text="")
+        n["i"] += 1
+        piece = f"кусок{n['i']}"
+        said.append(piece)
+        yield chat.Step(kind="token", text=piece)
+        return {
+            "role": "assistant",
+            "content": piece,
+            "thinking": "",
+            "cut": chat.CUT_NOTE,
+        }
+
+    monkeypatch.setattr(chat, "_complete", fake_complete)
+    steps = list(
+        chat.stream(
+            db_session,
+            [{"role": "user", "content": "hi"}],
+            settings=Settings(_env_file=None),
+            rounds=1,
+        )
+    )
+    answer = steps[-1]
+    assert isinstance(answer, chat.Answer)
+    assert n["i"] == 1 + chat.MAX_CONTINUES
+    assert answer.cut == chat.CUT_NOTE
+    assert "кусок1" in answer.reply
+    assert f"кусок{n['i']}" in answer.reply
+
+
+def test_stream_does_not_continue_an_empty_cut(app_env, monkeypatch, db_session):
+    from app.assistant import chat
+    from app.config import Settings
+
+    monkeypatch.setattr(chat, "salad_configured", lambda _s=None: False)
+    monkeypatch.setattr(chat, "_prepare_runtime", lambda _s: None)
+    monkeypatch.setattr(settings, "agent_base_url", "https://example/v1", raising=True)
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(chat, "http_client", lambda *a, **k: FakeClient())
+    n = {"i": 0}
+
+    def fake_complete(client, settings_obj, thread, said, **_kwargs):
+        if False:
+            yield chat.Step(kind="token", text="")
+        n["i"] += 1
+        return {"role": "assistant", "content": "", "thinking": "", "cut": chat.CUT_NOTE}
+
+    monkeypatch.setattr(chat, "_complete", fake_complete)
+    steps = list(
+        chat.stream(
+            db_session,
+            [{"role": "user", "content": "hi"}],
+            settings=Settings(_env_file=None),
+            rounds=1,
+        )
+    )
+    answer = steps[-1]
+    assert isinstance(answer, chat.Answer)
+    assert n["i"] == 1
+    assert answer.reply == ""
+    assert answer.cut == chat.CUT_NOTE
+
