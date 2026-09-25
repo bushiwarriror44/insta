@@ -1413,13 +1413,13 @@ def test_decode_docker_log_stream_multiplexed():
     assert _decode_docker_log_stream(b"plain text") == "plain text"
 
 
-def test_chat_body_disables_think():
+def test_chat_body_enables_think():
     from app.assistant.chat import _chat_body
     from app.config import Settings
 
     settings = Settings(_env_file=None)
     body = _chat_body(settings, [], include_think=True)
-    assert body["think"] is False
+    assert body["think"] is True
     assert body["options"]["num_ctx"] == 8192
     assert body["temperature"] == 0.1
     assert "think" not in _chat_body(settings, [], include_think=False)
@@ -1530,6 +1530,35 @@ def test_create_render_without_prompt_asks(db_session):
     assert opened is None
     assert result["ask"] is True
     assert result["questions"]
+
+
+def test_generate_wan_queues_local(db_session, monkeypatch):
+    from app.assistant.chat import run_tool
+    from app.config import settings
+    from app.db.models import GenerationJob
+
+    monkeypatch.setattr(settings, "wan_base_url", "http://wan/generate")
+    result, opened = run_tool(
+        db_session,
+        "generate_wan",
+        {"prompt": "туман над лесом", "seed": 7, "duration_s": 5},
+    )
+    job = db_session.get(GenerationJob, result["id"])
+    assert job is not None
+    assert job.backend == "local"
+    assert job.seed == 7
+    assert job.prompt == "туман над лесом"
+    assert result["page"] == "/renders"
+    assert opened is not None
+    assert opened.path == "/renders"
+
+
+def test_generate_wan_without_prompt_asks(db_session):
+    from app.assistant.chat import run_tool
+
+    result, opened = run_tool(db_session, "generate_wan", {})
+    assert opened is None
+    assert result["ask"] is True
 
 
 def test_create_render_queues_when_key_set(db_session, monkeypatch):

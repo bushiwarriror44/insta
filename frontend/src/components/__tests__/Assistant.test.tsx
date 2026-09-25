@@ -82,12 +82,12 @@ describe("Assistant", () => {
     await user.type(await screen.findByLabelText(/спросить агента/i), "привет");
     await user.click(screen.getByRole("button", { name: /^спросить$/i }));
     await waitFor(() => {
-      const stored = JSON.parse(window.localStorage.getItem("assistant-dock:thread") || "[]");
-      expect(stored.length).toBeGreaterThan(0);
+      const stored = JSON.parse(window.localStorage.getItem("assistant-dock:chats") || "{}");
+      expect(stored.chats?.[0]?.messages?.length).toBeGreaterThan(0);
     });
     unmount();
     renderDock();
-    expect(await screen.findByText("привет")).toBeInTheDocument();
+    expect(screen.getAllByText("привет").length).toBeGreaterThan(0);
   });
 
   it("keeps the warmup line above the reply", async () => {
@@ -364,5 +364,81 @@ describe("Assistant", () => {
     });
     await user.click(screen.getByText("Рассуждение"));
     expect(screen.getByText("Рассуждение").closest("details")).toHaveAttribute("open");
+  });
+
+  it("keeps two chats apart and renames the active one", async () => {
+    askMock.mockImplementation(async (messages, onStep) => {
+      const last = (messages as Array<{ content: string }>).at(-1)?.content ?? "";
+      onStep({
+        type: "done",
+        reply: `ответ:${last}`,
+        open_url: null,
+        opened: null,
+        used: [],
+        images: [],
+      });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "первый");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect(await screen.findByText("ответ:первый")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^новый$/i }));
+    await user.type(screen.getByLabelText(/спросить агента/i), "второй");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect(await screen.findByText("ответ:второй")).toBeInTheDocument();
+    expect(screen.queryByText("ответ:первый")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: /^первый/ }));
+    expect(await screen.findByText("ответ:первый")).toBeInTheDocument();
+    expect(screen.queryByText("ответ:второй")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /переименовать чат/i }));
+    const field = screen.getByLabelText("Название чата");
+    await user.clear(field);
+    await user.type(field, "Рабочий{Enter}");
+    expect(await screen.findByRole("tab", { name: /^Рабочий/ })).toBeInTheDocument();
+  });
+
+  it("clears the active chat while it is answering and leaves the other", async () => {
+    let release: (() => void) | undefined;
+    askMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = () => resolve();
+        })
+    );
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "долго");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect(await screen.findByRole("tab", { name: /^долго/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^новый$/i }));
+    askMock.mockImplementationOnce(async (_messages, onStep) => {
+      onStep({
+        type: "done",
+        reply: "второй ответ",
+        open_url: null,
+        opened: null,
+        used: [],
+        images: [],
+      });
+    });
+    await user.type(screen.getByLabelText(/спросить агента/i), "ещё");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect(await screen.findByText("второй ответ")).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: /^долго/ }));
+    await user.click(screen.getByRole("button", { name: /^очистить$/i }));
+    expect(screen.queryByText("долго")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: /^ещё/ }));
+    expect(screen.getByText("второй ответ")).toBeInTheDocument();
+    release?.();
+  });
+
+  it("opens a saved single thread as the first chat", async () => {
+    window.localStorage.setItem(
+      "assistant-dock:thread",
+      JSON.stringify([{ role: "user", content: "старый разговор" }])
+    );
+    renderDock();
+    expect(screen.getAllByText("старый разговор").length).toBeGreaterThan(0);
   });
 });

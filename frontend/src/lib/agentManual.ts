@@ -148,6 +148,7 @@ const TOOL_HINTS: Record<string, string> = {
   retry_render: "Повтор GenerationJob.",
   cancel_render: "Отмена рендера после подтверждения.",
   create_render: "Промпт обязателен. backend auto. fal пишет cost_usd (0.05 USD/с Wan 2.5). local — часы Salad, пока Running; не пользуешься — Stop.",
+  generate_wan: "Ролик на Wan (local). Пока рендерится, чат-модель на этой видеокарте выгружается. Ждать — только если попросили.",
   compose: "Нужны минимум два clip_ids из библиотеки.",
   cancel_composition: "Отмена склейки после подтверждения.",
   retry_composition: "Повтор склейки.",

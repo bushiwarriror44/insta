@@ -2085,6 +2085,32 @@ def create_render(
     }
 
 
+def generate_wan(
+    db: Session,
+    *,
+    prompt: str | None = None,
+    duration_s: float | None = None,
+    negative_prompt: str = "",
+    seed: int | None = None,
+) -> dict[str, Any]:
+    """Queue a clip on the self-hosted Wan worker (backend local)."""
+    out = create_render(
+        db,
+        prompt=prompt,
+        backend="local",
+        duration_s=duration_s,
+        negative_prompt=negative_prompt,
+        seed=seed,
+    )
+    if out.get("ask"):
+        return out
+    return {
+        **out,
+        "page": "/renders",
+        "заметка": "ролик в очереди Wan. Пока он рендерится, чат-модель на этой видеокарте выгружается.",
+    }
+
+
 def compose(
     db: Session,
     *,

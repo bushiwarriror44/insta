@@ -61,6 +61,8 @@ fingerprint только для Instagram, `get_session`, проверить п�
 поставить план (`plan_account`: duration_s / auto_schedule; список — `list_plans` / `list_questions` / `list_sources` / `list_presets`, пресет — `apply_preset`), превью (`preview_plan`), \
 поставить рендер (`create_render`, по умолчанию цепочка `auto`) и склейку (`compose`), \
 статусы движков — `list_render_backends`, \
+ролик на Wan — только `generate_wan` (бэкенд local, не цепочка auto). В ответе назови id задачи и страницу рендеров. \
+`wait_render` после Wan вызывай только если оператор просит подождать: ролик занимает ту же видеокарту, и чат-модель на это время выгружается. \
 автовход и mint mobile только для Instagram, \
 паузу, ответить на вопрос агента, \
 добавить источник, читать файлы проекта, `diagnose`, `docker_logs`. \
@@ -733,7 +735,7 @@ TOOLS = [
     ),
     schema(
         "create_render",
-        "Поставить рендер. Промпт обязателен. backend по умолчанию auto (цепочка). Нет промпта — ask. Если ни один движок не жив — ошибка healthcheck как есть.",
+        "Поставить рендер. Промпт обязателен. backend по умолчанию auto (цепочка). Для ролика на Wan вызывай generate_wan, не этот инструмент. Нет промпта — ask. Если ни один движок не жив — ошибка healthcheck как есть.",
         {
             "prompt": {"type": "string"},
             "account_id": {"type": "integer"},
@@ -742,6 +744,17 @@ TOOLS = [
             "negative_prompt": {"type": "string"},
         },
         [],
+    ),
+    schema(
+        "generate_wan",
+        "Поставить ролик на Wan (backend local). Промпт обязателен. Не жди wait_render, пока оператор сам не попросил подождать.",
+        {
+            "prompt": {"type": "string"},
+            "duration_s": {"type": "number", "description": "длина клипа 5–10 секунд"},
+            "negative_prompt": {"type": "string"},
+            "seed": {"type": "integer"},
+        },
+        ["prompt"],
     ),
     schema(
         "compose",
@@ -1243,6 +1256,16 @@ def run_tool(
             ),
             None,
         )
+    if name == "generate_wan":
+        out = tools.generate_wan(
+            db,
+            prompt=_optional_text(args, "prompt"),
+            duration_s=_optional_number(args, "duration_s"),
+            negative_prompt=str(args.get("negative_prompt") or ""),
+            seed=_optional_int(args, "seed"),
+        )
+        opened = None if isinstance(out, dict) and out.get("ask") else tools.Opened(path="/renders", what="рендеры")
+        return out, opened
     if name == "compose":
         return (
             tools.compose(
@@ -1489,6 +1512,7 @@ def describe(name: str, args: dict[str, Any]) -> str:
         "retry_render": "повторяю рендер",
         "cancel_render": "отменяю рендер",
         "create_render": "ставлю рендер",
+        "generate_wan": "ставлю ролик на Wan",
         "compose": "ставлю склейку",
         "cancel_composition": "отменяю склейку",
         "retry_composition": "повторяю склейку",
@@ -1756,7 +1780,7 @@ def _chat_body(
         "options": {"num_ctx": 8192},
     }
     if include_think:
-        body["think"] = False
+        body["think"] = True
     return body
 
 
@@ -1814,7 +1838,7 @@ def _complete(
                     delta = _delta(line)
                     if delta is None:
                         continue
-                    for key in ("reasoning", "thinking"):
+                    for key in ("reasoning", "thinking", "reasoning_content"):
                         extra = delta.get(key)
                         if isinstance(extra, str) and extra:
                             thought.append(extra)

@@ -6,7 +6,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
-import { Send, Sparkle, Trash2 } from "lucide-react";
+import { Pencil, Send, Sparkle, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -20,6 +20,7 @@ import { SHOW_ASSISTANT } from "../lib/uiEvents";
 
 const HIDDEN_KEY = "assistant-dock:hidden";
 const THREAD_KEY = "assistant-dock:thread";
+const CHATS_KEY = "assistant-dock:chats";
 
 const LOOKED_AT: Record<string, string> = {
   overview: "посчитал всё",
@@ -82,6 +83,7 @@ const LOOKED_AT: Record<string, string> = {
   retry_render: "повторил рендер",
   cancel_render: "отменил рендер",
   create_render: "поставил рендер",
+  generate_wan: "поставил ролик на Wan",
   compose: "поставил склейку",
   cancel_composition: "отменил склейку",
   retry_composition: "повторил склейку",
@@ -171,31 +173,123 @@ function openInPlace(navigate: (to: string) => void, url: string) {
   navigate(`${panelPath(path)}${search ? `?${search}` : ""}`);
 }
 
-function readThread(): Said[] {
+interface Chat {
+  id: string;
+  title: string;
+  customTitle: boolean;
+  messages: Said[];
+}
+
+interface Live {
+  busy: boolean;
+  writing: string;
+  think: string;
+  doing: string[];
+  doingName: string | null;
+  pending: string[];
+  seconds: number;
+  asks: string[];
+  askAnswers: Record<number, string>;
+  note: string | null;
+}
+
+function emptyLive(): Live {
+  return {
+    busy: false,
+    writing: "",
+    think: "",
+    doing: [],
+    doingName: null,
+    pending: [],
+    seconds: 0,
+    asks: [],
+    askAnswers: {},
+    note: null,
+  };
+}
+
+function chatId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function titleFrom(messages: Said[]): string {
+  const text = messages.find((message) => message.role === "user")?.content.replace(/\s+/g, " ").trim() ?? "";
+  if (!text) return "Новый чат";
+  return text.length > 32 ? `${text.slice(0, 32)}…` : text;
+}
+
+function blankChat(messages: Said[] = []): Chat {
+  return { id: chatId(), title: titleFrom(messages), customTitle: false, messages };
+}
+
+function withAutoTitle(chat: Chat, messages: Said[]): Chat {
+  if (chat.customTitle) return { ...chat, messages };
+  return { ...chat, messages, title: titleFrom(messages) };
+}
+
+function readLegacyThread(): Said[] {
   try {
     const raw = window.localStorage.getItem(THREAD_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as Said[];
     if (!Array.isArray(parsed)) return [];
     return parsed
-      .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+      .filter((message) => message && (message.role === "user" || message.role === "assistant") && typeof message.content === "string")
       .slice(-40);
   } catch {
     return [];
   }
 }
 
-function writeThread(thread: Said[]) {
+function readStore(): { activeId: string; chats: Chat[] } {
   try {
-    const slim = thread.slice(-40).map(({ role, content, used, thinking, steps, cut }) => ({
-      role,
-      content,
-      used,
-      thinking,
-      steps,
-      cut,
-    }));
-    window.localStorage.setItem(THREAD_KEY, JSON.stringify(slim));
+    const raw = window.localStorage.getItem(CHATS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as { activeId?: string; chats?: Chat[] };
+      const chats = (parsed.chats ?? [])
+        .filter((chat) => chat && typeof chat.id === "string" && Array.isArray(chat.messages))
+        .map((chat) => ({
+          id: chat.id,
+          title: typeof chat.title === "string" && chat.title.trim() ? chat.title : titleFrom(chat.messages),
+          customTitle: Boolean(chat.customTitle),
+          messages: chat.messages
+            .filter((message) => message && (message.role === "user" || message.role === "assistant") && typeof message.content === "string")
+            .slice(-40),
+        }));
+      if (chats.length) {
+        const activeId = chats.some((chat) => chat.id === parsed.activeId) ? (parsed.activeId as string) : chats[0].id;
+        return { activeId, chats };
+      }
+    }
+  } catch {
+    /* fall through to the old single thread */
+  }
+  const chat = blankChat(readLegacyThread());
+  return { activeId: chat.id, chats: [chat] };
+}
+
+function writeStore(chats: Chat[], activeId: string) {
+  try {
+    const slim = {
+      activeId,
+      chats: chats.map((chat) => ({
+        id: chat.id,
+        title: chat.title,
+        customTitle: chat.customTitle,
+        messages: chat.messages.slice(-40).map(({ role, content, used, thinking, steps, cut, images }) => ({
+          role,
+          content,
+          used,
+          thinking,
+          steps,
+          cut,
+          images,
+        })),
+      })),
+    };
+    window.localStorage.setItem(CHATS_KEY, JSON.stringify(slim));
+    window.localStorage.removeItem(THREAD_KEY);
   } catch {
     /* ignore quota / private mode */
   }
@@ -239,38 +333,38 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const params = new URLSearchParams(location.search);
   const accountId = Number(params.get("id") || 0) || undefined;
   const jobId = Number(params.get("job") || 0) || undefined;
-  const [thread, setThread] = useState<Said[]>(readThread);
+  const initial = useState(readStore)[0];
+  const [chats, setChats] = useState<Chat[]>(initial.chats);
+  const [activeId, setActiveId] = useState(initial.activeId);
+  const [live, setLive] = useState<Record<string, Live>>({});
   const [draft, setDraft] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [doing, setDoing] = useState<string[]>([]);
-  const [doingName, setDoingName] = useState<string | null>(null);
-  const [writing, setWriting] = useState("");
-  const [draftThink, setDraftThink] = useState("");
-  const writingRef = useRef("");
-  const thinkRef = useRef("");
-  const doingRef = useRef<string[]>([]);
-  const [pending, setPending] = useState<string[]>([]);
-  const [seconds, setSeconds] = useState(0);
-  const [note, setNote] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const writingRef = useRef<Record<string, string>>({});
+  const thinkRef = useRef<Record<string, string>>({});
+  const doingRef = useRef<Record<string, string[]>>({});
+  const stops = useRef<Record<string, AbortController>>({});
+  const busyIds = useRef(new Set<string>());
+  const chatsRef = useRef(chats);
+  const activeRef = useRef(activeId);
+  chatsRef.current = chats;
+  activeRef.current = activeId;
   const [groups, setGroups] = useState<PromptGroup[]>(() => library([]));
   const [browsing, setBrowsing] = useState(false);
   const [readingManual, setReadingManual] = useState(false);
   const [needle, setNeedle] = useState("");
   const [hidden, setHidden] = useState(readHidden);
-  const [asks, setAsks] = useState<string[]>([]);
-  const [askAnswers, setAskAnswers] = useState<Record<number, string>>({});
 
   const box = useRef<HTMLTextAreaElement>(null);
   const tail = useRef<HTMLDivElement>(null);
-  const stop = useRef<AbortController | null>(null);
 
   useEffect(() => {
     onHiddenChange?.(hidden);
   }, [hidden, onHiddenChange]);
 
   useEffect(() => {
-    writeThread(thread);
-  }, [thread]);
+    writeStore(chats, activeId);
+  }, [chats, activeId]);
 
   useEffect(() => {
     let dropped = false;
@@ -286,17 +380,25 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   }, []);
 
   useEffect(() => {
-    if (!busy) return;
-    setSeconds(0);
-    const tick = setInterval(() => setSeconds((n) => n + 1), 1000);
-    return () => clearInterval(tick);
-  }, [busy]);
+    const tick = window.setInterval(() => {
+      setLive((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const id of busyIds.current) {
+          const current = next[id];
+          if (!current?.busy) continue;
+          next[id] = { ...current, seconds: current.seconds + 1 };
+          changed = true;
+        }
+        return changed ? next : prev;
+      });
+    }, 1000);
+    return () => window.clearInterval(tick);
+  }, []);
 
-  useEffect(() => {
-    tail.current?.scrollIntoView?.({ block: "end" });
-  }, [thread, writing, draftThink, doing, pending, asks, askAnswers]);
-
-  useEffect(() => () => stop.current?.abort(), []);
+  useEffect(() => () => {
+    for (const controller of Object.values(stops.current)) controller.abort();
+  }, []);
 
   const hide = () => {
     setHidden(true);
@@ -319,51 +421,65 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
     return () => window.removeEventListener(SHOW_ASSISTANT, onShow);
   }, []);
 
+  const replaceMessages = useCallback((id: string, messages: Said[]) => {
+    setChats((prev) => prev.map((item) => (item.id === id ? withAutoTitle(item, messages) : item)));
+  }, []);
+
+  const patchLive = useCallback((id: string, patch: Partial<Live>) => {
+    setLive((prev) => ({ ...prev, [id]: { ...(prev[id] ?? emptyLive()), ...patch } }));
+  }, []);
+
   const send = useCallback(
     async (text: string) => {
       const question = text.trim();
-      if (!question || busy) return;
-      const asked: Said[] = [...thread, { role: "user", content: question }];
+      const id = activeRef.current;
+      const chat = chatsRef.current.find((item) => item.id === id);
+      if (!question || !chat || busyIds.current.has(id)) return;
+      const asked: Said[] = [...chat.messages, { role: "user", content: question }];
       const notes: Said[] = [];
-      const pushStatus = (text: string) => {
-        if (notes.some((line) => line.content === text)) return;
-        notes.push({ role: "assistant", content: text });
-        setThread([...asked, ...notes]);
+      const pushStatus = (line: string) => {
+        if (notes.some((item) => item.content === line)) return;
+        notes.push({ role: "assistant", content: line });
+        replaceMessages(id, [...asked, ...notes]);
       };
-      setThread(asked);
+      replaceMessages(id, asked);
       setDraft("");
-      setNote(null);
-      setAsks([]);
-      setAskAnswers({});
-      setDoing([]);
-      setDoingName(null);
-      setWriting("");
-      setDraftThink("");
-      writingRef.current = "";
-      thinkRef.current = "";
-      doingRef.current = [];
-      setPending([]);
+      writingRef.current[id] = "";
+      thinkRef.current[id] = "";
+      doingRef.current[id] = [];
+      patchLive(id, {
+        note: null,
+        asks: [],
+        askAnswers: {},
+        doing: [],
+        doingName: null,
+        writing: "",
+        think: "",
+        pending: [],
+        seconds: 0,
+        busy: true,
+      });
       setBrowsing(false);
       setReadingManual(false);
-      setBusy(true);
+      busyIds.current.add(id);
       const controller = new AbortController();
-      stop.current = controller;
+      stops.current[id] = controller;
       let answered = false;
       const keepPartial = (detail: string) => {
-        const text = writingRef.current;
-        const thinking = thinkRef.current.trim();
-        const steps = doingRef.current;
-        const kept = Boolean(text || thinking || steps.length);
+        const printed = writingRef.current[id] ?? "";
+        const thinking = (thinkRef.current[id] ?? "").trim();
+        const steps = doingRef.current[id] ?? [];
+        const kept = Boolean(printed || thinking || steps.length);
         answered = true;
-        setThread([
+        replaceMessages(id, [
           ...asked,
           ...notes,
           {
             role: "assistant",
-            content: text || (kept ? "" : detail),
+            content: printed || (kept ? "" : detail),
             thinking: thinking || undefined,
             steps: steps.length ? steps : undefined,
-            cut: text || thinking ? CUT_LINE : undefined,
+            cut: printed || thinking ? CUT_LINE : undefined,
           },
         ]);
       };
@@ -371,34 +487,36 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         await ask(
           asked.map(({ role, content }) => ({ role, content })),
           (step) => {
+            if (controller.signal.aborted) return;
             if (step.type === "status") {
               pushStatus(step.text);
             } else if (step.type === "tool") {
-              doingRef.current = [...doingRef.current, step.text];
-              setDoing(doingRef.current);
-              if (step.name) setDoingName(step.name);
+              doingRef.current[id] = [...(doingRef.current[id] ?? []), step.text];
+              patchLive(id, { doing: doingRef.current[id], doingName: step.name ?? null });
             } else if (step.type === "think") {
-              thinkRef.current += step.text;
-              setDraftThink(thinkRef.current);
+              thinkRef.current[id] = (thinkRef.current[id] ?? "") + step.text;
+              patchLive(id, { think: thinkRef.current[id] });
             } else if (step.type === "token") {
-              writingRef.current += step.text;
-              setWriting(writingRef.current);
+              writingRef.current[id] = (writingRef.current[id] ?? "") + step.text;
+              patchLive(id, { writing: writingRef.current[id] });
             } else if (step.type === "image") {
-              setPending((seen) => [...seen, step.text]);
+              setLive((prev) => {
+                const current = prev[id] ?? emptyLive();
+                return { ...prev, [id]: { ...current, pending: [...current.pending, step.text] } };
+              });
             } else if (step.type === "ask") {
-              setAsks(step.questions ?? []);
-              setAskAnswers({});
+              patchLive(id, { asks: step.questions ?? [], askAnswers: {} });
             } else if (step.type === "error") {
-              if (writingRef.current || thinkRef.current.trim() || doingRef.current.length) {
+              if (writingRef.current[id] || (thinkRef.current[id] ?? "").trim() || (doingRef.current[id] ?? []).length) {
                 keepPartial(step.detail);
               } else {
                 answered = true;
-                setThread([...asked, ...notes, { role: "assistant", content: step.detail }]);
+                replaceMessages(id, [...asked, ...notes, { role: "assistant", content: step.detail }]);
               }
             } else if (step.type === "done") {
               answered = true;
-              const thinking = (step.thinking || thinkRef.current).trim();
-              setThread([
+              const thinking = (step.thinking || thinkRef.current[id] || "").trim();
+              replaceMessages(id, [
                 ...asked,
                 ...notes,
                 {
@@ -410,16 +528,13 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                   cut: step.cut || undefined,
                 },
               ]);
-              if (step.asks?.length) {
-                setAsks(step.asks);
-                setAskAnswers({});
-              }
+              if (step.asks?.length) patchLive(id, { asks: step.asks, askAnswers: {} });
               if (step.used?.some((name) => MUTATE_TOOLS.has(name))) {
                 emitAssistantMutate(step.created);
               }
               if (step.open_url) {
                 if (!step.reply.trim()) {
-                  setNote(step.opened ? `Открыл: ${step.opened}` : "Открыл");
+                  patchLive(id, { note: step.opened ? `Открыл: ${step.opened}` : "Открыл" });
                 }
                 openInPlace(navigate, step.open_url);
               }
@@ -431,36 +546,106 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         );
       } catch (err) {
         if (!controller.signal.aborted) {
-          if (writingRef.current || thinkRef.current.trim() || doingRef.current.length) {
+          if (writingRef.current[id] || (thinkRef.current[id] ?? "").trim() || (doingRef.current[id] ?? []).length) {
             keepPartial(formatApiError(err));
           } else {
-            setThread([...asked, ...notes, { role: "assistant", content: formatApiError(err) }]);
+            replaceMessages(id, [...asked, ...notes, { role: "assistant", content: formatApiError(err) }]);
             answered = true;
           }
         }
       } finally {
         if (!answered && !controller.signal.aborted) {
-          if (writingRef.current || thinkRef.current.trim() || doingRef.current.length) {
+          if (writingRef.current[id] || (thinkRef.current[id] ?? "").trim() || (doingRef.current[id] ?? []).length) {
             keepPartial("Ответа не было.");
           } else {
-            setThread([...asked, ...notes, { role: "assistant", content: "Ответа не было." }]);
+            replaceMessages(id, [...asked, ...notes, { role: "assistant", content: "Ответа не было." }]);
           }
         }
-        stop.current = null;
-        setBusy(false);
-        setWriting("");
-        setDraftThink("");
-        writingRef.current = "";
-        thinkRef.current = "";
-        doingRef.current = [];
-        setDoing([]);
-        setDoingName(null);
-        setPending([]);
-        box.current?.focus();
+        if (stops.current[id] === controller) delete stops.current[id];
+        busyIds.current.delete(id);
+        writingRef.current[id] = "";
+        thinkRef.current[id] = "";
+        doingRef.current[id] = [];
+        patchLive(id, {
+          busy: false,
+          writing: "",
+          think: "",
+          doing: [],
+          doingName: null,
+          pending: [],
+        });
+        if (activeRef.current === id) box.current?.focus();
       }
     },
-    [busy, thread, page, accountId, jobId, navigate]
+    [page, accountId, jobId, navigate, replaceMessages, patchLive]
   );
+
+  const chat = chats.find((item) => item.id === activeId) ?? chats[0];
+  const thread = chat?.messages ?? [];
+  const view = (chat && live[chat.id]) || emptyLive();
+  const busy = view.busy;
+  const writing = view.writing;
+  const draftThink = view.think;
+  const doing = view.doing;
+  const doingName = view.doingName;
+  const pending = view.pending;
+  const seconds = view.seconds;
+  const asks = view.asks;
+  const askAnswers = view.askAnswers;
+  const note = view.note;
+  const anyBusy = Object.values(live).some((item) => item.busy);
+
+  const setAskAnswers = (
+    update: Record<number, string> | ((prev: Record<number, string>) => Record<number, string>)
+  ) => {
+    if (!chat) return;
+    const id = chat.id;
+    setLive((prev) => {
+      const current = prev[id] ?? emptyLive();
+      const next = typeof update === "function" ? update(current.askAnswers) : update;
+      return { ...prev, [id]: { ...current, askAnswers: next } };
+    });
+  };
+
+  const startChat = () => {
+    const created = blankChat();
+    setChats((prev) => [...prev, created]);
+    setActiveId(created.id);
+    setRenaming(null);
+  };
+
+  const beginRename = (item: Chat) => {
+    setRenaming(item.id);
+    setRenameDraft(item.title);
+  };
+
+  const commitRename = () => {
+    const id = renaming;
+    if (!id) return;
+    const name = renameDraft.trim() || "Новый чат";
+    setChats((prev) => prev.map((item) => (item.id === id ? { ...item, title: name, customTitle: true } : item)));
+    setRenaming(null);
+  };
+
+  const clearActive = () => {
+    if (!chat) return;
+    const id = chat.id;
+    stops.current[id]?.abort();
+    writingRef.current[id] = "";
+    thinkRef.current[id] = "";
+    doingRef.current[id] = [];
+    busyIds.current.delete(id);
+    setChats((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, messages: [], title: item.customTitle ? item.title : "Новый чат" } : item
+      )
+    );
+    setLive((prev) => ({ ...prev, [id]: emptyLive() }));
+  };
+
+  useEffect(() => {
+    tail.current?.scrollIntoView?.({ block: "end" });
+  }, [thread, writing, draftThink, doing, pending, asks, askAnswers]);
 
   const answerAsks = (e: FormEvent) => {
     e.preventDefault();
@@ -494,7 +679,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
             aria-label="Показать агента"
             className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-950/95 px-3 py-2 text-sm text-slate-200 shadow-xl backdrop-blur hover:border-slate-500"
           >
-            {busy ? <ThinkingSparkle quiet={Boolean(writing)} /> : <Sparkle size={16} className="text-sky-300" />}
+            {anyBusy ? <ThinkingSparkle quiet /> : <Sparkle size={16} className="text-sky-300" />}
             <span>Агент</span>
           </button>
         </div>
@@ -615,6 +800,59 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         )}
 
         <div className={`card bg-slate-950/95 p-3 shadow-xl backdrop-blur ${open ? "rounded-t-none border-t-0" : ""}`}>
+          <div className="mb-2 flex items-center gap-1 overflow-x-auto" role="tablist" aria-label="Чаты">
+            <button type="button" onClick={startChat} className="btn-ghost shrink-0 text-xs">
+              Новый
+            </button>
+            {chats.map((item) =>
+              renaming === item.id ? (
+                <input
+                  key={item.id}
+                  aria-label="Название чата"
+                  value={renameDraft}
+                  onChange={(event) => setRenameDraft(event.target.value)}
+                  onBlur={commitRename}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      commitRename();
+                    }
+                  }}
+                  className="input h-7 w-36 shrink-0 text-xs"
+                  autoFocus
+                />
+              ) : (
+                <span key={item.id} className="flex shrink-0 items-center">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={item.id === activeId}
+                    onClick={() => {
+                      setActiveId(item.id);
+                      setRenaming(null);
+                    }}
+                    className={clsx(
+                      "rounded-full px-2 py-1 text-xs",
+                      item.id === activeId ? "bg-slate-800 text-slate-100" : "text-slate-400 hover:text-slate-200"
+                    )}
+                  >
+                    {item.title}
+                    {live[item.id]?.busy ? " …" : ""}
+                  </button>
+                  {item.id === activeId && (
+                    <button
+                      type="button"
+                      aria-label="Переименовать чат"
+                      onClick={() => beginRename(item)}
+                      className="btn-ghost px-1 py-1"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  )}
+                </span>
+              )
+            )}
+          </div>
           <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
             <div className="min-w-0 flex-1 space-y-1">
               <div className="flex items-center gap-2">
@@ -671,19 +909,12 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
               </div>
               <div className="flex items-center gap-2">
                 {busy && (
-                  <button type="button" onClick={() => stop.current?.abort()} className="btn-ghost">
+                  <button type="button" onClick={() => stops.current[activeId]?.abort()} className="btn-ghost">
                     Остановить
                   </button>
                 )}
-                {thread.length > 0 && !busy && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setThread([]);
-                      setNote(null);
-                    }}
-                    className="btn-ghost"
-                  >
+                {(thread.length > 0 || busy) && (
+                  <button type="button" onClick={clearActive} className="btn-ghost">
                     <Trash2 className="h-4 w-4" />
                     Очистить
                   </button>
