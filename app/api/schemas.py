@@ -502,6 +502,7 @@ class GpuOut(BaseModel):
     running_count: int = 0
     stopping_count: int = 0
     chat_ok: bool = False
+    wan_ok: Optional[bool] = None
     detail: str = ""
     idle_stop_minutes: int = 0
 

@@ -41,7 +41,6 @@ beforeEach(() => {
   vi.mocked(api.gpu.status).mockResolvedValue(idle());
   vi.mocked(api.gpu.start).mockReset();
   vi.mocked(api.gpu.stop).mockReset();
-  vi.spyOn(window, "confirm").mockReturnValue(true);
 });
 
 describe("SaladGpuCard", () => {
@@ -61,18 +60,19 @@ describe("SaladGpuCard", () => {
     render(<SaladGpuCard />);
     expect(await screen.findByText(/stopped — не тарится/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /^start$/i }));
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringMatching(/образ снова качается/i));
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringMatching(/gpu-часы/i));
+    expect(screen.getByRole("heading", { name: /запустить видеокарту/i })).toBeInTheDocument();
+    expect(screen.getByText(/образ снова качается/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^да$/i }));
     await waitFor(() => expect(api.gpu.start).toHaveBeenCalled());
     expect(await screen.findByText(/качается образ/i)).toBeInTheDocument();
   });
 
   it("does not start when confirm is cancelled", async () => {
     vi.mocked(api.gpu.status).mockResolvedValue(idle({ configured: true, status: "stopped" }));
-    vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<SaladGpuCard />);
     await screen.findByRole("button", { name: /^start$/i });
     await userEvent.click(screen.getByRole("button", { name: /^start$/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^нет$/i }));
     expect(api.gpu.start).not.toHaveBeenCalled();
   });
 
@@ -93,7 +93,8 @@ describe("SaladGpuCard", () => {
     expect(screen.getByText(/авто-stop через 20 мин простоя/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^start$/i })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: /^stop$/i }));
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringMatching(/часы остановятся/i));
+    expect(screen.getByText(/часы остановятся/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^да$/i }));
     await waitFor(() => expect(api.gpu.stop).toHaveBeenCalled());
     expect(await screen.findByText(/stopped — не тарится/i)).toBeInTheDocument();
   });

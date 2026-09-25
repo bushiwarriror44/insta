@@ -19,7 +19,12 @@ from app.logging_setup import get_logger
 from app.services import ollama_control
 from app.services.http import client as http_client
 from app.services.runtime import probe
-from app.services.salad_gpu import SaladProblem, configured as salad_configured, prepare_for_chat
+from app.services.salad_gpu import (
+    PrepStatus,
+    SaladProblem,
+    configured as salad_configured,
+    prepare_for_chat,
+)
 
 log = get_logger(__name__)
 
@@ -1425,6 +1430,8 @@ class Step:
     text: str = ""
     questions: list[str] = field(default_factory=list)
     name: str = ""
+    ratio: float | None = None
+    detail: str = ""
 
 
 def describe(name: str, args: dict[str, Any]) -> str:
@@ -1590,7 +1597,18 @@ def stream(
                 except StopIteration as stop:
                     base = str(stop.value or "")
                     break
-                yield Step(kind="status", text=line)
+                if isinstance(line, PrepStatus):
+                    yield Step(
+                        kind="progress",
+                        text=line.title,
+                        detail=line.detail,
+                        ratio=line.ratio,
+                        name=f"{line.phase}/{line.phases}",
+                    )
+                    if line.milestone:
+                        yield Step(kind="status", text=line.title)
+                else:
+                    yield Step(kind="status", text=str(line))
         except SaladProblem as exc:
             raise AssistantError(str(exc), retryable=True) from exc
         if not base:

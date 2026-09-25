@@ -6,6 +6,8 @@ import { api, formatApiError } from "../api/client";
 import type { GpuOut } from "../api/types";
 import { useToast } from "../context/ToastContext";
 import { usePollWhenVisible } from "../hooks/usePollWhenVisible";
+import { canStart, canStop, statusLabel } from "../lib/gpuLabels";
+import { GpuConfirm } from "./GpuConfirm";
 
 const POLL_MS = 8000;
 
@@ -18,50 +20,15 @@ const IDLE: GpuOut = {
   running_count: 0,
   stopping_count: 0,
   chat_ok: false,
+  wan_ok: null,
   detail: "",
 };
-
-const START_CONFIRM =
-  "После Stop образ снова качается на узел. С Running идут GPU-часы. Запустить группу?";
-const STOP_CONFIRM =
-  "Часы остановятся, чат и local-видео лягут. Остановить группу Salad?";
-
-function statusLabel(gpu: GpuOut): string {
-  if (!gpu.configured) {
-    return gpu.detail || "Salad не настроен";
-  }
-  switch (gpu.status) {
-    case "running":
-      return "Running — идут GPU-часы";
-    case "deploying":
-      return "Качается образ на узел";
-    case "pending":
-      return "Ждёт узел";
-    case "stopped":
-      return "Stopped — не тарится";
-    case "failed":
-      return "Failed";
-    case "succeeded":
-      return "Succeeded";
-    default:
-      return gpu.status ? gpu.status : "Статус неизвестен";
-  }
-}
-
-function canStart(gpu: GpuOut): boolean {
-  if (!gpu.configured) return false;
-  return gpu.status === "stopped" || gpu.status === "succeeded" || gpu.status === "failed" || gpu.status == null;
-}
-
-function canStop(gpu: GpuOut): boolean {
-  if (!gpu.configured) return false;
-  return gpu.status === "running" || gpu.status === "pending" || gpu.status === "deploying";
-}
 
 export function SaladGpuCard() {
   const { push } = useToast();
   const [gpu, setGpu] = useState<GpuOut>(IDLE);
   const [busy, setBusy] = useState<"start" | "stop" | null>(null);
+  const [ask, setAsk] = useState<"start" | "stop" | null>(null);
   const [loadError, setLoadError] = useState("");
 
   const reload = useCallback(async () => {
@@ -79,9 +46,9 @@ export function SaladGpuCard() {
 
   usePollWhenVisible(reload, POLL_MS);
 
-  async function run(action: "start" | "stop") {
-    const ok = window.confirm(action === "start" ? START_CONFIRM : STOP_CONFIRM);
-    if (!ok) return;
+  async function confirm() {
+    if (!ask || busy) return;
+    const action = ask;
     setBusy(action);
     try {
       const next = action === "start" ? await api.gpu.start() : await api.gpu.stop();
@@ -96,6 +63,7 @@ export function SaladGpuCard() {
       await reload();
     } finally {
       setBusy(null);
+      setAsk(null);
     }
   }
 
@@ -135,7 +103,7 @@ export function SaladGpuCard() {
           type="button"
           className="btn-primary"
           disabled={!startEnabled}
-          onClick={() => void run("start")}
+          onClick={() => setAsk("start")}
         >
           <Play size={14} />
           {busy === "start" ? "Запускаем…" : "Start"}
@@ -144,13 +112,14 @@ export function SaladGpuCard() {
           type="button"
           className="btn-ghost"
           disabled={!stopEnabled}
-          onClick={() => void run("stop")}
+          onClick={() => setAsk("stop")}
         >
           <Square size={14} />
           {busy === "stop" ? "Останавливаем…" : "Stop"}
         </button>
       </div>
       {loadError ? <p className="text-sm text-rose-300">{loadError}</p> : null}
+      <GpuConfirm action={ask} busy={Boolean(busy)} onNo={() => setAsk(null)} onYes={() => void confirm()} />
     </section>
   );
 }

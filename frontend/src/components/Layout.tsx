@@ -22,6 +22,7 @@ import { useHotkeys } from "../hooks/useHotkeys";
 import { usePollWhenVisible } from "../hooks/usePollWhenVisible";
 import { focusPageSearch, REFRESH_NAV_BADGES, showAssistant } from "../lib/uiEvents";
 import { AgentToggle } from "./AgentToggle";
+import { ConnectionMenu } from "./ConnectionMenu";
 import { Assistant } from "./Assistant";
 import { CommandPalette } from "./CommandPalette";
 import { Modal } from "./Modal";
@@ -212,6 +213,7 @@ export function Layout() {
             >
               Перейти
             </button>
+            {showAdmin ? <ConnectionMenu /> : null}
             <AgentToggle compact />
           </div>
         </header>

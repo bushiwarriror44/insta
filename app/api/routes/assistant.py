@@ -158,6 +158,10 @@ def talk_streaming(
                         payload_step["questions"] = step.questions
                     if step.name:
                         payload_step["name"] = step.name
+                    if step.detail:
+                        payload_step["detail"] = step.detail
+                    if step.ratio is not None:
+                        payload_step["ratio"] = step.ratio
                     yield _event(payload_step)
         except AssistantError as exc:
             yield _event({"type": "error", "detail": str(exc), "retryable": exc.retryable})

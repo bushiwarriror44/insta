@@ -10,7 +10,10 @@ from app.services import salad_gpu
 from app.services.salad_gpu import (
     GATEWAY_PORT,
     LAUNCH_STATUS,
-    WARM_STATUS,
+    PHASE_MODEL,
+    PHASE_PATCH,
+    PHASE_PULL,
+    PrepStatus,
     GroupState,
     SaladProblem,
     warmup_script,
@@ -18,6 +21,10 @@ from app.services.salad_gpu import (
 
 HOST = "tabasco.example.salad.cloud"
 ORIGIN = f"https://{HOST}"
+
+
+def _titles(lines: list) -> list[str]:
+    return [line.title if isinstance(line, PrepStatus) else str(line) for line in lines]
 
 
 def _enable(monkeypatch) -> None:
@@ -77,7 +84,8 @@ def test_prepare_starts_stopped_group_and_waits_until_the_model_is_loaded(app_en
         except StopIteration as stop:
             base = stop.value
     assert seen == ["start"]
-    assert LAUNCH_STATUS in lines
+    assert LAUNCH_STATUS in _titles(lines)
+    assert any(isinstance(line, PrepStatus) and line.phase == 2 for line in lines)
     assert base == f"{ORIGIN}/v1"
 
 
@@ -113,7 +121,7 @@ def test_prepare_patches_command_once_when_the_marker_is_missing(app_env, monkey
     assert sent.headers["content-type"].startswith("application/merge-patch+json")
     assert "gpu-warmup" in raw
     assert str(GATEWAY_PORT) in raw
-    assert WARM_STATUS in lines
+    assert PHASE_PATCH in _titles(lines)
     assert "salad-secret" not in raw
 
 
@@ -179,3 +187,50 @@ def test_prepare_times_out_when_the_model_never_loads(app_env, monkeypatch):
         gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None, clock=jump)
         with pytest.raises(SaladProblem, match="не успела прогреться"):
             next(gen)
+
+
+def test_prepare_reports_deploying_and_model_phases(app_env, monkeypatch):
+    _enable(monkeypatch)
+    calls = {"n": 0}
+
+    def sequence(settings=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return GroupState(status="stopped", dns=HOST, port=GATEWAY_PORT, command=("gpu-warmup",))
+        if calls["n"] < 4:
+            return GroupState(
+                status="deploying",
+                dns=HOST,
+                port=GATEWAY_PORT,
+                command=("gpu-warmup",),
+                creating_count=1,
+            )
+        return GroupState(status="running", dns=HOST, port=GATEWAY_PORT, command=("gpu-warmup",), running_count=1)
+
+    ps = {"n": 0}
+
+    def ps_side_effect(request):
+        ps["n"] += 1
+        if ps["n"] < 2:
+            return httpx.Response(200, json={"models": []})
+        return httpx.Response(200, json={"models": [{"name": "qwen3:32b"}]})
+
+    monkeypatch.setattr(salad_gpu, "get_group", sequence)
+    monkeypatch.setattr(salad_gpu, "start_group", lambda settings=None: sequence())
+    with respx.mock:
+        respx.get(f"{ORIGIN}/").mock(return_value=httpx.Response(200, text="Ollama is running"))
+        respx.get(f"{ORIGIN}/api/ps").mock(side_effect=ps_side_effect)
+        lines = []
+        gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None)
+        try:
+            while True:
+                lines.append(next(gen))
+        except StopIteration as stop:
+            base = stop.value
+    titles = _titles(lines)
+    assert PHASE_PULL in titles
+    assert PHASE_MODEL in titles
+    assert all(isinstance(line, PrepStatus) for line in lines)
+    assert any(line.milestone and line.title == PHASE_PULL for line in lines)
+    assert any(0 < line.ratio < 1 for line in lines)
+    assert base == f"{ORIGIN}/v1"

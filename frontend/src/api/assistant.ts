@@ -24,6 +24,7 @@ export type AssistantStep =
       cut?: string;
     }
     | { type: "status"; text: string }
+    | { type: "progress"; text: string; detail?: string; ratio?: number; name?: string }
     | { type: "error"; detail: string; retryable: boolean };
 
 export async function ask(

@@ -446,6 +446,7 @@ export interface GpuOut {
   running_count: number;
   stopping_count: number;
   chat_ok: boolean;
+  wan_ok: boolean | null;
   detail: string;
   idle_stop_minutes?: number;
 }

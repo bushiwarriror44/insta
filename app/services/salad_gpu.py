@@ -34,9 +34,16 @@ GATEWAY_PORT = 11434
 WARMUP_MARKER = "gpu-warmup"
 LAUNCH_STATUS = "Запускаю видеокарту, подождите"
 WARM_STATUS = "Прогреваю модель, подождите"
+PHASE_PATCH = "Настраиваю шлюз"
+PHASE_NODE = "Жду узел"
+PHASE_PULL = "Качается образ на узел"
+PHASE_ALLOC = "Выделяю GPU"
+PHASE_OLLAMA = "Жду Ollama"
+PHASE_MODEL = "Гружу модель в память"
 POLL_S = 5.0
 START_WAIT_S = 25 * 60
 WARM_WAIT_S = 20 * 60
+PREP_PHASES = 4
 _MODEL_NAME = re.compile(r"[A-Za-z0-9_.:-]{1,80}")
 
 
@@ -44,6 +51,24 @@ class SaladProblem(Exception):
     def __init__(self, message: str, *, status_code: int = 502) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+@dataclass(frozen=True)
+class PrepStatus:
+    """Live line for the chat dock while Salad starts and the model loads."""
+
+    title: str
+    phase: int
+    phases: int = PREP_PHASES
+    ratio: float = 0.0
+    detail: str = ""
+    milestone: bool = False
+
+    @property
+    def text(self) -> str:
+        if self.detail:
+            return f"{self.title} · {self.detail}"
+        return self.title
 
 
 @dataclass(frozen=True)
@@ -300,27 +325,110 @@ def _model_loaded(origin: str, settings: Settings, model: str) -> bool:
     return False
 
 
+def _format_elapsed(seconds: float) -> str:
+    total = max(0, int(seconds))
+    if total < 60:
+        return f"{total} с"
+    return f"{total // 60} мин {total % 60:02d} с"
+
+
+def _soft_ratio(phase: int, *, phases: int, elapsed: float, soft_s: float) -> float:
+    phase = max(1, min(phase, phases))
+    base = (phase - 1) / phases
+    width = 1.0 / phases
+    soft = min(0.9, elapsed / soft_s) if soft_s > 0 else 0.0
+    return round(base + width * soft, 3)
+
+
+def _launch_title(state: GroupState) -> str:
+    if state.status == "pending":
+        return PHASE_NODE
+    if state.status == "deploying" or state.creating_count > 0:
+        return PHASE_PULL
+    if state.allocating_count > 0:
+        return PHASE_ALLOC
+    if state.status == "running":
+        return "Узел запущен"
+    if state.status in START_READY:
+        return LAUNCH_STATUS
+    return f"Запуск ({state.status or '…'})"
+
+
+def _prep(
+    title: str,
+    phase: int,
+    *,
+    started: float,
+    phase_started: float,
+    clock: Callable[[], float],
+    soft_s: float,
+    milestone: bool = False,
+    extra: str = "",
+) -> PrepStatus:
+    now = clock()
+    elapsed = now - started
+    detail = _format_elapsed(elapsed)
+    if extra:
+        detail = f"{extra} · {detail}"
+    return PrepStatus(
+        title=title,
+        phase=phase,
+        phases=PREP_PHASES,
+        ratio=_soft_ratio(phase, phases=PREP_PHASES, elapsed=now - phase_started, soft_s=soft_s),
+        detail=detail,
+        milestone=milestone,
+    )
+
+
 def prepare_for_chat(
     settings: Settings | None = None,
     *,
     pause: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
-) -> Generator[str, None, str]:
+) -> Generator[PrepStatus, None, str]:
     """Start the group, warm qwen inside it, and return the chat base URL.
 
-    Status lines are for the bottom chat. The caller keeps streaming them
+    Yields live PrepStatus lines for the bottom chat. The caller streams them
     so a long image pull does not look stuck.
     """
     settings = require_configured(settings)
     state = get_group(settings)
     _touch(settings)
+    started = clock()
+    phase_started = started
+    last_title = ""
+
+    def emit(
+        title: str,
+        phase: int,
+        *,
+        soft_s: float,
+        extra: str = "",
+        force_milestone: bool = False,
+    ) -> PrepStatus:
+        nonlocal last_title, phase_started
+        milestone = force_milestone or title != last_title
+        if milestone:
+            phase_started = clock()
+            last_title = title
+        return _prep(
+            title,
+            phase,
+            started=started,
+            phase_started=phase_started,
+            clock=clock,
+            soft_s=soft_s,
+            milestone=milestone,
+            extra=extra,
+        )
+
     if needs_gateway_patch(state):
-        yield WARM_STATUS
+        yield emit(PHASE_PATCH, 1, soft_s=60, force_milestone=True)
         state = patch_gateway(settings, state)
         _touch(settings)
     if state.status != "running":
         if state.status in START_READY:
-            yield LAUNCH_STATUS
+            yield emit(_launch_title(state), 2, soft_s=START_WAIT_S, force_milestone=True)
             try:
                 state = start_group(settings)
             except SaladProblem as exc:
@@ -332,7 +440,7 @@ def prepare_for_chat(
         while state.status != "running":
             if clock() > deadline or state.status == "failed":
                 raise SaladProblem("Видеокарта не успела запуститься")
-            yield LAUNCH_STATUS
+            yield emit(_launch_title(state), 2, soft_s=START_WAIT_S, extra=state.status)
             pause(POLL_S)
             state = get_group(settings)
             _touch(settings)
@@ -349,7 +457,10 @@ def prepare_for_chat(
             raise SaladProblem(
                 "Модель не успела прогреться" if up else "Видеокарта не успела запуститься"
             )
-        yield WARM_STATUS if up else LAUNCH_STATUS
+        if up:
+            yield emit(PHASE_MODEL, 4, soft_s=WARM_WAIT_S)
+        else:
+            yield emit(PHASE_OLLAMA, 3, soft_s=START_WAIT_S, extra=state.status or "")
         pause(POLL_S)
         state = get_group(settings)
         origin = gateway_origin(state.dns) or origin

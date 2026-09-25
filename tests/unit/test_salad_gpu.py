@@ -65,6 +65,7 @@ def _configure(monkeypatch):
     monkeypatch.setattr(settings, "salad_organization", "acme", raising=True)
     monkeypatch.setattr(settings, "salad_project", "gpu", raising=True)
     monkeypatch.setattr(settings, "salad_container_group", "insta-gpu", raising=True)
+    monkeypatch.setattr(settings, "wan_base_url", "", raising=True)
 
 
 def _state(
@@ -94,6 +95,7 @@ def test_get_unconfigured_does_not_call_salad(auth_client, monkeypatch):
     from app.config import settings
 
     monkeypatch.setattr(settings, "salad_api_key", "", raising=True)
+    monkeypatch.setattr(settings, "wan_base_url", "", raising=True)
     with respx.mock:
         res = auth_client.get("/api/gpu", headers=_h())
     assert res.status_code == 200
@@ -105,7 +107,10 @@ def test_get_unconfigured_does_not_call_salad(auth_client, monkeypatch):
     assert "Salad-Api-Key" not in res.text
 
 
-def test_get_open_mode_unconfigured(open_client):
+def test_get_open_mode_unconfigured(open_client, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "wan_base_url", "", raising=True)
     res = open_client.get("/api/gpu")
     assert res.status_code == 200
     assert res.json()["configured"] is False
@@ -146,8 +151,38 @@ def test_chat_ok_without_putting_the_url_in_the_body(auth_client, monkeypatch):
     res = auth_client.get("/api/gpu", headers=_h())
     assert res.status_code == 200
     assert res.json()["chat_ok"] is True
+    assert res.json()["wan_ok"] is None
     assert "gpu.example" not in res.text
     assert SECRET not in res.text
+
+
+@respx.mock
+def test_wan_ok_when_the_host_answers(auth_client, monkeypatch):
+    _configure(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "wan_base_url", "https://wan.example/generate", raising=True)
+    respx.get(GROUP_URL).mock(return_value=httpx.Response(200, json=_state("running", running=1)))
+    respx.get("https://wan.example/generate").mock(return_value=httpx.Response(200, text="ok"))
+    res = auth_client.get("/api/gpu", headers=_h())
+    assert res.status_code == 200
+    assert res.json()["wan_ok"] is True
+    assert "wan.example" not in res.text
+
+
+@respx.mock
+def test_wan_ok_is_false_when_the_host_is_down(auth_client, monkeypatch):
+    _configure(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "wan_base_url", "https://wan.example/generate", raising=True)
+    respx.get(GROUP_URL).mock(return_value=httpx.Response(200, json=_state("stopped")))
+    respx.get("https://wan.example/generate").mock(side_effect=httpx.ConnectError("down"))
+    res = auth_client.get("/api/gpu", headers=_h())
+    assert res.status_code == 200
+    assert res.json()["wan_ok"] is False
+    assert "wan.example" not in res.text
+    assert "down" not in res.text
 
 
 @respx.mock

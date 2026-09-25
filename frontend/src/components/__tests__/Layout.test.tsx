@@ -35,6 +35,22 @@ vi.mock("../../api/client", () => ({
       jobs_failed_24h: 0,
       open_questions: 0,
     }),
+    gpu: {
+      status: vi.fn().mockResolvedValue({
+        configured: false,
+        status: null,
+        billing: false,
+        allocating_count: 0,
+        creating_count: 0,
+        running_count: 0,
+        stopping_count: 0,
+        chat_ok: false,
+        wan_ok: null,
+        detail: "",
+      }),
+      start: vi.fn(),
+      stop: vi.fn(),
+    },
     jobs: { list: vi.fn().mockResolvedValue([]) },
     videos: { list: vi.fn().mockResolvedValue([]) },
   },
@@ -132,6 +148,7 @@ describe("Layout", () => {
     expect(screen.queryByTestId("nav-operators")).not.toBeInTheDocument();
     expect(screen.queryByTestId("nav-settings")).not.toBeInTheDocument();
     expect(screen.queryByTestId("nav-administration")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /подключение/i })).not.toBeInTheDocument();
   });
 
   it("shows the open-mode hint when auth is not required", () => {

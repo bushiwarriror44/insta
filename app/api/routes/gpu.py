@@ -14,6 +14,18 @@ from app.services.runtime import native
 router = APIRouter(prefix="/api/gpu", tags=["gpu"], dependencies=[DocsOwnerDep])
 
 
+def _wan_ok(settings: Settings) -> bool | None:
+    url = (settings.wan_base_url or "").strip()
+    if not url:
+        return None
+    try:
+        with http_client(settings, timeout=3.0) as client:
+            response = client.get(url)
+    except httpx.RequestError:
+        return False
+    return response.status_code < 500
+
+
 def _chat_ok(settings: Settings) -> bool:
     root = native(settings.agent_base_url)
     if not root:
@@ -32,6 +44,7 @@ def _payload(state: salad_gpu.GroupState | None, settings: Settings) -> GpuOut:
         return GpuOut(
             configured=ready,
             detail="" if ready else "Задайте SALAD_API_KEY и имена группы в .env",
+            wan_ok=_wan_ok(settings),
             idle_stop_minutes=int(settings.salad_idle_stop_minutes),
         )
     return GpuOut(
@@ -43,6 +56,7 @@ def _payload(state: salad_gpu.GroupState | None, settings: Settings) -> GpuOut:
         running_count=state.running_count,
         stopping_count=state.stopping_count,
         chat_ok=_chat_ok(settings),
+        wan_ok=_wan_ok(settings),
         detail=state.detail,
         idle_stop_minutes=int(settings.salad_idle_stop_minutes),
     )

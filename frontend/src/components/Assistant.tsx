@@ -6,7 +6,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
-import { Pencil, Send, Sparkle, Trash2 } from "lucide-react";
+import { Check, ChevronDown, Pencil, Plus, Send, Sparkle, Square, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -200,6 +200,9 @@ interface Live {
   asks: string[];
   askAnswers: Record<number, string>;
   note: string | null;
+  progressText: string | null;
+  progressDetail: string | null;
+  progressRatio: number | null;
 }
 
 function emptyLive(): Live {
@@ -214,6 +217,9 @@ function emptyLive(): Live {
     asks: [],
     askAnswers: {},
     note: null,
+    progressText: null,
+    progressDetail: null,
+    progressRatio: null,
   };
 }
 
@@ -361,6 +367,8 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const [groups, setGroups] = useState<PromptGroup[]>(() => library([]));
   const [browsing, setBrowsing] = useState(false);
   const [readingManual, setReadingManual] = useState(false);
+  const [plusOpen, setPlusOpen] = useState(false);
+  const [modeOpen, setModeOpen] = useState(false);
   const [needle, setNeedle] = useState("");
   const [hidden, setHidden] = useState(readHidden);
 
@@ -467,6 +475,9 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         pending: [],
         seconds: 0,
         busy: true,
+        progressText: null,
+        progressDetail: null,
+        progressRatio: null,
       });
       setBrowsing(false);
       setReadingManual(false);
@@ -500,15 +511,37 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
             if (controller.signal.aborted) return;
             if (step.type === "status") {
               pushStatus(step.text);
+            } else if (step.type === "progress") {
+              patchLive(id, {
+                progressText: step.text,
+                progressDetail: step.detail ?? null,
+                progressRatio: typeof step.ratio === "number" ? step.ratio : null,
+              });
             } else if (step.type === "tool") {
               doingRef.current[id] = [...(doingRef.current[id] ?? []), step.text];
-              patchLive(id, { doing: doingRef.current[id], doingName: step.name ?? null });
+              patchLive(id, {
+                doing: doingRef.current[id],
+                doingName: step.name ?? null,
+                progressText: null,
+                progressDetail: null,
+                progressRatio: null,
+              });
             } else if (step.type === "think") {
               thinkRef.current[id] = (thinkRef.current[id] ?? "") + step.text;
-              patchLive(id, { think: thinkRef.current[id] });
+              patchLive(id, {
+                think: thinkRef.current[id],
+                progressText: null,
+                progressDetail: null,
+                progressRatio: null,
+              });
             } else if (step.type === "token") {
               writingRef.current[id] = (writingRef.current[id] ?? "") + step.text;
-              patchLive(id, { writing: writingRef.current[id] });
+              patchLive(id, {
+                writing: writingRef.current[id],
+                progressText: null,
+                progressDetail: null,
+                progressRatio: null,
+              });
             } else if (step.type === "image") {
               setLive((prev) => {
                 const current = prev[id] ?? emptyLive();
@@ -584,6 +617,9 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
           doing: [],
           doingName: null,
           pending: [],
+          progressText: null,
+          progressDetail: null,
+          progressRatio: null,
         });
         if (activeRef.current === id) box.current?.focus();
       }
@@ -604,6 +640,9 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const asks = view.asks;
   const askAnswers = view.askAnswers;
   const note = view.note;
+  const progressText = view.progressText;
+  const progressDetail = view.progressDetail;
+  const progressRatio = view.progressRatio;
   const anyBusy = Object.values(live).some((item) => item.busy);
 
   const setAskAnswers = (
@@ -652,6 +691,34 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
       )
     );
     setLive((prev) => ({ ...prev, [id]: emptyLive() }));
+  };
+
+  const deleteActive = () => {
+    if (!chat) return;
+    const id = chat.id;
+    stops.current[id]?.abort();
+    delete stops.current[id];
+    writingRef.current[id] = "";
+    thinkRef.current[id] = "";
+    doingRef.current[id] = [];
+    busyIds.current.delete(id);
+    const index = chats.findIndex((item) => item.id === id);
+    const rest = chats.filter((item) => item.id !== id);
+    if (rest.length === 0) {
+      const created = blankChat();
+      setChats([created]);
+      setActiveId(created.id);
+    } else {
+      const neighbor = rest[Math.max(0, index - 1)] ?? rest[0];
+      setChats(rest);
+      setActiveId(neighbor.id);
+    }
+    setLive((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setRenaming(null);
   };
 
   useEffect(() => {
@@ -746,18 +813,45 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
             ))}
             {busy && (
               <div role="status" className="space-y-2">
-                <div className="flex items-center gap-2 text-sm text-slate-400">
-                  <ThinkingSparkle quiet={Boolean(writing)} />
-                  <span>
-                    {writing
-                      ? "Пишет…"
-                      : draftThink
-                        ? "Рассуждает…"
-                        : doing.length
-                          ? doing[doing.length - 1]
-                          : `Думает… ${seconds} с`}
-                  </span>
-                </div>
+                {progressText ? (
+                  <div className="space-y-2 rounded-lg border border-slate-800 bg-slate-900/70 p-3">
+                    <div className="flex items-center gap-2 text-sm text-slate-200">
+                      <ThinkingSparkle quiet />
+                      <span>{progressText}</span>
+                    </div>
+                    {progressDetail ? (
+                      <p className="text-xs text-slate-500">{progressDetail}</p>
+                    ) : null}
+                    <div
+                      className="h-1.5 overflow-hidden rounded-full bg-slate-800"
+                      role="progressbar"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={Math.round(Math.min(1, Math.max(0, progressRatio ?? 0)) * 100)}
+                      aria-label={progressText}
+                    >
+                      <div
+                        className="h-full rounded-full bg-sky-400 transition-[width] duration-500"
+                        style={{
+                          width: `${Math.round(Math.min(0.95, Math.max(0.05, progressRatio ?? 0.05)) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-sm text-slate-400">
+                    <ThinkingSparkle quiet={Boolean(writing)} />
+                    <span>
+                      {writing
+                        ? "Пишет…"
+                        : draftThink
+                          ? "Рассуждает…"
+                          : doing.length
+                            ? doing[doing.length - 1]
+                            : `Думает… ${seconds} с`}
+                    </span>
+                  </div>
+                )}
                 {!writing && doingName && toolHint(doingName) ? (
                   <p data-testid="assistant-tool-hint" className="text-xs text-slate-500">
                     {toolHint(doingName)}
@@ -851,39 +945,119 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                     {live[item.id]?.busy ? " …" : ""}
                   </button>
                   {item.id === activeId && (
-                    <button
-                      type="button"
-                      aria-label="Переименовать чат"
-                      onClick={() => beginRename(item)}
-                      className="btn-ghost px-1 py-1"
-                    >
-                      <Pencil className="h-3 w-3" />
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        aria-label="Переименовать чат"
+                        onClick={() => beginRename(item)}
+                        className="btn-ghost px-1 py-1"
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Удалить чат"
+                        onClick={deleteActive}
+                        className="btn-ghost px-1 py-1"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </>
                   )}
                 </span>
               )
             )}
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
-            <div className="min-w-0 flex-1 space-y-1">
-              <div className="flex items-center gap-2">
-                {busy && <ThinkingSparkle quiet={Boolean(writing)} />}
-                <h2 className="text-xs font-semibold text-slate-300">Спросить агента</h2>
-              </div>
-              {!busy ? (
-                <p data-testid="assistant-page-hint" className="text-xs text-slate-500">
-                  {pageHint(page)}
-                </p>
+          {!busy ? (
+            <p data-testid="assistant-page-hint" className="mb-2 px-1 text-xs text-slate-500">
+              {pageHint(page)}
+            </p>
+          ) : (
+            <p className="mb-2 flex items-center gap-2 px-1 text-xs text-slate-400">
+              <ThinkingSparkle quiet={Boolean(writing) || Boolean(progressText)} />
+              {progressText
+                ? `${progressText}${progressDetail ? ` · ${progressDetail}` : ""}`
+                : writing
+                  ? "Пишет…"
+                  : draftThink
+                    ? "Рассуждает…"
+                    : `Думает… ${seconds} с`}
+            </p>
+          )}
+          <form
+            onSubmit={onSubmit}
+            className="flex items-end gap-1 rounded-full border border-slate-700 bg-slate-900 px-1.5 py-1.5"
+          >
+            <div className="relative">
+              <button
+                type="button"
+                aria-label="Ещё"
+                aria-expanded={plusOpen}
+                onClick={() => {
+                  setPlusOpen((value) => !value);
+                  setModeOpen(false);
+                }}
+                className="rounded-full p-2 text-slate-300 hover:bg-slate-800 hover:text-white"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+              {plusOpen ? (
+                <div
+                  role="menu"
+                  className="absolute bottom-full left-0 z-20 mb-2 w-52 overflow-hidden rounded-xl border border-slate-700 bg-slate-950 py-1 shadow-xl"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800"
+                    onClick={() => {
+                      startChat();
+                      setPlusOpen(false);
+                    }}
+                  >
+                    Новый чат
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800"
+                    onClick={() => {
+                      setBrowsing((seen) => !seen);
+                      setReadingManual(false);
+                      setPlusOpen(false);
+                    }}
+                  >
+                    Что можно спросить
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800"
+                    onClick={() => {
+                      setReadingManual((seen) => !seen);
+                      setBrowsing(false);
+                      setPlusOpen(false);
+                    }}
+                  >
+                    Мануал
+                  </button>
+                  {thread.length > 0 || busy ? (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800"
+                      onClick={() => {
+                        clearActive();
+                        setPlusOpen(false);
+                      }}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Очистить
+                    </button>
+                  ) : null}
+                </div>
               ) : null}
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-600">открывает страницы здесь, в этой вкладке</span>
-              <button type="button" onClick={hide} className="btn-ghost text-xs py-1 px-2">
-                Скрыть
-              </button>
-            </div>
-          </div>
-          <form onSubmit={onSubmit}>
             <textarea
               ref={box}
               rows={1}
@@ -892,60 +1066,77 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
               onKeyDown={onKeyDown}
               disabled={busy}
               aria-label="Спросить агента"
-              placeholder="Спросите, что здесь есть, или скажите поставить план / публикацию…"
-              className="input resize-none min-h-[40px]"
+              placeholder="Спросите агента…"
+              className="max-h-28 min-h-9 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500"
             />
-            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setBrowsing((seen) => !seen);
-                    setReadingManual(false);
-                  }}
-                  className="btn-ghost text-xs"
+            <div className="relative">
+              <button
+                type="button"
+                aria-label="Режим агента"
+                aria-expanded={modeOpen}
+                onClick={() => {
+                  setModeOpen((value) => !value);
+                  setPlusOpen(false);
+                }}
+                className="flex items-center gap-1 rounded-full px-2.5 py-1.5 text-sm text-slate-200 hover:bg-slate-800"
+              >
+                Агент
+                <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+              </button>
+              {modeOpen ? (
+                <div
+                  role="menu"
+                  className="absolute bottom-full right-0 z-20 mb-2 w-64 overflow-hidden rounded-xl border border-slate-700 bg-slate-950 py-1 shadow-xl"
                 >
-                  {browsing ? "Скрыть примеры" : "Что можно спросить"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setReadingManual((seen) => !seen);
-                    setBrowsing(false);
-                  }}
-                  className="btn-ghost text-xs"
-                >
-                  {readingManual ? "Скрыть мануал" : "Мануал"}
-                </button>
-              </div>
-              <div className="flex items-center gap-2">
-                {busy && (
-                  <button type="button" onClick={() => stops.current[activeId]?.abort()} className="btn-ghost">
-                    Остановить
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="block w-full px-3 py-2 text-left hover:bg-slate-800"
+                    onClick={() => setModeOpen(false)}
+                  >
+                    <span className="block text-sm text-slate-200">Ответ</span>
+                    <span className="block text-xs text-slate-500">коротко по панели</span>
                   </button>
-                )}
-                {(thread.length > 0 || busy) && (
-                  <button type="button" onClick={clearActive} className="btn-ghost">
-                    <Trash2 className="h-4 w-4" />
-                    Очистить
-                  </button>
-                )}
-                <button type="submit" disabled={busy || !draft.trim()} className="btn-primary">
-                  {busy ? (
-                    <span className="inline-flex items-center gap-2">
-                      <ThinkingSparkle quiet={Boolean(writing)} />
-                      Думает…
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-slate-800"
+                    onClick={() => setModeOpen(false)}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm text-slate-100">С рассуждением</span>
+                      <span className="block text-xs text-slate-400">ход мысли над ответом</span>
                     </span>
-                  ) : (
-                    <>
-                      <Send className="h-4 w-4" />
-                      Спросить
-                    </>
-                  )}
-                </button>
-              </div>
+                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-sky-300" aria-label="текущий режим" />
+                  </button>
+                </div>
+              ) : null}
             </div>
+            {busy ? (
+              <button
+                type="button"
+                aria-label="Остановить"
+                onClick={() => stops.current[activeId]?.abort()}
+                className="rounded-full bg-slate-100 p-2 text-slate-900 hover:bg-white"
+              >
+                <Square className="h-4 w-4" />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                aria-label="Спросить"
+                disabled={!draft.trim()}
+                className="rounded-full bg-slate-100 p-2 text-slate-900 hover:bg-white disabled:opacity-40"
+              >
+                <Send className="h-4 w-4" />
+              </button>
+            )}
           </form>
+          <div className="mt-1 flex justify-end px-2">
+            <button type="button" onClick={hide} className="text-xs text-slate-500 hover:text-slate-300">
+              Скрыть
+            </button>
+          </div>
           {readingManual && (
             <div
               className="mt-3 max-h-64 space-y-3 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950/50 p-4"

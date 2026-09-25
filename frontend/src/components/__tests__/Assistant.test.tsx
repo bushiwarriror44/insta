@@ -114,6 +114,39 @@ describe("Assistant", () => {
     expect(screen.getAllByText("Запускаю видеокарту, подождите")).toHaveLength(1);
   });
 
+  it("shows a live progress bar while the card starts", async () => {
+    let release: (() => void) | undefined;
+    askMock.mockImplementationOnce(
+      (_messages, onStep) =>
+        new Promise<void>((resolve) => {
+          onStep({ type: "progress", text: "Качается образ на узел", detail: "deploying · 12 с", ratio: 0.3 });
+          onStep({ type: "status", text: "Качается образ на узел" });
+          onStep({ type: "progress", text: "Качается образ на узел", detail: "deploying · 40 с", ratio: 0.45 });
+          release = () => {
+            onStep({
+              type: "done",
+              reply: "готово",
+              open_url: null,
+              opened: null,
+              used: [],
+              images: [],
+            });
+            resolve();
+          };
+        })
+    );
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "привет");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect(await screen.findByRole("progressbar", { name: /качается образ/i })).toBeInTheDocument();
+    expect(screen.getAllByText(/deploying · 40 с/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Качается образ на узел").length).toBeGreaterThanOrEqual(1);
+    release?.();
+    expect(await screen.findByText("готово")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("progressbar")).not.toBeInTheDocument());
+  });
+
   it("asks for clarifications and sends them as the next message", async () => {
     askMock.mockImplementationOnce(async (_messages, onStep) => {
       onStep({ type: "ask", questions: ["какой username?"], text: "нужен логин" });
@@ -245,7 +278,8 @@ describe("Assistant", () => {
   it("opens the chat manual", async () => {
     const user = userEvent.setup();
     renderDock();
-    await user.click(await screen.findByRole("button", { name: /^мануал$/i }));
+    await user.click(await screen.findByRole("button", { name: /^ещё$/i }));
+    await user.click(screen.getByRole("menuitem", { name: /^мануал$/i }));
     expect(screen.getByTestId("assistant-manual")).toHaveTextContent(/sqlite/i);
     expect(screen.getByText(/playwright из нижнего чата не стартует/i)).toBeInTheDocument();
   });
@@ -253,7 +287,8 @@ describe("Assistant", () => {
   it("sends a preset prompt from the examples list", async () => {
     const user = userEvent.setup();
     renderDock();
-    await user.click(await screen.findByRole("button", { name: /что можно спросить/i }));
+    await user.click(await screen.findByRole("button", { name: /^ещё$/i }));
+    await user.click(screen.getByRole("menuitem", { name: /что можно спросить/i }));
     await user.click(screen.getByRole("button", { name: /^открой аккаунты$/i }));
     await waitFor(() => expect(askMock).toHaveBeenCalled());
     const messages = askMock.mock.calls[0][0] as Array<{ role: string; content: string }>;
@@ -416,6 +451,65 @@ describe("Assistant", () => {
     expect(await screen.findByRole("tab", { name: /^Рабочий/ })).toBeInTheDocument();
   });
 
+  it("deletes the active chat and keeps the other", async () => {
+    askMock.mockImplementation(async (messages, onStep) => {
+      const last = (messages as Array<{ content: string }>).at(-1)?.content ?? "";
+      onStep({
+        type: "done",
+        reply: `ответ:${last}`,
+        open_url: null,
+        opened: null,
+        used: [],
+        images: [],
+      });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "первый");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect(await screen.findByText("ответ:первый")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^новый$/i }));
+    await user.type(screen.getByLabelText(/спросить агента/i), "второй");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect(await screen.findByText("ответ:второй")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^удалить чат$/i }));
+    expect(screen.queryByRole("tab", { name: /^второй/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("ответ:второй")).not.toBeInTheDocument();
+    expect(await screen.findByText("ответ:первый")).toBeInTheDocument();
+    await waitFor(() => {
+      const stored = JSON.parse(window.localStorage.getItem("assistant-dock:chats") || "{}");
+      const titles = (stored.chats ?? []).map((item: { title: string }) => item.title);
+      expect(titles).toEqual(["первый"]);
+    });
+  });
+
+  it("replaces the only chat with an empty one", async () => {
+    askMock.mockImplementation(async (_messages, onStep) => {
+      onStep({
+        type: "done",
+        reply: "один ответ",
+        open_url: null,
+        opened: null,
+        used: [],
+        images: [],
+      });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "один");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect(await screen.findByText("один ответ")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^удалить чат$/i }));
+    expect(screen.queryByText("один ответ")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^Новый чат$/ })).toBeInTheDocument();
+    await waitFor(() => {
+      const stored = JSON.parse(window.localStorage.getItem("assistant-dock:chats") || "{}");
+      expect(stored.chats).toHaveLength(1);
+      expect(stored.chats[0].title).toBe("Новый чат");
+      expect(stored.chats[0].messages).toEqual([]);
+    });
+  });
+
   it("clears the active chat while it is answering and leaves the other", async () => {
     let release: (() => void) | undefined;
     askMock.mockImplementationOnce(
@@ -444,7 +538,8 @@ describe("Assistant", () => {
     await user.click(screen.getByRole("button", { name: /^спросить$/i }));
     expect(await screen.findByText("второй ответ")).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: /^долго/ }));
-    await user.click(screen.getByRole("button", { name: /^очистить$/i }));
+    await user.click(screen.getByRole("button", { name: /^ещё$/i }));
+    await user.click(screen.getByRole("menuitem", { name: /^очистить$/i }));
     expect(screen.queryByText("долго")).not.toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: /^ещё/ }));
     expect(screen.getByText("второй ответ")).toBeInTheDocument();
