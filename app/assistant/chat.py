@@ -15,10 +15,13 @@ from sqlalchemy.orm import Session
 from app.assistant import tools
 from app.assistant.tools import Opened, ToolError
 from app.config import Settings, get_settings
+from app.logging_setup import get_logger
 from app.services import ollama_control
 from app.services.http import client as http_client
 from app.services.runtime import probe
 from app.services.salad_gpu import SaladProblem, configured as salad_configured, prepare_for_chat
+
+log = get_logger(__name__)
 
 ROUNDS = 6
 RUN_ROUNDS = 12
@@ -1808,6 +1811,22 @@ def _stream_cut(exc: BaseException) -> bool:
     return "incomplete chunked" in text or "peer closed" in text
 
 
+def _gateway_snippet(text: str) -> str:
+    flat = " ".join(text.split())
+    flat = re.sub(r"https?://\S+", "", flat)
+    flat = re.sub(r"(?i)bearer\s+\S+", "", flat)
+    return flat[:160]
+
+
+def _note_gateway(response: httpx.Response, sample: str) -> None:
+    log.info(
+        "chat.gateway",
+        status=response.status_code,
+        content_type=response.headers.get("content-type", ""),
+        body=_gateway_snippet(sample),
+    )
+
+
 def _only_media(parts: list[str]) -> bool:
     text = "".join(parts).strip().lower()
     if MEDIA_PHRASE not in text:
@@ -1912,21 +1931,38 @@ def _complete(
                     "headers": {"Content-Type": "application/json"},
                 }
             with client.stream("POST", url, **stream_kwargs) as response:
+                gateway_noted = False
+
+                def note_once(sample: str) -> None:
+                    nonlocal gateway_noted
+                    if gateway_noted:
+                        return
+                    gateway_noted = True
+                    _note_gateway(response, sample)
+
                 if response.status_code == 400 and include_think:
                     response.read()
+                    note_once(response.text)
                     include_think = False
                     continue
                 if response.status_code in {520, 524} and not retried and not content and not thought and not calls:
                     response.read()
+                    note_once(response.text)
                     retried = True
                     continue
                 if response.status_code != 415:
+                    if response.status_code >= 400:
+                        response.read()
+                        note_once(response.text)
                     _raise_for(response, url)
                 if response.status_code == 415 or _only_media([response.reason_phrase or ""]):
                     response.read()
+                    note_once(response.text)
                     media_line = True
                 else:
                     for line in response.iter_lines():
+                        if line.strip():
+                            note_once(line)
                         if _delta(line) is None and _only_media([line]):
                             media_line = True
                             break
@@ -1955,6 +1991,7 @@ def _complete(
                                 break
                         for part in delta.get("tool_calls") or []:
                             _gather(calls, part)
+                    note_once("")
             if media_line and not any(part.strip() and not _only_media([part]) for part in content):
                 if not media_retried and not thought and not calls:
                     media_retried = True

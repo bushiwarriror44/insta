@@ -376,6 +376,17 @@ def test_complete_reads_the_stream_cut_from_the_cause(app_env, monkeypatch):
     assert "peer closed" not in text
 
 
+def test_gateway_snippet_drops_the_address():
+    from app.assistant.chat import _gateway_snippet
+
+    text = "see https://tabasco.example/v1/chat Bearer secret-token Unsupported Media Type"
+    snip = _gateway_snippet(text)
+    assert "https://" not in snip
+    assert "secret" not in snip
+    assert "Unsupported" in snip
+    assert len(snip) <= 160
+
+
 def _sse(*parts: str) -> str:
     lines = []
     for part in parts:
