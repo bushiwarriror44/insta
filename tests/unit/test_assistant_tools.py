@@ -1420,6 +1420,7 @@ def test_chat_body_disables_think():
     settings = Settings(_env_file=None)
     body = _chat_body(settings, [], include_think=True)
     assert body["think"] is False
+    assert body["options"]["num_ctx"] == 8192
     assert body["temperature"] == 0.1
     assert "think" not in _chat_body(settings, [], include_think=False)
 

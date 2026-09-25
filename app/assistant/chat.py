@@ -1743,6 +1743,8 @@ def _chat_body(
         "temperature": 0.1,
         "max_tokens": 1024,
         "stream": True,
+        # 32k context on a 24 GB card OOMs and Salad answers 520.
+        "options": {"num_ctx": 8192},
     }
     if include_think:
         body["think"] = False
@@ -1791,6 +1793,10 @@ def _complete(
                 if response.status_code == 400 and include_think:
                     response.read()
                     include_think = False
+                    continue
+                if response.status_code in {520, 524} and not retried and not content and not calls:
+                    response.read()
+                    retried = True
                     continue
                 _raise_for(response, url)
                 for line in response.iter_lines():
@@ -1861,6 +1867,16 @@ def _raise_for(response: httpx.Response, url: str) -> None:
     response.read()
     if response.status_code == 429:
         raise AssistantError("хост модели ограничил частоту", retryable=True)
+    if response.status_code == 524:
+        raise AssistantError(
+            "шлюз Salad оборвал ответ по таймауту. Напишите ещё раз.",
+            retryable=True,
+        )
+    if response.status_code == 520:
+        raise AssistantError(
+            "видеокарта оборвала запрос. Напишите ещё раз короче.",
+            retryable=True,
+        )
     if response.status_code >= 500:
         raise AssistantError(f"ошибка хоста модели {response.status_code}", retryable=True)
     raise AssistantError(f"модель отклонила запрос: {response.text[:200]}")
