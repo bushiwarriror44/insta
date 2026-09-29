@@ -16,6 +16,12 @@ import { library, search, type PromptGroup } from "../api/prompts";
 import { CHAT_MANUAL, pageHint, toolHint } from "../lib/agentManual";
 import { emitAssistantMutate } from "../lib/assistantMutate";
 import { panelPath } from "../lib/panelHref";
+import {
+  ACCOUNT_FORM_FIELDS,
+  askFormIncomplete,
+  fieldIsRequired,
+  PROXY_FORM_FIELDS,
+} from "../lib/setupForms";
 import { SHOW_ASSISTANT } from "../lib/uiEvents";
 
 const HIDDEN_KEY = "assistant-dock:hidden";
@@ -579,7 +585,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                   cut: step.cut || undefined,
                 },
               ]);
-              if (step.asks?.length) {
+              if (step.asks?.length || step.fields?.length) {
                 setLive((prev) => {
                   const current = prev[id] ?? emptyLive();
                   return {
@@ -587,6 +593,12 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                     [id]: {
                       ...current,
                       asks: current.asks.length ? current.asks : step.asks ?? [],
+                      askFields:
+                        step.fields?.length
+                          ? step.fields
+                          : current.askFields?.length
+                            ? current.askFields
+                            : null,
                     },
                   };
                 });
@@ -747,9 +759,18 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const answerAsks = (e: FormEvent) => {
     e.preventDefault();
     const lines = askFields?.length
-      ? askFields.map((field) => `${field.id}: ${(askAnswers[field.id] ?? "").trim()}`)
+      ? askFields
+          .map((field) => ({ field, value: (askAnswers[field.id] ?? "").trim() }))
+          .filter(({ value }) => value.length > 0)
+          .map(({ field, value }) => `${field.id}: ${value}`)
       : asks.map((question, i) => `${question}: ${(askAnswers[String(i)] ?? "").trim()}`);
-    if (lines.some((line) => /:\s*$/.test(line))) return;
+    if (
+      askFields?.length
+        ? askFormIncomplete(askFields, askAnswers)
+        : lines.some((line) => /:\s*$/.test(line))
+    ) {
+      return;
+    }
     void send(`Уточнения:\n${lines.join("\n")}`);
   };
 
@@ -766,7 +787,21 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   };
 
   const shown = search(groups, needle);
-  const open = thread.length > 0 || busy || asks.length > 0;
+  const hasAskForm = asks.length > 0 || (askFields?.length ?? 0) > 0;
+  const open = thread.length > 0 || busy || hasAskForm;
+
+  const showSetupForm = (fields: AskField[], prompt: string) => {
+    if (!chat || busy) return;
+    patchLive(chat.id, {
+      asks: [prompt],
+      askFields: fields,
+      askAnswers: {},
+      note: null,
+    });
+    setHidden(false);
+    writeHidden(false);
+    setPlusOpen(false);
+  };
 
   if (hidden) {
     return (
@@ -897,13 +932,18 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
               </div>
             )}
             {!busy && note && <p className="text-xs text-slate-400">{note}</p>}
-            {!busy && asks.length > 0 && (
+            {!busy && hasAskForm && (
               <form onSubmit={answerAsks} className="space-y-2 rounded-lg border border-slate-800 bg-slate-900/80 p-3">
                 <p className="text-xs text-slate-400">Нужны уточнения</p>
                 {askFields?.length
                   ? askFields.map((field) => (
                       <label key={field.id} className="block space-y-1">
-                        <span className="text-xs text-slate-300">{field.label}</span>
+                        <span className="text-xs text-slate-300">
+                          {field.label}
+                          {!fieldIsRequired(field) ? (
+                            <span className="text-slate-500"> (необязательно)</span>
+                          ) : null}
+                        </span>
                         {field.kind === "select" ? (
                           <select
                             className="input"
@@ -955,7 +995,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                   className="btn-primary"
                   disabled={
                     askFields?.length
-                      ? askFields.some((field) => !(askAnswers[field.id] ?? "").trim())
+                      ? askFormIncomplete(askFields, askAnswers)
                       : asks.some((_, i) => !(askAnswers[String(i)] ?? "").trim())
                   }
                 >
@@ -1092,6 +1132,26 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                     }}
                   >
                     Что можно спросить
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800"
+                    onClick={() => {
+                      showSetupForm(ACCOUNT_FORM_FIELDS, "Заполните данные аккаунта");
+                    }}
+                  >
+                    Форма аккаунта
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800"
+                    onClick={() => {
+                      showSetupForm(PROXY_FORM_FIELDS, "Заполните данные прокси");
+                    }}
+                  >
+                    Форма прокси
                   </button>
                   <button
                     type="button"

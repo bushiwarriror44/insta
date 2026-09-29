@@ -147,6 +147,7 @@ def talk_streaming(
                             "used": step.used,
                             "images": step.images,
                             "asks": step.asks,
+                            "fields": step.fields,
                             "created": step.created,
                             "thinking": step.thinking,
                             "cut": step.cut,

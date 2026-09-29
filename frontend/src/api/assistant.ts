@@ -5,6 +5,7 @@ export type AskField = {
   label: string;
   kind?: "text" | "password" | "select";
   options?: string[];
+  required?: boolean;
 };
 
 export type AssistantFocus = {
@@ -26,6 +27,7 @@ export type AssistantStep =
       used: string[];
       images: string[];
       asks?: string[];
+      fields?: AskField[];
       created?: { accounts?: number[]; proxies?: number[] };
       thinking?: string;
       cut?: string;

@@ -2698,13 +2698,13 @@ def create_accounts(db: Session, items: Any) -> dict[str, Any]:
         except ToolError as exc:
             failed.append({"item": username, "ошибка": str(exc)})
     if not created and incomplete == len(rows):
+        from app.assistant.setup_fields import ACCOUNT_FORM_FIELDS
+
         return {
             "ask": True,
-            "questions": [
-                "username каждого аккаунта?",
-                "proxy_label существующего прокси?",
-            ],
+            "questions": ["Заполните данные аккаунта"],
             "why": "чтобы добавить аккаунты",
+            "fields": [dict(field) for field in ACCOUNT_FORM_FIELDS],
         }
     return {"created": created, "failed": failed}
 
@@ -2738,13 +2738,13 @@ def create_proxies(db: Session, items: Any) -> dict[str, Any]:
         except ToolError as exc:
             failed.append({"item": label, "ошибка": str(exc)})
     if not created and incomplete == len(rows):
+        from app.assistant.setup_fields import PROXY_FORM_FIELDS
+
         return {
             "ask": True,
-            "questions": [
-                "метка каждого прокси?",
-                "url каждого прокси (http://user:pass@host:port)?",
-            ],
+            "questions": ["Заполните данные прокси"],
             "why": "чтобы добавить прокси",
+            "fields": [dict(field) for field in PROXY_FORM_FIELDS],
         }
     return {"created": created, "failed": failed}
 

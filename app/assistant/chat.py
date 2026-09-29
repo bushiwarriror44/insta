@@ -81,14 +81,13 @@ Graph / YouTube Data API / TikTok Content Posting API и OAuth не исполь
 
 Ты не можешь удалять ничего. Если просят удалить — откажись.
 
-Неполная задача (нет username, proxy_label, url прокси и т.п.) — вызови \
-`ask_operator` со списком коротких вопросов и зачем они нужны. Не выдумывай поля. \
-Если оператор просит форму / «заполню сам» / не хочет писать всё в чат — \
-`ask_operator` с `fields`: proxy_label, proxy_url, platform (select instagram/youtube/tiktok), \
-username, password (kind password), totp_seed по желанию. Данные уже текстом — create_*, форму не дублируй. \
+Неполная задача про аккаунт — `ask_operator` с полным пресетом fields аккаунта \
+(proxy_label, username, platform, password; totp_seed и email по желанию, required false). \
+Неполная задача про прокси — `ask_operator` с пресетом fields прокси (label, url; country по желанию). \
+Не выдумывай другие id полей. Данные уже текстом в чате — create_*, форму не дублируй. \
 Пока оператор не ответил сообщением «Уточнения: …» — не вызывай create_*. \
 Несколько аккаунтов или прокси в одном сообщении — `create_accounts` / `create_proxies` \
-(JSON-массив `items`, до 20). Если ни у одной строки нет обязательных полей — `ask_operator`. \
+(JSON-массив `items`, до 20). Если ни у одной строки нет обязательных полей — `ask_operator` с формой. \
 Частичный успех верни как есть: created и failed. \
 Спросили про другую страницу, не текущую — сначала `page_guide`.
 
@@ -563,9 +562,9 @@ TOOLS = [
     schema(
         "ask_operator",
         "Спросить оператора, когда не хватает обязательных полей. Не выдумывай значения. "
-        "Если оператор просит форму / «заполню сам» — передай fields "
-        "(proxy_label, proxy_url, platform, username, password; totp_seed по желанию). "
-        "Если данные уже в чате — create_*, форму не дублируй. После ответов «Уточнения: …» — create/update.",
+        "Аккаунт — fields как пресет: proxy_label, username, platform (select), password, "
+        "totp_seed/email optional (required false). Прокси — label, url, country optional. "
+        "Если данные уже в чате — create_*, форму не дублируй. После «Уточнения: …» — create/update.",
         {
             "questions": {
                 "type": "array",
@@ -588,6 +587,10 @@ TOOLS = [
                         "options": {
                             "type": "array",
                             "items": {"type": "string"},
+                        },
+                        "required": {
+                            "type": "boolean",
+                            "description": "false — поле необязательно в форме",
                         },
                     },
                     "required": ["id", "label"],
@@ -946,6 +949,7 @@ class Answer:
     used: list[str] = field(default_factory=list)
     images: list[str] = field(default_factory=list)
     asks: list[str] = field(default_factory=list)
+    fields: list[dict[str, Any]] = field(default_factory=list)
     created: dict[str, list[int]] = field(default_factory=lambda: {"accounts": [], "proxies": []})
     thinking: str = ""
     cut: str = ""
@@ -1456,6 +1460,11 @@ def _ask_fields(raw: Any) -> list[dict[str, Any]]:
             cleaned = [str(opt).strip() for opt in options if str(opt).strip()]
             if cleaned:
                 entry["options"] = cleaned
+        required = item.get("required")
+        if required is False:
+            entry["required"] = False
+        else:
+            entry["required"] = True
         out.append(entry)
     return out
 
@@ -1814,6 +1823,7 @@ def stream(
                         used=used,
                         images=images,
                         asks=questions,
+                        fields=fields,
                         created=created,
                     )
                     return

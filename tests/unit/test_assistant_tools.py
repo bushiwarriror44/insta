@@ -440,7 +440,32 @@ def test_create_accounts_asks_when_no_required_fields(db_session):
 
     out = create_accounts(db_session, [{}, {"username": ""}])
     assert out["ask"] is True
-    assert any("username" in q for q in out["questions"])
+    assert out["fields"]
+    assert {field["id"] for field in out["fields"]} >= {"proxy_label", "username", "platform", "password"}
+
+
+def test_create_proxies_asks_with_form_fields(db_session):
+    from app.assistant.tools import create_proxies
+
+    out = create_proxies(db_session, [{}])
+    assert out["ask"] is True
+    assert {field["id"] for field in out["fields"]} == {"label", "url", "country"}
+
+
+def test_ask_operator_optional_required_flag(db_session):
+    result, _opened = run_tool(
+        db_session,
+        "ask_operator",
+        {
+            "questions": ["данные"],
+            "fields": [
+                {"id": "label", "label": "Метка", "kind": "text"},
+                {"id": "country", "label": "Страна", "kind": "text", "required": False},
+            ],
+        },
+    )
+    assert result["fields"][0]["required"] is True
+    assert result["fields"][1]["required"] is False
 
 
 def test_create_proxies_partial_success(db_session):

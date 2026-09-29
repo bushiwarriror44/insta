@@ -220,6 +220,63 @@ describe("Assistant", () => {
     expect(body).toContain("password: secret");
   });
 
+  it("opens the proxy setup form from the plus menu", async () => {
+    const user = userEvent.setup();
+    renderDock();
+    await user.click(await screen.findByRole("button", { name: /^ещё$/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /форма прокси/i }));
+    expect(await screen.findByLabelText(/url \(http/i)).toBeInTheDocument();
+    expect(screen.getByText(/необязательно/i)).toBeInTheDocument();
+  });
+
+  it("allows optional ask fields to stay empty", async () => {
+    askMock.mockImplementationOnce(async (_messages, onStep) => {
+      onStep({
+        type: "ask",
+        questions: ["данные"],
+        fields: [
+          { id: "label", label: "Метка прокси", kind: "text", required: true },
+          {
+            id: "url",
+            label: "URL (http://user:pass@host:port)",
+            kind: "password",
+            required: true,
+          },
+          { id: "country", label: "Страна", kind: "text", required: false },
+        ],
+      });
+      onStep({
+        type: "done",
+        reply: "Нужны уточнения.",
+        open_url: null,
+        opened: null,
+        used: ["create_proxies"],
+        images: [],
+        asks: ["данные"],
+        fields: [
+          { id: "label", label: "Метка прокси", kind: "text", required: true },
+          {
+            id: "url",
+            label: "URL (http://user:pass@host:port)",
+            kind: "password",
+            required: true,
+          },
+          { id: "country", label: "Страна", kind: "text", required: false },
+        ],
+      });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "прокси");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    await user.type(await screen.findByLabelText("Метка прокси"), "px-1");
+    await user.type(screen.getByLabelText(/url \(http/i), "http://u:p@h:1");
+    await user.click(await screen.findByRole("button", { name: /^ответить$/i }));
+    await waitFor(() => expect(askMock).toHaveBeenCalledTimes(2));
+    const body = (askMock.mock.calls[1][0] as Array<{ content: string }>).at(-1)?.content ?? "";
+    expect(body).not.toContain("country:");
+  });
+
   it("spins a sparkle while the agent is working", async () => {
     let release!: () => void;
     askMock.mockImplementation(
