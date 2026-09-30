@@ -251,6 +251,48 @@ def test_accounts_list_includes_session_file_metadata(api_client, app_env):
     assert body["session_source"] in ("session_file", "none")
 
 
+def test_connection_test_reports_geo_mismatch(api_client, monkeypatch):
+    api_client.post(
+        "/api/proxies",
+        json={
+            "label": "px-geo-conn",
+            "url": "http://u:p@h:1",
+            "country": "DE",
+            "skip_health_check": True,
+        },
+    )
+    api_client.post(
+        "/api/accounts",
+        json={
+            "username": "geomis",
+            "password": "secret",
+            "proxy_label": "px-geo-conn",
+            "session_id": "g" * 40,
+        },
+    )
+    snapshot = HealthSnapshot(
+        ok=True,
+        ip="1.2.3.4",
+        country="NL",
+        instagram_reachable=True,
+        instagram_login_reachable=True,
+        checked_at=datetime.now(timezone.utc),
+    )
+    monkeypatch.setattr(
+        "app.accounts.connection_test.health_check_record",
+        lambda db, proxy: (True, snapshot, None),
+    )
+    monkeypatch.setattr(
+        "app.accounts.connection_test.ensure_fingerprint_and_proxy",
+        lambda username, country="US", **kwargs: object(),
+    )
+    res = api_client.post("/api/accounts/geomis/test-connection")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["proxy_health"]["geo_mismatch"] is True
+    assert body["proxy_health"]["geo_country"] == "NL"
+
+
 def test_proxy_check_returns_instagram_reachable(api_client, monkeypatch):
     api_client.post(
         "/api/proxies",
@@ -328,6 +370,12 @@ def test_diagnostic_runs_list_after_connection_test(api_client, monkeypatch):
     get_res = api_client.get(f"/api/diagnostic-runs/{run_id}")
     assert get_res.status_code == 200
     assert get_res.json()["logs"]
+
+
+def test_diagnostic_runs_invalid_kind_returns_400(api_client):
+    res = api_client.get("/api/diagnostic-runs", params={"kind": "not_a_kind"})
+    assert res.status_code == 400
+    assert "Invalid kind" in res.json()["detail"]
 
 
 def test_probe_session_auth_none_without_credentials(app_env, fingerprint, fake_client_class):

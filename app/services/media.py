@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
 
-from app.db.models import MediaAsset, AssetKind, AssetSource
+from app.db.models import AssetKind, AssetSource, MediaAsset
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".m4v"}
 #: A soundtrack is an asset like any other: same storage, same signed
@@ -58,6 +58,16 @@ def resolve(media_dir: Path, filename: str) -> Path:
     if candidate.parent != media_dir:
         raise MediaError("filename escapes the media directory")
     return candidate
+
+
+def asset_media_path(media_dir: Path, asset: MediaAsset) -> Path:
+    """Path to a library asset on disk, or `MediaError` if unavailable."""
+    if asset.file_removed_at is not None:
+        raise MediaError(f"asset_id={asset.id} удалён с диска")
+    path = resolve(media_dir, asset.filename)
+    if not path.is_file():
+        raise MediaError(f"файл asset {asset.id} отсутствует на диске")
+    return path
 
 
 def probe_video(path: Path) -> Probe:
@@ -149,3 +159,16 @@ def save_upload(
 
 def delete_file(media_dir: Path, filename: str) -> None:
     resolve(media_dir, filename).unlink(missing_ok=True)
+
+
+def resolve_library_media_path(path: Path, library_dir: Path) -> Path:
+    """Absolute path must be a regular file under the upload library root."""
+    resolved = path.resolve()
+    root = library_dir.resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        raise MediaError("file must be under upload library (video_source_dir)") from None
+    if not resolved.is_file():
+        raise MediaError("File not found")
+    return resolved

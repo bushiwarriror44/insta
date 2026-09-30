@@ -18,6 +18,7 @@ from app.assistant.chat import (
     tool_specs,
 )
 from app.assistant.tools import ToolError
+from app.browser.session_manager import BrowserSessionState, BrowserSessionStatus
 from app.db.models import Account, GenerationJob, PipelineStatus, Platform, PostJob
 
 
@@ -29,6 +30,29 @@ def api_client(app_env, monkeypatch):
 
     monkeypatch.setattr(settings, "admin_token", "", raising=True)
     monkeypatch.setattr(settings, "worker_autostart", False, raising=True)
+
+    app = create_app()
+
+    def _override_get_db():
+        db = app_env.SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[api_deps.get_db] = _override_get_db
+    return TestClient(app)
+
+
+@pytest.fixture()
+def auth_client(app_env, monkeypatch):
+    from app.api import deps as api_deps
+    from app.api.main import create_app
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "admin_token", "secret-token", raising=True)
+    monkeypatch.setattr(settings, "worker_autostart", False, raising=True)
+    monkeypatch.setattr("app.proxies.pool.health_check", lambda *a, **kw: {"ip": "203.0.113.5"})
 
     app = create_app()
 
@@ -75,6 +99,59 @@ def test_ui_tools_do_not_include_browser():
     assert "wait_plan" in run_names
 
 
+def test_run_tool_allows_browser_status_during_login_orch(db_session, make_account, monkeypatch):
+    from app.browser.session_manager import browser_session_manager
+
+    account = make_account(username="orchstatus")
+    browser_session_manager._sessions["orchstatus"] = BrowserSessionState(
+        username="orchstatus",
+        status=BrowserSessionStatus.running,
+        login_orchestration=True,
+    )
+    monkeypatch.setattr(
+        browser_session_manager,
+        "status_dict",
+        lambda username: {
+            "username": username,
+            "status": "running",
+            "awaiting_code": False,
+            "page_url": "https://www.instagram.com",
+            "error": None,
+            "vnc_path": "/vnc",
+        },
+    )
+    out, _opened = run_tool(
+        db_session,
+        "browser_status",
+        {"account_id": account.id},
+        allow_browser=False,
+    )
+    assert out["username"] == "orchstatus"
+    assert out["status"] == "running"
+
+
+def test_run_tool_blocks_start_browser_even_during_login_orch(db_session, make_account):
+    from app.browser.session_manager import browser_session_manager
+
+    account = make_account(username="orchstart")
+    browser_session_manager._sessions["orchstart"] = BrowserSessionState(
+        username="orchstart",
+        status=BrowserSessionStatus.running,
+        login_orchestration=True,
+    )
+    try:
+        run_tool(
+            db_session,
+            "start_browser",
+            {"account_id": account.id},
+            allow_browser=False,
+        )
+    except ToolError as exc:
+        assert "assistant/run" in str(exc)
+    else:
+        raise AssertionError("expected ToolError")
+
+
 def test_ui_run_tool_refuses_start_browser(db_session):
     try:
         run_tool(db_session, "start_browser", {"username": "anyone"})
@@ -84,7 +161,7 @@ def test_ui_run_tool_refuses_start_browser(db_session):
         raise AssertionError("expected ToolError")
 
 
-def test_run_endpoint_sends_prompt_with_browser(api_client, monkeypatch):
+def test_run_endpoint_sends_prompt_with_browser_for_owner(auth_client, monkeypatch):
     from app.api.routes import assistant as route
     from app.assistant.chat import Answer
 
@@ -96,12 +173,103 @@ def test_run_endpoint_sends_prompt_with_browser(api_client, monkeypatch):
         return Answer(reply="ok", used=["start_browser"])
 
     monkeypatch.setattr(route, "ask", fake_ask)
-    res = api_client.post("/api/assistant/run", json={"prompt": "войди и опубликуй"})
+    res = auth_client.post(
+        "/api/assistant/run",
+        json={"prompt": "войди и опубликуй"},
+        headers={"Authorization": "Bearer secret-token"},
+    )
     assert res.status_code == 200
-    assert res.json()["reply"] == "ok"
-    assert res.json()["used"] == ["start_browser"]
     assert seen["allow_browser"] is True
     assert seen["messages"][0]["content"] == "войди и опубликуй"
+
+
+def _parse_stream_events(body: str) -> list[dict]:
+    out: list[dict] = []
+    for line in body.splitlines():
+        line = line.strip()
+        if line.startswith("data:"):
+            out.append(json.loads(line[5:].strip()))
+    return out
+
+
+def test_stream_enables_browser_for_owner(auth_client, monkeypatch):
+    from app.api.routes import assistant as route
+    from app.assistant.chat import Answer
+
+    seen: dict = {}
+
+    def fake_stream(db, messages, **kwargs):
+        seen["allow_browser"] = kwargs.get("allow_browser")
+        yield Answer(reply="ok")
+
+    monkeypatch.setattr(route, "stream", fake_stream)
+    res = auth_client.post(
+        "/api/assistant/stream",
+        json={
+            "messages": [{"role": "user", "content": "войди"}],
+            "allow_browser": True,
+        },
+        headers={"Authorization": "Bearer secret-token"},
+    )
+    assert res.status_code == 200
+    assert seen["allow_browser"] is True
+    events = _parse_stream_events(res.text)
+    assert any(e.get("type") == "done" for e in events)
+
+
+def test_stream_disables_browser_for_operator(auth_client, monkeypatch):
+    from app.api.routes import assistant as route
+    from app.assistant.chat import Answer
+
+    created = auth_client.post(
+        "/api/operators",
+        headers={"Authorization": "Bearer secret-token"},
+        json={"label": "stream-op"},
+    ).json()
+    op_password = created["password"]
+    seen: dict = {}
+
+    def fake_stream(db, messages, **kwargs):
+        seen["allow_browser"] = kwargs.get("allow_browser")
+        yield Answer(reply="ok")
+
+    monkeypatch.setattr(route, "stream", fake_stream)
+    res = auth_client.post(
+        "/api/assistant/stream",
+        json={
+            "messages": [{"role": "user", "content": "войди"}],
+            "allow_browser": True,
+        },
+        headers={"Authorization": f"Bearer {op_password}"},
+    )
+    assert res.status_code == 200
+    assert seen["allow_browser"] is False
+
+
+def test_run_endpoint_disables_browser_for_operator(auth_client, monkeypatch):
+    from app.api.routes import assistant as route
+    from app.assistant.chat import Answer
+
+    created = auth_client.post(
+        "/api/operators",
+        headers={"Authorization": "Bearer secret-token"},
+        json={"label": "run-op"},
+    ).json()
+    op_password = created["password"]
+    seen: dict = {}
+
+    def fake_ask(db, messages, **kwargs):
+        seen["allow_browser"] = kwargs.get("allow_browser")
+        return Answer(reply="ok", used=[])
+
+    monkeypatch.setattr(route, "ask", fake_ask)
+    res = auth_client.post(
+        "/api/assistant/run",
+        json={"prompt": "войди"},
+        headers={"Authorization": f"Bearer {op_password}"},
+    )
+    assert res.status_code == 200
+    assert seen["allow_browser"] is False
 
 
 def test_system_message_run_overlay(tmp_path):

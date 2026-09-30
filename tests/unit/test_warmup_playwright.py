@@ -557,3 +557,44 @@ def test_first_login_mobile_surface_uses_mobile_context(monkeypatch, app_env):
     assert ctx_kwargs["is_mobile"] is True
     assert ctx_kwargs["has_touch"] is True
     assert "Mobile Safari" in ctx_kwargs["user_agent"]
+
+
+def test_try_resolve_email_challenge_submits_code(monkeypatch):
+    import asyncio
+
+    calls = {"submit": 0}
+
+    async def _fake_submit(page, code):
+        calls["submit"] += 1
+        assert code == "654321"
+        return True
+
+    async def _no_challenge(page):
+        return False
+
+    monkeypatch.setattr(
+        "app.accounts.email_handler.fetch_instagram_code",
+        lambda *a, **k: "654321",
+    )
+    monkeypatch.setattr(wp, "submit_verification_code", _fake_submit)
+    monkeypatch.setattr(wp, "_detect_challenge", _no_challenge)
+    async def _instant_wait(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(wp, "_human_wait", _instant_wait)
+    async def _noop_modals(_page):
+        return None
+
+    monkeypatch.setattr(wp, "_dismiss_post_login_modals", _noop_modals)
+
+    ok = asyncio.run(
+        wp._try_resolve_email_challenge(
+            object(),
+            email="a@onet.pl",
+            email_password="secret",
+            imap_host=None,
+            timeout_sec=5,
+        )
+    )
+    assert ok is True
+    assert calls["submit"] == 1

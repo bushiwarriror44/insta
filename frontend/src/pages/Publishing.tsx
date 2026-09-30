@@ -90,6 +90,7 @@ export function Publishing() {
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
   const [generatePrompt, setGeneratePrompt] = useState("");
+  const [generateRef, setGenerateRef] = useState("");
   const [joinIds, setJoinIds] = useState("");
 
   const selectedItem = useMemo(
@@ -393,15 +394,39 @@ export function Publishing() {
       />
       <Card className="p-4 space-y-3">
         <h2 className="font-medium">Сгенерировать / склеить</h2>
-        <div className="flex gap-2">
-          <input className="input" placeholder="Промпт для рендера" value={generatePrompt} onChange={(e) => setGeneratePrompt(e.target.value)} />
+        <div className="flex flex-wrap gap-2">
+          <input className="input min-w-[12rem] flex-1" placeholder="Промпт для рендера" value={generatePrompt} onChange={(e) => setGeneratePrompt(e.target.value)} />
+          <select
+            className="input w-48"
+            aria-label="референс"
+            value={generateRef}
+            onChange={(e) => setGenerateRef(e.target.value)}
+          >
+            <option value="">без референса</option>
+            {media
+              .filter((m) => m.media_type === "image" || m.media_type === "video")
+              .map((m) => (
+                <option key={m.filename} value={m.filename}>
+                  {m.filename}
+                </option>
+              ))}
+          </select>
           <button
             className="btn-primary shrink-0"
             disabled={!generatePrompt.trim()}
             onClick={async () => {
               try {
-                await api.factory.createGeneration({ prompt: generatePrompt.trim(), backend: "auto" });
+                const ref = generateRef.trim();
+                const item = media.find((m) => m.filename === ref);
+                const role = item?.media_type === "video" ? "motion_video" : "start_image";
+                await api.factory.createGeneration({
+                  prompt: generatePrompt.trim(),
+                  backend: ref && item?.media_type === "image" ? "auto" : "auto",
+                  reference_filename: ref || undefined,
+                  reference_role: ref ? role : undefined,
+                });
                 setGeneratePrompt("");
+                setGenerateRef("");
                 push("Рендер в очереди", "success", { label: "Открыть", href: "/renders" });
               } catch (err) {
                 push(formatApiError(err), "error");

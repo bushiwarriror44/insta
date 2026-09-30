@@ -92,6 +92,8 @@ class Settings(BaseSettings):
 
     fal_api_key: str = Field(default="")
     fal_model: str = Field(default="fal-ai/wan-25-preview/text-to-video")
+    fal_model_i2v: str = Field(default="fal-ai/wan-25-preview/image-to-video")
+    fal_model_v2v: str = Field(default="fal-ai/wan-25-preview/image-to-video")
     video_backend: str = Field(default="auto")
     video_backend_chain: str = Field(
         default="fal,huggingface,pollinations,local,hfspace"

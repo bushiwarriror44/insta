@@ -32,8 +32,19 @@ def test_init_db_creates_all_tables(app_env):
         "post_logs",
         "daily_stats",
         "events",
+        "diagnostic_runs",
         "panel_operators",
         "panel_settings",
+        "media_assets",
+        "plan_jobs",
+        "generation_jobs",
+        "agent_runs",
+        "clarifications",
+        "prompt_presets",
+        "channel_sources",
+        "compositions",
+        "composition_clips",
+        "worker_beats",
     }
     assert expected.issubset(tables), f"missing tables: {expected - tables}"
 
@@ -60,6 +71,28 @@ def test_init_db_adds_pending_email_totp_columns(app_env):
     assert "email" in cols
     assert "email_password" in cols
     assert "totp_seed" in cols
+
+
+def test_init_db_adds_pending_generation_multimodal_columns(app_env):
+    """Old DBs missing multimodal columns must pick them up via auto-init."""
+    from sqlalchemy import text
+
+    from app.db.session import init_db
+
+    engine = app_env.engine
+    with engine.begin() as conn:
+        for column in ("input_mode", "reference_json"):
+            conn.execute(text(f"ALTER TABLE generation_jobs DROP COLUMN {column}"))
+
+    cols_before = {c["name"] for c in inspect(engine).get_columns("generation_jobs")}
+    assert "input_mode" not in cols_before
+    assert "reference_json" not in cols_before
+
+    init_db()
+
+    cols = {c["name"] for c in inspect(engine).get_columns("generation_jobs")}
+    assert "input_mode" in cols
+    assert "reference_json" in cols
 
 
 def test_account_username_unique(db_session, make_proxy):

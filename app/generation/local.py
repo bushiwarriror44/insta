@@ -8,7 +8,13 @@ from pathlib import Path
 import httpx
 
 from app.config import Settings, get_settings
+import base64
+
 from app.generation.base import (
+    INPUT_MODE_I2V,
+    INPUT_MODE_V2V,
+    REF_MOTION_VIDEO,
+    REF_START_IMAGE,
     STAGE_DOWNLOADING,
     STAGE_RENDERING,
     STAGE_SUBMITTED,
@@ -29,6 +35,8 @@ from app.services import runtime
 class LocalVideoBackend(VideoBackend):
     name = "local"
     model_licence = "Apache-2.0 (self-hosted Wan / LTX)"
+    supports_i2v = True
+    supports_v2v = True
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -66,6 +74,20 @@ class LocalVideoBackend(VideoBackend):
         }
         if request.seed is not None:
             payload["seed"] = request.seed
+        if request.mode == INPUT_MODE_I2V:
+            ref = next((r for r in request.references if r.role == REF_START_IMAGE), None)
+            if ref is None and request.references:
+                ref = request.references[0]
+            if ref is None:
+                raise GenerationError("local I2V: нужен image reference")
+            payload["image_base64"] = base64.b64encode(ref.path.read_bytes()).decode("ascii")
+            payload["image_mime"] = ref.mime
+        elif request.mode == INPUT_MODE_V2V:
+            ref = next((r for r in request.references if r.role == REF_MOTION_VIDEO), None)
+            if ref is None:
+                raise GenerationError("local V2V: нужен motion_video")
+            payload["video_base64"] = base64.b64encode(ref.path.read_bytes()).decode("ascii")
+            payload["video_mime"] = ref.mime
         destination = out_dir / f"local-{uuid.uuid4().hex}.mp4"
         url = self.settings.wan_base_url.rstrip("/")
         try:

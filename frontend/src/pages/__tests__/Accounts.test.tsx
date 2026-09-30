@@ -1450,6 +1450,7 @@ describe("Accounts page", () => {
         totp_seed: "JBSWY3DPEHPK3PXP",
         email: "a@b.test",
         email_password: "mail-secret",
+        imap_host: null,
         login_identifier: null,
         account_line: null,
         backup_codes: null,

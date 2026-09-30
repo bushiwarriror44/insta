@@ -45,6 +45,11 @@ _IMAP_HOSTS: dict[str, str] = {
     "yandex.ru": "imap.yandex.ru",
     "yandex.com": "imap.yandex.com",
     "rambler.ru": "imap.rambler.ru",
+    "onet.pl": "imap.poczta.onet.pl",
+    "op.pl": "imap.poczta.onet.pl",
+    "wp.pl": "imap.wp.pl",
+    "o2.pl": "poczta.o2.pl",
+    "interia.pl": "poczta.interia.pl",
 }
 
 
@@ -56,6 +61,20 @@ _INSTAGRAM_FROM_PATTERNS = (
 )
 
 _CODE_REGEX = re.compile(r"\b(\d{6})\b")
+
+
+def imap_configuration_error(email: str, host: Optional[str] = None) -> Optional[str]:
+    """Human-readable reason IMAP auto-fetch cannot run, or None if it may work."""
+    mail = (email or "").strip()
+    if not mail:
+        return None
+    try:
+        from imap_tools import MailBox  # noqa: F401
+    except ImportError:
+        return "imap-tools не установлен — код из почты только вручную"
+    if not _resolve_host(mail, (host or "").strip() or None):
+        return "неизвестный IMAP-хост — укажите imap_host в карточке аккаунта"
+    return None
 
 
 def _resolve_host(email: str, override: Optional[str]) -> Optional[str]:

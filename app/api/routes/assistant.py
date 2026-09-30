@@ -28,6 +28,7 @@ class AssistantIn(BaseModel):
     page: Optional[str] = None
     account_id: Optional[int] = None
     job_id: Optional[int] = None
+    allow_browser: bool = False
 
 
 class AssistantRunIn(BaseModel):
@@ -106,7 +107,7 @@ def run_prompt(
             page=payload.page,
             account_id=payload.account_id,
             job_id=payload.job_id,
-            allow_browser=True,
+            allow_browser=principal.role == "owner",
             viewer_role=principal.role,
         )
     except AssistantError as exc:
@@ -124,6 +125,7 @@ def talk_streaming(
 ) -> StreamingResponse:
     token = _bearer(authorization)
     viewer_role = principal.role
+    allow_browser = bool(payload.allow_browser and principal.role == "owner")
 
     def events() -> Iterator[str]:
         try:
@@ -135,6 +137,7 @@ def talk_streaming(
                 page=payload.page,
                 account_id=payload.account_id,
                 job_id=payload.job_id,
+                allow_browser=allow_browser,
                 viewer_role=viewer_role,
             ):
                 if isinstance(step, Answer):

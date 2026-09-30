@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import re
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -71,7 +73,7 @@ fingerprint только для Instagram, `get_session`, проверить п�
 статусы движков — `list_render_backends`, \
 ролик на Wan — только `generate_wan` (бэкенд local, не цепочка auto). В ответе назови id задачи и страницу рендеров. \
 `wait_render` после Wan вызывай только если оператор просит подождать: ролик занимает ту же видеокарту, и чат-модель на это время выгружается. \
-автовход и mint mobile только для Instagram, \
+подготовка к постингу — `ensure_account_session`; автовход — `login_account`; код 2FA — `submit_login_code`; mint mobile только для Instagram, \
 паузу, ответить на вопрос агента, \
 добавить источник, читать файлы проекта, `diagnose`, `docker_logs`. \
 После create/update/export, если оператор не на нужной странице — `open_page`. \
@@ -109,8 +111,8 @@ RUN_PROMPT = """\
 Страницы панели не открывай — `open_page` не обязателен. \
 Можно стартовать живой Playwright (`start_browser`) для Instagram, YouTube и TikTok, \
 смотреть статус (`browser_status`), сохранить cookies (`save_browser_session`), \
-передать код 2FA (`submit_browser_code`). Instagram по логину/паролю — `first_login`. \
-YouTube/TikTok — вход в Playwright Studio (cookies в state.json), не пароль Google как у instagrapi. \
+передать код 2FA (`submit_login_code` или `submit_browser_code` при login-сессии). Без сессии — `ensure_account_session` / `login_account`; \
+не выдумывай код. При ошибке — `account_logs` по run_id. \
 После `create_render` дождись `wait_render`, затем `publish_now`. После `plan_account` — `wait_plan`, потом `wait_render` по generation_ids. Удаления, операторы, секретный путь и мастер-пароль — нельзя."""
 
 
@@ -299,7 +301,7 @@ TOOLS = [
     ),
     schema(
         "account_logs",
-        "Диагностические логи входа и проверки аккаунта (first_login, connection_test, mint, browser, publish). Пароль в ответе скрыт.",
+        "Диагностические логи входа и проверки аккаунта (first_login, studio_login, connection_test, mint, browser, publish). Пароль в ответе скрыт.",
         {
             "account_id": {"type": "integer"},
             "kind": {
@@ -307,6 +309,7 @@ TOOLS = [
                 "enum": [
                     "connection_test",
                     "first_login",
+                    "studio_login",
                     "mint_mobile_session",
                     "browser_session",
                     "publish_job",
@@ -747,10 +750,52 @@ TOOLS = [
         ["account_id"],
     ),
     schema(
+        "login_account",
+        "Автовход по платформе: Instagram (браузер, IMAP, API); YouTube/TikTok (Studio headless, при 2FA — VNC). run_id + steps_summary.",
+        {
+            "account_id": {"type": "integer"},
+            "username": {"type": "string"},
+            "login_surface": {"type": "string"},
+            "verification_code": {"type": "string"},
+        },
+        [],
+    ),
+    schema(
+        "ensure_account_session",
+        "Проверить сессию; если нет — login_account, затем test_connection. Для «войди и подготовь к постингу».",
+        {
+            "account_id": {"type": "integer"},
+            "username": {"type": "string"},
+            "probe_mobile": {"type": "boolean"},
+            "verification_code": {"type": "string"},
+        },
+        [],
+    ),
+    schema(
+        "submit_login_code",
+        "Код 2FA: в живой браузер (если открыт login_account) или в очередь IG API (файл challenge).",
+        {
+            "account_id": {"type": "integer"},
+            "username": {"type": "string"},
+            "code": {"type": "string"},
+        },
+        [],
+    ),
+    schema(
+        "login_instagram",
+        "Только Instagram — то же, что login_account для IG.",
+        {
+            "account_id": {"type": "integer"},
+            "username": {"type": "string"},
+            "login_surface": {"type": "string"},
+        },
+        [],
+    ),
+    schema(
         "first_login",
-        "Автовход Playwright только для Instagram. YouTube/TikTok — cookies или браузер в UI.",
-        {"account_id": {"type": "integer"}, "login_surface": {"type": "string"}},
-        ["account_id"],
+        "Устаревшее имя login_account.",
+        {"account_id": {"type": "integer"}, "login_surface": {"type": "string"}, "username": {"type": "string"}},
+        [],
     ),
     schema(
         "mint_mobile_session",
@@ -772,13 +817,17 @@ TOOLS = [
     ),
     schema(
         "create_render",
-        "Поставить рендер. Промпт обязателен. backend по умолчанию auto (цепочка). Для ролика на Wan вызывай generate_wan, не этот инструмент. Нет промпта — ask. Если ни один движок не жив — ошибка healthcheck как есть.",
+        "Поставить рендер. Промпт обязателен. Фото/клип: reference_filename (библиотека) или reference_asset_id; reference_role start_image|motion_video; input_mode image_to_video|video_to_video|image_slideshow. backend auto — fal/local для I2V. Нет промпта — ask.",
         {
             "prompt": {"type": "string"},
             "account_id": {"type": "integer"},
             "backend": {"type": "string"},
             "duration_s": {"type": "number"},
             "negative_prompt": {"type": "string"},
+            "input_mode": {"type": "string"},
+            "reference_asset_id": {"type": "integer"},
+            "reference_filename": {"type": "string"},
+            "reference_role": {"type": "string"},
         },
         [],
     ),
@@ -830,6 +879,25 @@ TOOLS = [
     ),
 ]
 
+
+LOGIN_PROGRESS_TOOLS = frozenset(
+    {
+        "login_account",
+        "login_instagram",
+        "first_login",
+        "mint_mobile_session",
+        "ensure_account_session",
+    }
+)
+
+LOGIN_ORCH_BROWSER_TOOLS = frozenset(
+    {
+        "browser_status",
+        "save_browser_session",
+        "submit_browser_code",
+        "submit_login_code",
+    }
+)
 
 BROWSER_TOOL_NAMES = frozenset(
     {
@@ -968,7 +1036,7 @@ def run_tool(
     if name == "overview":
         return tools.overview(db), None
     if name == "list_accounts":
-        return tools.list_accounts(db), None
+        return tools.list_accounts(db, as_owner=viewer_role != "operator"), None
     if name == "list_posts":
         return (
             tools.list_posts(
@@ -998,7 +1066,7 @@ def run_tool(
     if name == "apply_preset":
         return tools.apply_preset(db, _row_id(args, "account_id"), str(args.get("name") or "")), None
     if name == "list_proxies":
-        return tools.list_proxies(db), None
+        return tools.list_proxies(db, as_owner=viewer_role != "operator"), None
     if name == "list_errors":
         return tools.list_errors(db), None
     if name == "job_logs":
@@ -1085,7 +1153,9 @@ def run_tool(
             None,
         )
     if name == "account_details":
-        return tools.account_details(db, _row_id(args, "account_id")), None
+        return tools.account_details(
+            db, _row_id(args, "account_id"), as_owner=viewer_role != "operator"
+        ), None
     if name == "list_operators":
         return tools.list_operators(db, as_owner=viewer_role != "operator"), None
     if name == "list_project_files":
@@ -1093,6 +1163,7 @@ def run_tool(
     if name == "read_project_file":
         return tools.read_project_file(str(args.get("path") or "")), None
     if name == "create_account":
+        as_owner = viewer_role != "operator"
         return (
             tools.create_account(
                 db,
@@ -1109,11 +1180,14 @@ def run_tool(
                 account_line=_optional_text(args, "account_line"),
                 login_identifier=_optional_text(args, "login_identifier"),
                 backup_codes=_optional_text(args, "backup_codes"),
+                as_owner=as_owner,
             ),
             None,
         )
     if name == "create_accounts":
-        return tools.create_accounts(db, args.get("items")), None
+        return tools.create_accounts(
+            db, args.get("items"), as_owner=viewer_role != "operator"
+        ), None
     if name == "create_proxies":
         return tools.create_proxies(db, args.get("items")), None
     if name == "update_account":
@@ -1140,6 +1214,7 @@ def run_tool(
                 caption_profile=_optional_text(args, "caption_profile"),
                 hold_for_review=_optional_bool(args, "hold_for_review"),
                 login_surface=_optional_text(args, "login_surface"),
+                as_owner=viewer_role != "operator",
             ),
             None,
         )
@@ -1169,7 +1244,12 @@ def run_tool(
         )
     if name == "attach_proxy":
         return (
-            tools.attach_proxy(db, _row_id(args, "account_id"), str(args.get("proxy_label") or "")),
+            tools.attach_proxy(
+                db,
+                _row_id(args, "account_id"),
+                str(args.get("proxy_label") or ""),
+                as_owner=viewer_role != "operator",
+            ),
             None,
         )
     if name == "page_guide":
@@ -1224,6 +1304,7 @@ def run_tool(
                 _row_id(args, "account_id"),
                 data=args.get("data"),
                 path=_optional_text(args, "path"),
+                as_owner=viewer_role != "operator",
             ),
             None,
         )
@@ -1238,7 +1319,10 @@ def run_tool(
             None,
         )
     if name == "get_session":
-        return tools.get_session(db, _row_id(args, "account_id")), None
+        return (
+            tools.get_session(db, _row_id(args, "account_id"), as_owner=viewer_role != "operator"),
+            None,
+        )
     if name == "test_proxies":
         return tools.test_proxies(db, args.get("labels")), None
     if name == "test_connections":
@@ -1267,17 +1351,55 @@ def run_tool(
             ),
             None,
         )
-    if name == "first_login":
+    if name == "ensure_account_session":
+        account_id = _optional_id(args, "account_id")
+        if account_id is None and not _optional_text(args, "username"):
+            raise ToolError("нужен account_id или username")
         return (
-            tools.first_login(
+            tools.ensure_account_session(
                 db,
-                _row_id(args, "account_id"),
-                login_surface=_optional_text(args, "login_surface"),
+                account_id or 0,
+                username=_optional_text(args, "username"),
+                probe_mobile=bool(args.get("probe_mobile")),
+                verification_code=_optional_text(args, "verification_code"),
+                as_owner=viewer_role != "operator",
             ),
             None,
         )
+    if name == "submit_login_code":
+        return (
+            tools.submit_login_code(
+                db,
+                code=_optional_text(args, "code") or _optional_text(args, "verification_code"),
+                account_id=_optional_id(args, "account_id"),
+                username=_optional_text(args, "username"),
+            ),
+            None,
+        )
+    if name in ("login_account", "login_instagram", "first_login"):
+        account_id = _optional_id(args, "account_id")
+        if account_id is None and not _optional_text(args, "username"):
+            raise ToolError("нужен account_id или username")
+        login_surface = _optional_text(args, "login_surface")
+        uname = _optional_text(args, "username")
+        vcode = _optional_text(args, "verification_code")
+        aid = account_id or 0
+        if name == "login_instagram":
+            payload = tools.login_instagram(
+                db, aid, login_surface=login_surface, username=uname, verification_code=vcode
+            )
+        else:
+            payload = tools.login_account(
+                db, aid, login_surface=login_surface, username=uname, verification_code=vcode
+            )
+        return (payload, None)
     if name == "mint_mobile_session":
-        return tools.mint_mobile_session(db, _row_id(args, "account_id")), None
+        return (
+            tools.mint_mobile_session(
+                db, _row_id(args, "account_id"), as_owner=viewer_role != "operator"
+            ),
+            None,
+        )
     if name == "retry_render":
         return tools.retry_render(db, _row_id(args, "job_id")), None
     if name == "cancel_render":
@@ -1291,6 +1413,10 @@ def run_tool(
                 backend=_optional_text(args, "backend"),
                 duration_s=_optional_number(args, "duration_s"),
                 negative_prompt=str(args.get("negative_prompt") or ""),
+                input_mode=_optional_text(args, "input_mode"),
+                reference_asset_id=_optional_id(args, "reference_asset_id"),
+                reference_filename=_optional_text(args, "reference_filename"),
+                reference_role=_optional_text(args, "reference_role"),
             ),
             None,
         )
@@ -1324,7 +1450,13 @@ def run_tool(
     if name == "refresh_stats":
         return tools.refresh_stats(db, _row_id(args, "publication_id")), None
     if name in BROWSER_TOOL_NAMES and not allow_browser:
-        raise ToolError(f"{name} только в POST /api/assistant/run (не нижний чат)")
+        if name not in LOGIN_ORCH_BROWSER_TOOLS or not tools.login_orchestration_allows_browser_tool(
+            db,
+            name,
+            account_id=_optional_id(args, "account_id"),
+            username=_optional_text(args, "username"),
+        ):
+            raise ToolError(f"{name} только в POST /api/assistant/run (не нижний чат)")
     if name == "start_browser":
         return (
             tools.start_browser(
@@ -1350,6 +1482,7 @@ def run_tool(
                 db,
                 account_id=_optional_id(args, "account_id"),
                 username=_optional_text(args, "username"),
+                as_owner=viewer_role != "operator",
             ),
             None,
         )
@@ -1586,6 +1719,9 @@ def describe(name: str, args: dict[str, Any]) -> str:
         "test_connections": "проверяю подключения",
         "publish_now": "проверяю и ставлю публикацию",
         "first_login": "делаю автовход",
+        "login_account": "делаю автовход",
+        "ensure_account_session": "готовлю сессию аккаунта",
+        "submit_login_code": "отправляю код входа",
         "mint_mobile_session": "выпускаю mobile-сессию",
         "retry_render": "повторяю рендер",
         "cancel_render": "отменяю рендер",
@@ -1786,8 +1922,14 @@ def stream(
                     )
                     continue
                 asked.add(again)
-                try:
-                    result, went = run_tool(
+                login_status: list[tuple[str, str | None]] = []
+                if name in LOGIN_PROGRESS_TOOLS:
+                    tools.set_login_status_hook(
+                        lambda title, detail=None: login_status.append((title, detail))
+                    )
+
+                def _run_tool_call() -> tuple[Any, Any]:
+                    return run_tool(
                         db,
                         name,
                         args,
@@ -1796,6 +1938,24 @@ def stream(
                         allow_browser=allow_browser,
                         viewer_role=viewer_role,
                     )
+
+                result: Any
+                went: Any = None
+                try:
+                    if name in LOGIN_PROGRESS_TOOLS:
+                        emitted = 0
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                            future = pool.submit(_run_tool_call)
+                            while not future.done():
+                                while emitted < len(login_status):
+                                    title, detail = login_status[emitted]
+                                    emitted += 1
+                                    line = title if not detail else f"{title} · {detail}"
+                                    yield Step(kind="status", text=line)
+                                time.sleep(0.35)
+                            result, went = future.result()
+                    else:
+                        result, went = _run_tool_call()
                     if went is not None:
                         opened = went
                         if went.screenshot_url:
@@ -1805,6 +1965,12 @@ def stream(
                     result = {"ошибка": str(exc)}
                 else:
                     note_created(name, result, created)
+                finally:
+                    if name in LOGIN_PROGRESS_TOOLS:
+                        tools.clear_login_status_hook()
+                for title, detail in login_status:
+                    line = title if not detail else f"{title} · {detail}"
+                    yield Step(kind="status", text=line)
                 thread.append(
                     {
                         "role": "tool",

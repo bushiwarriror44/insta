@@ -10,6 +10,7 @@ from app.generation.hfspace import HfSpaceVideoBackend
 from app.generation.huggingface import HuggingFaceVideoBackend
 from app.generation.local import LocalVideoBackend
 from app.generation.pollinations import PollinationsVideoBackend
+from app.generation.slideshow import SlideshowVideoBackend
 
 DEFAULT_CHAIN = "fal,huggingface,pollinations,local,hfspace"
 
@@ -19,6 +20,7 @@ _BACKENDS: dict[str, type[VideoBackend]] = {
     PollinationsVideoBackend.name: PollinationsVideoBackend,
     LocalVideoBackend.name: LocalVideoBackend,
     HfSpaceVideoBackend.name: HfSpaceVideoBackend,
+    SlideshowVideoBackend.name: SlideshowVideoBackend,
     ChainVideoBackend.name: ChainVideoBackend,
 }
 
@@ -62,6 +64,9 @@ def describe_backends(settings: Settings | None = None) -> list[dict[str, object
                 "licence": engine.model_licence,
                 "experimental": bool(engine.experimental),
                 "detail": engine.health_detail(),
+                "supports_i2v": bool(getattr(engine, "supports_i2v", False)),
+                "supports_v2v": bool(getattr(engine, "supports_v2v", False)),
+                "supports_slideshow": bool(getattr(engine, "supports_slideshow", False)),
             }
         )
     return rows

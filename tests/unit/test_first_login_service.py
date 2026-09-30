@@ -372,6 +372,7 @@ def test_first_login_service_account_not_found_retries_email(
         *,
         totp_seed=None,
         login_identifier=None,
+        **kwargs,
     ):
         calls.append(login_identifier)
         if login_identifier == "geuser":
@@ -556,3 +557,39 @@ def test_first_login_without_proxy_fails_before_browser(db_session, make_account
     assert events[0].kind == "first_login"
     assert events[0].level == EventLevel.error
     assert events[0].message == "Прокси не назначен"
+
+
+def test_api_login_session_id_uses_email_handler(make_account, make_proxy, monkeypatch):
+    from app.accounts.first_login_service import _api_login_session_id
+
+    proxy = make_proxy(label="px-api")
+    account = make_account(username="apiuser", proxy=proxy)
+    account.email = "buyer@onet.pl"
+    account.email_password = "mail-secret"
+    account.imap_host = "imap.custom.test"
+    captured: dict = {}
+
+    def _fake_make_handler(username, **kwargs):
+        captured.update(kwargs)
+        return lambda _choice: "123456"
+
+    def _fake_export(*args, **kwargs):
+        captured["export"] = True
+        return "e" * 40
+
+    monkeypatch.setattr("app.accounts.challenge.make_handler", _fake_make_handler)
+    monkeypatch.setattr(
+        "app.accounts.first_login_service.login_and_export_sessionid",
+        _fake_export,
+    )
+
+    sid = _api_login_session_id(
+        account,
+        object(),
+        proxy,
+        login_identifier=account.username,
+    )
+    assert sid == "e" * 40
+    assert captured["email"] == "buyer@onet.pl"
+    assert captured["email_password"] == "mail-secret"
+    assert captured["imap_host"] == "imap.custom.test"

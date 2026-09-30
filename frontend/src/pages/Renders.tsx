@@ -38,18 +38,25 @@ export function Renders() {
   const [backend, setBackend] = useState("auto");
   const [accountId, setAccountId] = useState<number | "">("");
   const [joinIds, setJoinIds] = useState("");
+  const [libraryFiles, setLibraryFiles] = useState<Array<{ filename: string; media_type: string }>>([]);
+  const [referenceFilename, setReferenceFilename] = useState("");
+  const [inputMode, setInputMode] = useState("");
 
   const reload = useCallback(async () => {
-    const [g, c, accs, engines] = await Promise.all([
+    const [g, c, accs, engines, uploads] = await Promise.all([
       api.factory.generations(),
       api.factory.compositions(),
       api.accounts.list(),
       api.factory.backends(),
+      api.videos.list().catch(() => []),
     ]);
     setGens(g);
     setJoins(c);
     setAccounts(accs);
     setBackends(engines);
+    setLibraryFiles(
+      uploads.map((f) => ({ filename: f.filename, media_type: f.media_type ?? "video" }))
+    );
   }, []);
 
   const runAction = useCallback(
@@ -129,17 +136,50 @@ export function Renders() {
             </option>
           ))}
         </select>
+        <select
+          className="input"
+          aria-label="режим входа"
+          value={inputMode}
+          onChange={(e) => setInputMode(e.target.value)}
+        >
+          <option value="">авто (только промпт)</option>
+          <option value="image_to_video">фото → видео (I2V)</option>
+          <option value="video_to_video">видео → видео (V2V)</option>
+          <option value="image_slideshow">фото → Ken Burns (ffmpeg)</option>
+        </select>
+        <select
+          className="input"
+          aria-label="референс из библиотеки"
+          value={referenceFilename}
+          onChange={(e) => setReferenceFilename(e.target.value)}
+        >
+          <option value="">без референса</option>
+          {libraryFiles.map((f) => (
+            <option key={f.filename} value={f.filename}>
+              {f.media_type === "image" ? "🖼 " : "🎬 "}
+              {f.filename}
+            </option>
+          ))}
+        </select>
         <button
           className="btn-primary"
           disabled={!prompt.trim()}
           onClick={async () => {
             try {
+              const ref = referenceFilename.trim();
+              const role = libraryFiles.find((f) => f.filename === ref)?.media_type === "video"
+                ? "motion_video"
+                : "start_image";
               await api.factory.createGeneration({
                 prompt: prompt.trim(),
-                backend,
+                backend: inputMode === "image_slideshow" ? "slideshow" : backend,
                 account_id: typeof accountId === "number" ? accountId : undefined,
+                input_mode: inputMode || undefined,
+                reference_filename: ref || undefined,
+                reference_role: ref ? role : undefined,
               });
               setPrompt("");
+              setReferenceFilename("");
               push("Рендер в очереди", "success", { label: "Открыть", href: "/renders" });
               await reload();
             } catch (err) {

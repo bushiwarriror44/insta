@@ -970,6 +970,7 @@ function AddAccountModal({
     login_identifier: "",
     email: "",
     email_password: "",
+    imap_host: "",
     account_line: "",
     backup_codes: "",
     notes: "",
@@ -1012,6 +1013,7 @@ function AddAccountModal({
         login_identifier: form.login_identifier?.trim() ? form.login_identifier.trim() : null,
         email: form.email?.trim() ? form.email.trim() : null,
         email_password: form.email_password?.trim() ? form.email_password : null,
+        imap_host: form.imap_host?.trim() ? form.imap_host.trim() : null,
         account_line: form.account_line?.trim() ? form.account_line.trim() : null,
         backup_codes: form.backup_codes?.trim() ? form.backup_codes.trim() : null,
         notes: form.notes?.trim() ? form.notes.trim() : null,
@@ -1033,6 +1035,7 @@ function AddAccountModal({
         login_identifier: "",
         email: "",
         email_password: "",
+        imap_host: "",
         account_line: "",
         backup_codes: "",
         notes: "",
@@ -1312,6 +1315,17 @@ function AddAccountModal({
             <p className="text-xs text-slate-500 mt-1">
               Используется для получения кода подтверждения через IMAP.
             </p>
+          </div>
+          <div className="md:col-span-2">
+            <label className="label">IMAP хост (если домен не распознан)</label>
+            <input
+              className="input"
+              type="text"
+              value={form.imap_host ?? ""}
+              onChange={(e) => setForm({ ...form, imap_host: e.target.value })}
+              placeholder="imap.poczta.onet.pl"
+              autoComplete="off"
+            />
           </div>
           </>
           ) : null}

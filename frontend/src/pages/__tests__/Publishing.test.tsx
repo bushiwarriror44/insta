@@ -137,10 +137,10 @@ describe("Publishing page", () => {
     renderPublishing();
     await screen.findAllByText("clip.mp4");
     fireEvent.click(screen.getByRole("button", { name: /вкладка фото/i }));
-    expect(await screen.findByText("photo.jpg")).toBeInTheDocument();
+    expect((await screen.findAllByText("photo.jpg")).length).toBeGreaterThan(0);
     expect(screen.getByText("100 / 120")).toBeInTheDocument();
     expect(screen.getByText("CODE")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /видео/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /вкладка видео/i })).toBeInTheDocument();
   });
 
   it("uploads a media file after staging confirm", async () => {
@@ -266,7 +266,8 @@ describe("Publishing page", () => {
     await screen.findAllByText("clip.mp4");
 
     fireEvent.click(screen.getByRole("button", { name: /вкладка фото/i }));
-    fireEvent.click(await screen.findByText("photo.jpg"));
+    const photoCells = await screen.findAllByText("photo.jpg");
+    fireEvent.click(photoCells[photoCells.length - 1]);
     fireEvent.change(byLabel(/подпись/i), { target: { value: "hello" } });
     fireEvent.click(screen.getByRole("button", { name: /опубликовать сейчас/i }));
 
@@ -379,7 +380,7 @@ describe("Publishing page", () => {
       },
     ]);
     renderPublishing();
-    expect(await screen.findByText("fal-sunset.mp4")).toBeInTheDocument();
+    expect((await screen.findAllByText("fal-sunset.mp4")).length).toBeGreaterThan(0);
   });
 
   it("schedules a publication and links the toast to activity", async () => {

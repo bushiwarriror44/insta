@@ -104,6 +104,7 @@ class DiagnosticRunKind(str, enum.Enum):
     first_login = "first_login"
     mint_mobile_session = "mint_mobile_session"
     browser_session = "browser_session"
+    studio_login = "studio_login"
 
 
 class DiagnosticRunStatus(str, enum.Enum):
@@ -160,6 +161,7 @@ class Account(Base):
     login_identifier: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     email: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     email_password: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    imap_host: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     totp_seed: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     backup_codes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     session_id: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
@@ -415,6 +417,8 @@ class GenerationJob(Base):
     stage: Mapped[str] = mapped_column(String(48), default="")
     queue_position: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     asset_id: Mapped[Optional[int]] = mapped_column(ForeignKey("media_assets.id"), nullable=True)
+    input_mode: Mapped[str] = mapped_column(String(32), default="text_only")
+    reference_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, index=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

@@ -203,6 +203,11 @@ def create_account(payload: AccountIn, db: Session = Depends(get_db)) -> Account
     if payload.totp_seed is not None:
         account.totp_seed = payload.totp_seed.strip() or None
     if payload.session_id is not None:
+        if platform is not Platform.instagram:
+            raise HTTPException(
+                status_code=400,
+                detail="session_id только для Instagram — YouTube и TikTok входят через cookies / браузер",
+            )
         account.session_id = normalize_sessionid(payload.session_id)
         if account.session_id:
             clear_session_file(account.username)
@@ -221,16 +226,42 @@ def create_account(payload: AccountIn, db: Session = Depends(get_db)) -> Account
         account.login_surface = resolve_playwright_surface(payload.login_surface)
     if payload.notes is not None:
         account.notes = payload.notes.strip() or None
-    if payload.account_line:
+    if payload.vendor_line:
+        from app.accounts.vendor_line import parse_vendor_line
+
         try:
-            parsed = parse_account_line(payload.account_line)
+            parsed = parse_vendor_line(payload.vendor_line)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         account.username = parsed["username"]
         account.password = parsed["password"]
-        codes = parsed.get("backup_codes") or []
-        if codes:
-            account.backup_codes = serialize_backup_codes(codes)
+        account.email = parsed["email"]
+        account.email_password = parsed["email_password"]
+    elif payload.account_line:
+        from app.accounts.vendor_line import looks_like_vendor_line, parse_vendor_line
+
+        raw = payload.account_line.strip()
+        if looks_like_vendor_line(raw):
+            try:
+                parsed = parse_vendor_line(raw)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            account.username = parsed["username"]
+            account.password = parsed["password"]
+            account.email = parsed["email"]
+            account.email_password = parsed["email_password"]
+        else:
+            try:
+                parsed = parse_account_line(payload.account_line)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            account.username = parsed["username"]
+            account.password = parsed["password"]
+            codes = parsed.get("backup_codes") or []
+            if codes:
+                account.backup_codes = serialize_backup_codes(codes)
+    if payload.imap_host is not None:
+        account.imap_host = payload.imap_host.strip() or None
     if account.status == AccountStatus.blocked:
         account.status = AccountStatus.active
 
@@ -335,6 +366,12 @@ def update_account_session(
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
         raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+
+    if _account_platform_value(account) != "instagram":
+        raise HTTPException(
+            status_code=400,
+            detail="session_id только для Instagram — YouTube и TikTok входят через cookies / браузер",
+        )
 
     normalized = normalize_sessionid(payload.session_id)
     if not normalized:
@@ -574,11 +611,6 @@ def account_first_login(
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
         raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
-    if _account_platform_value(account) != "instagram":
-        raise HTTPException(
-            status_code=400,
-            detail="first_login только для Instagram — YouTube и TikTok входят через cookies / браузер",
-        )
     from app.behavior.warmup_playwright import playwright_browsers_available
 
     if not playwright_browsers_available():
@@ -586,6 +618,11 @@ def account_first_login(
             status_code=503,
             detail="Chromium не установлен — выполните install-playwright на сервере",
         )
+    platform = _account_platform_value(account)
+    if platform in ("youtube", "tiktok"):
+        from app.accounts.studio_login_service import run_studio_login
+
+        return run_studio_login(account, db)
     return run_account_first_login(account, db, surface=login_surface)
 
 

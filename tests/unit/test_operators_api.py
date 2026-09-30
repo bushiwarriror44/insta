@@ -74,6 +74,46 @@ def test_create_operator_returns_password_once(auth_client):
     assert dash.status_code == 200
 
 
+def test_operator_cannot_restore_database_backup(auth_client, monkeypatch, tmp_path):
+    import sqlite3
+
+    from app.config import settings
+
+    live = tmp_path / "panel.db"
+    monkeypatch.setattr(settings, "database_url", f"sqlite:///{live}", raising=True)
+    monkeypatch.setattr(settings, "backup_dir", tmp_path / "backups", raising=True)
+
+    with sqlite3.connect(live) as conn:
+        conn.execute("CREATE TABLE restore_guard (v INTEGER)")
+        conn.execute("INSERT INTO restore_guard VALUES (1)")
+        conn.commit()
+
+    created = auth_client.post("/api/maintenance/backups", headers=_owner_headers())
+    assert created.status_code == 200
+    name = created.json()["name"]
+
+    op = auth_client.post(
+        "/api/operators",
+        headers=_owner_headers(),
+        json={"label": "no-restore"},
+    ).json()
+    op_headers = {"Authorization": f"Bearer {op['password']}"}
+
+    denied = auth_client.post(
+        "/api/maintenance/backups/restore",
+        headers=op_headers,
+        json={"name": name},
+    )
+    assert denied.status_code == 403
+
+    allowed = auth_client.post(
+        "/api/maintenance/backups/restore",
+        headers=_owner_headers(),
+        json={"name": name},
+    )
+    assert allowed.status_code == 200
+
+
 def test_operator_cannot_manage_operators(auth_client):
     created = auth_client.post(
         "/api/operators",

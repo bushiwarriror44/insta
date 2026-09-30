@@ -480,6 +480,18 @@ def test_claim_due_job_skips_paused_accounts(worker_env, db_session, make_accoun
     assert worker_module._claim_due_job(db_session, datetime.now(timezone.utc)) is None
 
 
+def test_claim_due_job_skips_awaiting_review(worker_env, db_session, make_account):
+    account = make_account()
+    _make_job(
+        db_session,
+        account,
+        _make_video(worker_env, "held.mp4"),
+        when=datetime.now(timezone.utc) - timedelta(minutes=10),
+        status=PostJobStatus.awaiting_review,
+    )
+    assert worker_module._claim_due_job(db_session, datetime.now(timezone.utc)) is None
+
+
 def test_claim_due_job_picks_up_after_cooldown_expires(worker_env, db_session, make_account):
     account = make_account()
     account.cooldown_until = datetime.now(timezone.utc) - timedelta(hours=1)

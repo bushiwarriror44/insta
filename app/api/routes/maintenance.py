@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.api.deps import AuthDep, get_db
+from app.api.deps import AuthDep, DocsOwnerDep
 from app.config import Settings, get_settings
 from app.services import runtime
-from app.services.backup import BackupError, list_backups, restore, take
+from app.services.backup import BackupError, list_backups, resolve_backup, restore, take
 
 router = APIRouter(prefix="/api/maintenance", tags=["maintenance"], dependencies=[AuthDep])
 
@@ -95,10 +93,10 @@ def take_backup(settings: Settings = Depends(get_settings)) -> BackupOut:
     )
 
 
-@router.post("/backups/restore")
+@router.post("/backups/restore", dependencies=[DocsOwnerDep])
 def restore_backup(payload: RestoreIn, settings: Settings = Depends(get_settings)) -> dict[str, str]:
-    archive = Path(settings.backup_dir) / Path(payload.name).name
     try:
+        archive = resolve_backup(settings, payload.name)
         target = restore(archive, settings)
     except BackupError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

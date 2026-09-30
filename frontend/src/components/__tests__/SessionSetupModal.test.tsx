@@ -110,6 +110,31 @@ describe("SessionSetupModal", () => {
     );
   });
 
+  it("calls firstLogin for YouTube studio auto mode", async () => {
+    apiMock.accounts.firstLogin.mockResolvedValue({
+      run_id: 2,
+      ok: true,
+      challenge: false,
+      session_imported: true,
+      logs: [],
+    });
+    render(
+      <ToastProvider>
+        <SessionSetupModal
+          account={{ ...account, platform: "youtube" } as never}
+          open
+          onClose={vi.fn()}
+          onCompleted={vi.fn()}
+        />
+      </ToastProvider>
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Автоматически/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Создать сессию/i }));
+    await waitFor(() =>
+      expect(apiMock.accounts.firstLogin).toHaveBeenCalledWith("alice", { loginSurface: "mobile" })
+    );
+  });
+
   it("calls firstLogin after choosing auto mode", async () => {
     apiMock.accounts.firstLogin.mockResolvedValue({
       run_id: 1,

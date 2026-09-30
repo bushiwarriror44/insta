@@ -7,6 +7,12 @@ import { Assistant } from "../Assistant";
 import { ask } from "../../api/assistant";
 import { api } from "../../api/client";
 
+const useAuthMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../../context/AuthContext", () => ({
+  useAuth: useAuthMock,
+}));
+
 vi.mock("../../api/client", () => ({
   api: {
     accounts: { list: vi.fn().mockResolvedValue([{ username: "alice" }]) },
@@ -36,6 +42,7 @@ function renderDock(ui = <Assistant />, path = "/") {
 
 beforeEach(() => {
   window.localStorage.clear();
+  useAuthMock.mockReturnValue({ role: "owner", state: "open" });
   vi.mocked(api.accounts.list).mockResolvedValue([{ username: "alice" }]);
   askMock.mockReset();
   askMock.mockResolvedValue(undefined);
@@ -385,7 +392,7 @@ describe("Assistant", () => {
     await user.click(await screen.findByRole("button", { name: /^ещё$/i }));
     await user.click(screen.getByRole("menuitem", { name: /^мануал$/i }));
     expect(screen.getByTestId("assistant-manual")).toHaveTextContent(/sqlite/i);
-    expect(screen.getByText(/playwright из нижнего чата не стартует/i)).toBeInTheDocument();
+    expect(screen.getByText(/start_browser из нижнего чата/i)).toBeInTheDocument();
   });
 
   it("sends a preset prompt from the examples list", async () => {

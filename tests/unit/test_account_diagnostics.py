@@ -20,7 +20,7 @@ def test_log_account_credentials_includes_password_and_login():
         email="backup@example.com",
         totp_seed=None,
     )
-    proxy = SimpleNamespace(label="px1", country="US")
+    proxy = SimpleNamespace(label="px1", country="US", url="http://user:pass@host:8000")
     collector = _FakeCollector()
 
     log_account_credentials(collector, account, proxy)
@@ -32,7 +32,7 @@ def test_log_account_credentials_includes_password_and_login():
     assert any("login_identifier в БД: login@example.com" in m for m in messages)
     assert any("Email: backup@example.com" in m for m in messages)
     assert any("TOTP seed: нет" in m for m in messages)
-    assert any("Прокси: px1 (US)" in m for m in messages)
+    assert any("Прокси: px1 (US" in m and "host:8000" in m for m in messages)
 
 
 def test_log_account_credentials_falls_back_to_username():

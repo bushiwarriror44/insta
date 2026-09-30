@@ -118,14 +118,21 @@ class AccountIn(BaseModel):
     login_identifier: Optional[str] = Field(default=None, max_length=200)
     email: Optional[str] = Field(default=None, max_length=200)
     email_password: Optional[str] = Field(default=None, max_length=500)
+    imap_host: Optional[str] = Field(default=None, max_length=200)
     backup_codes: Optional[str] = Field(default=None, max_length=4000)
     login_surface: Optional[Literal["mobile", "desktop"]] = None
     account_line: Optional[str] = Field(default=None, max_length=8000)
+    vendor_line: Optional[str] = Field(default=None, max_length=8000)
     notes: Optional[str] = Field(default=None, max_length=8000)
 
     @model_validator(mode="after")
     def _validate_business_rules(self) -> "AccountIn":
-        if self.platform == "instagram" and not (self.password or "").strip() and not self.account_line:
+        if (
+            self.platform == "instagram"
+            and not (self.password or "").strip()
+            and not self.account_line
+            and not (self.vendor_line or "").strip()
+        ):
             raise ValueError("password is required for Instagram accounts")
         if self.active_hour_end <= self.active_hour_start:
             raise ValueError("active_hour_end must be greater than active_hour_start")

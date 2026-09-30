@@ -27,12 +27,14 @@ from app.db.models import (
     PipelineStatus,
 )
 from app.generation.base import (
+    INPUT_MODE_SLIDESHOW,
     GenerationError,
     GenerationRequest,
     Progress,
     VideoBackend,
 )
 from app.generation.registry import get_backend
+from app.services.generation_inputs import backend_supports_request, resolve_generation_inputs
 from app.scheduler.queue import claim_due, fail
 from app.services.budget import day_start, next_day, refuses
 from app.services.media import probe_video
@@ -59,16 +61,43 @@ def run_generation_job(
     """Render one queued prompt and attach the resulting asset."""
     settings = settings or get_settings()
     now = now or datetime.now(timezone.utc)
-    backend = backend or get_backend(job.backend, settings)
+    try:
+        request = resolve_generation_inputs(session, job, settings)
+    except GenerationError as exc:
+        job.stage = ""
+        job.queue_position = None
+        fail(
+            session,
+            job,
+            str(exc),
+            kind="generation_failed",
+            retryable=False,
+            max_attempts=MAX_ATTEMPTS,
+            account_id=job.account_id,
+            now=now,
+        )
+        return
 
-    request = GenerationRequest(
-        prompt=job.prompt,
-        negative_prompt=job.negative_prompt,
-        duration_s=job.duration_s,
-        width=job.width,
-        height=job.height,
-        seed=job.seed,
-    )
+    backend_name = (job.backend or "auto").strip().lower()
+    if request.mode == INPUT_MODE_SLIDESHOW:
+        backend_name = "slideshow"
+        backend = get_backend(backend_name, settings)
+    elif backend is None:
+        backend = get_backend(backend_name, settings)
+    if not backend_supports_request(backend, request):
+        job.stage = ""
+        job.queue_position = None
+        fail(
+            session,
+            job,
+            f"бэкенд {backend.name!r} не поддерживает режим {request.mode!r}",
+            kind="generation_failed",
+            retryable=False,
+            max_attempts=MAX_ATTEMPTS,
+            account_id=job.account_id,
+            now=now,
+        )
+        return
 
     # Checked before the attempt is counted and before the request goes
     # out, because a ceiling that could only be read afterwards would not

@@ -7,7 +7,7 @@ only calls the public Start/Stop API the admin card already uses.
 The idle clock is the later of "the group became running" and the last
 bottom-chat or local-render touch. A fresh Start therefore gets a full
 window before the first message. ``data/gpu_slot.lock`` and a queued or
-running ``local`` render block the stop.
+running ``local`` or ``auto`` render (when WAN and a local chain step apply) block the stop.
 """
 
 from __future__ import annotations
@@ -108,16 +108,26 @@ def _anchor(data: dict[str, str]) -> datetime | None:
     return max(marks)
 
 
-def local_render_pending(db: Session) -> bool:
-    row = db.scalar(
-        select(GenerationJob.id)
-        .where(
+def local_render_pending(db: Session, settings: Settings | None = None) -> bool:
+    """Queued/running work that may use the Salad WAN GPU (not fal-only VPS)."""
+    settings = settings or get_settings()
+    if not (settings.wan_base_url or "").strip():
+        return False
+    from app.generation.registry import parse_chain
+
+    chain_has_local = "local" in parse_chain(settings)
+    rows = db.scalars(
+        select(GenerationJob).where(
             GenerationJob.status.in_((PipelineStatus.queued, PipelineStatus.running)),
-            GenerationJob.backend == "local",
         )
-        .limit(1)
-    )
-    return row is not None
+    ).all()
+    for job in rows:
+        backend = (job.backend or "auto").strip().lower()
+        if backend == "local":
+            return True
+        if backend == "auto" and chain_has_local:
+            return True
+    return False
 
 
 def idle_due(
@@ -151,7 +161,7 @@ def tick(settings: Settings | None = None, *, now: datetime | None = None) -> bo
 
     db = SessionLocal()
     try:
-        busy = video_busy(settings) is not None or local_render_pending(db)
+        busy = video_busy(settings) is not None or local_render_pending(db, settings)
     finally:
         db.close()
     observe_status(settings, state.status, now=current)

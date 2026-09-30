@@ -34,8 +34,10 @@ vi.mock("../../api/client", () => ({
   formatApiError: (err: unknown) => String(err),
 }));
 
+const toastPush = vi.hoisted(() => vi.fn());
+
 vi.mock("../../context/ToastContext", () => ({
-  useToast: () => ({ push: vi.fn() }),
+  useToast: () => ({ push: toastPush }),
 }));
 
 const source = {
@@ -115,6 +117,7 @@ describe("Agent page", () => {
     Object.values(apiMock.accounts).forEach((fn) => fn.mockReset());
     Object.values(apiMock.factory).forEach((fn) => fn.mockReset());
     Object.values(apiMock.worker).forEach((fn) => fn.mockReset());
+    toastPush.mockReset();
     defaults();
   });
 
@@ -165,6 +168,10 @@ describe("Agent page", () => {
       })
     );
     expect(apiMock.factory.preview.mock.calls[0][1]).not.toEqual({ count: 3 });
+    expect(toastPush).toHaveBeenCalledWith(
+      expect.stringMatching(/превью: 2 ролик.*без planjob/i),
+      "success"
+    );
   });
 
   it("adds a source URL and checks it", async () => {

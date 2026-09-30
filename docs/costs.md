@@ -39,7 +39,9 @@
 
 ## Объём
 
-fal Wan 2.5 (`fal-ai/wan-25-preview/text-to-video`): `0.05` USD за секунду выхода — из кода [`app/generation/fal.py`](../app/generation/fal.py), не из кабинета. Клип 5 с = `0.25`, 10 с = `0.50`. Другая модель в таблице кода — свой коэффициент; неизвестная — `0.0`, не выдумывать.
+fal Wan 2.5 (`fal-ai/wan-25-preview/text-to-video` и `image-to-video`): `0.05` USD за секунду выхода — из кода [`app/generation/fal.py`](../app/generation/fal.py), не из кабинета. Клип 5 с = `0.25`, 10 с = `0.50`. Другая модель в таблице кода — свой коэффициент; неизвестная — `0.0`, не выдумывать.
+
+Режим `image_slideshow` (бэкенд `slideshow`, ffmpeg Ken Burns): `cost_usd=0`, без fal/GPU-модели.
 
 Salad $/час в репозиторий не зашит: смотри баланс в кабинете. Не пользуешься — Stop группы с карточки GPU Salad.
 

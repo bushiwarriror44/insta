@@ -12,6 +12,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 
 import { api, formatApiError } from "../api/client";
 import { ask, type AskField } from "../api/assistant";
+import { useAuth } from "../context/AuthContext";
 import { library, search, type PromptGroup } from "../api/prompts";
 import { CHAT_MANUAL, pageHint, toolHint } from "../lib/agentManual";
 import { emitAssistantMutate } from "../lib/assistantMutate";
@@ -25,6 +26,7 @@ import {
 import { SHOW_ASSISTANT } from "../lib/uiEvents";
 
 const HIDDEN_KEY = "assistant-dock:hidden";
+const ALLOW_BROWSER_KEY = "assistant-dock:allow-browser-run";
 const THREAD_KEY = "assistant-dock:thread";
 const CHATS_KEY = "assistant-dock:chats";
 
@@ -85,6 +87,10 @@ const LOOKED_AT: Record<string, string> = {
   get_session: "прочитал сессию",
   publish_now: "поставил публикацию",
   first_login: "сделал автовход",
+  login_instagram: "сделал автовход",
+  login_account: "сделал автовход",
+  ensure_account_session: "подготовил сессию",
+  submit_login_code: "отправил код входа",
   mint_mobile_session: "выпустил mobile-сессию",
   retry_render: "повторил рендер",
   cancel_render: "отменил рендер",
@@ -144,7 +150,7 @@ function onlyMediaPhrase(text: string): boolean {
   const trimmed = text.trim().toLowerCase();
   if (!trimmed.includes(MEDIA_PHRASE)) return false;
   const rest = trimmed.split(MEDIA_PHRASE).join("");
-  return rest.replace(/[\s.:;,\-]/g, "") === "";
+  return rest.replace(/[\s.:;,-]/g, "") === "";
 }
 
 interface Said {
@@ -318,6 +324,22 @@ function writeStore(chats: Chat[], activeId: string) {
   }
 }
 
+function readAllowBrowserRun(): boolean {
+  try {
+    return window.localStorage.getItem(ALLOW_BROWSER_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeAllowBrowserRun(on: boolean) {
+  try {
+    window.localStorage.setItem(ALLOW_BROWSER_KEY, on ? "1" : "0");
+  } catch {
+    /* private mode */
+  }
+}
+
 function readHidden(): boolean {
   try {
     return window.localStorage.getItem(HIDDEN_KEY) === "1";
@@ -373,8 +395,11 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   chatsRef.current = chats;
   activeRef.current = activeId;
   const [groups, setGroups] = useState<PromptGroup[]>(() => library([]));
+  const { role } = useAuth();
+  const owner = role === "owner";
   const [browsing, setBrowsing] = useState(false);
   const [readingManual, setReadingManual] = useState(false);
+  const [allowBrowserRun, setAllowBrowserRun] = useState(readAllowBrowserRun);
   const [plusOpen, setPlusOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
   const [needle, setNeedle] = useState("");
@@ -616,7 +641,8 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
           },
           controller.signal,
           page,
-          { account_id: accountId, job_id: jobId }
+          { account_id: accountId, job_id: jobId },
+          { allowBrowser: owner && allowBrowserRun }
         );
       } catch (err) {
         if (!controller.signal.aborted) {
@@ -654,7 +680,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         if (activeRef.current === id) box.current?.focus();
       }
     },
-    [page, accountId, jobId, navigate, replaceMessages, patchLive]
+    [page, accountId, jobId, navigate, replaceMessages, patchLive, owner, allowBrowserRun]
   );
 
   const chat = chats.find((item) => item.id === activeId) ?? chats[0];
@@ -1153,6 +1179,28 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                   >
                     Форма прокси
                   </button>
+                  {owner ? (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800"
+                      onClick={() => {
+                        setAllowBrowserRun((on) => {
+                          const next = !on;
+                          writeAllowBrowserRun(next);
+                          return next;
+                        });
+                        setPlusOpen(false);
+                      }}
+                    >
+                      {allowBrowserRun ? (
+                        <Check className="h-3.5 w-3.5 shrink-0 text-sky-300" aria-hidden />
+                      ) : (
+                        <span className="inline-block h-3.5 w-3.5 shrink-0" aria-hidden />
+                      )}
+                      Режим с браузером (run)
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     role="menuitem"

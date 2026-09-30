@@ -26,6 +26,7 @@ const account = { id: 1, username: "alice" };
 
 const apiMock = vi.hoisted(() => ({
   accounts: { list: vi.fn() },
+  videos: { list: vi.fn() },
   factory: {
     generations: vi.fn(),
     backends: vi.fn(),
@@ -51,6 +52,7 @@ vi.mock("../../api/client", async () => {
 
 function defaults() {
   apiMock.accounts.list.mockResolvedValue([]);
+  apiMock.videos.list.mockResolvedValue([]);
   apiMock.factory.generations.mockResolvedValue([queuedGen]);
   apiMock.factory.backends.mockResolvedValue([
     { name: "auto", healthy: true, licence: "depends", experimental: false, detail: "fal: ok" },
@@ -78,6 +80,7 @@ function renderRenders() {
 describe("Renders page", () => {
   beforeEach(() => {
     Object.values(apiMock.accounts).forEach((fn) => fn.mockReset());
+    Object.values(apiMock.videos).forEach((fn) => fn.mockReset());
     Object.values(apiMock.factory).forEach((fn) => fn.mockReset());
     defaults();
   });

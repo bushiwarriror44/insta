@@ -48,6 +48,22 @@ describe("ask()", () => {
     const url = String(fetchSpy.mock.calls[0][0]);
     expect(url).toContain("/api/assistant/stream");
     expect(url).not.toContain("/api/assistant/run");
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.allow_browser).toBe(false);
+  });
+
+  it("sends allow_browser when options.allowBrowser is true", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(sseStream([`data: ${JSON.stringify(doneEvent)}\n\n`]), {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      })
+    );
+    await ask([{ role: "user", content: "привет" }], () => undefined, undefined, undefined, undefined, {
+      allowBrowser: true,
+    });
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.allow_browser).toBe(true);
   });
 
   it("flushes a trailing data line without a newline", async () => {

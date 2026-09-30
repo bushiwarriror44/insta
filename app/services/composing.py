@@ -23,7 +23,7 @@ from app.db.models import (
     PipelineStatus,
 )
 from app.scheduler.queue import claim_due, fail
-from app.services.media import probe_video
+from app.services.media import MediaError, asset_media_path, probe_video
 from app.video.compose import ComposeError, ComposeRequest, compose
 
 MAX_ATTEMPTS = 3
@@ -46,17 +46,31 @@ def run_composition(
     settings = settings or get_settings()
     now = now or datetime.now(timezone.utc)
     media = Path(settings.media_dir)
-    job.attempts += 1
 
-    if not job.clips:
-        _fail(session, job, "a composition needs at least one clip", retryable=False)
+    if len(job.clips) < 2:
+        _fail(
+            session,
+            job,
+            "склейка: нужны минимум два клипа",
+            retryable=False,
+            now=now,
+        )
         return
+
+    try:
+        clip_paths = [asset_media_path(media, clip.asset) for clip in job.clips]
+        audio_path = asset_media_path(media, job.audio) if job.audio else None
+    except MediaError as exc:
+        _fail(session, job, str(exc), retryable=False, now=now)
+        return
+
+    job.attempts += 1
 
     output = media / f"{uuid.uuid4().hex}.mp4"
     request = ComposeRequest(
-        clips=[media / clip.asset.filename for clip in job.clips],
+        clips=clip_paths,
         output=output,
-        audio=(media / job.audio.filename) if job.audio else None,
+        audio=audio_path,
         width=job.width,
         height=job.height,
         fps=job.fps,

@@ -226,6 +226,9 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
     [];
 
   const showBack = connectionMode !== "choose" && !success;
+  const platform = account?.platform ?? "instagram";
+  const isIg = platform === "instagram";
+  const studioLabel = platform === "youtube" ? "YouTube Studio" : platform === "tiktok" ? "TikTok Studio" : "";
 
   return (
     <Modal
@@ -288,13 +291,17 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
     >
       <div className="space-y-4">
         <div className="rounded-xl border border-amber-500/40 bg-amber-950/30 p-3 text-sm text-amber-100">
-          Для автопостинга нужна Instagram-сессия. Прокси аккаунта (
-          <span className="font-mono text-xs">{account?.proxy_label ?? "—"}</span>) должен совпадать с
-          тем, через который вы входите в Instagram.
+          {isIg
+            ? "Для автопостинга нужна Instagram-сессия."
+            : `Для автопостинга нужны cookies ${studioLabel} в Playwright state.json.`}{" "}
+          Прокси аккаунта (
+          <span className="font-mono text-xs">{account?.proxy_label ?? "—"}</span>) должен совпадать с тем,
+          через который вы входите.
         </div>
 
         {connectionMode === "choose" ? (
           <div className="space-y-4">
+            {isIg ? (
             <div className="space-y-2">
               <p className="text-sm text-slate-300">Режим браузера:</p>
               <div className="grid gap-3 sm:grid-cols-2">
@@ -341,6 +348,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
                 </div>
               ) : null}
             </div>
+            ) : null}
             <p className="text-sm text-slate-300">Выберите способ подключения:</p>
             <div className="grid gap-3 sm:grid-cols-2">
               <button
@@ -353,7 +361,9 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
                   Автоматически
                 </div>
                 <p className="text-xs text-slate-400">
-                  Сервер выполнит вход через Playwright. Подходит, если 2FA настроена через TOTP seed.
+                  {isIg
+                    ? "Сервер выполнит вход через Playwright. TOTP seed — для 2FA Instagram."
+                    : "Headless Studio; при Google/TikTok 2FA откроется интерактивный браузер (VNC)."}
                 </p>
               </button>
               <button
@@ -371,6 +381,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
                 </p>
               </button>
             </div>
+            {isIg ? (
             <button
               type="button"
               className="text-xs text-slate-500 hover:text-slate-300 underline"
@@ -378,22 +389,36 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
             >
               Другой способ: вставить sessionid вручную
             </button>
+            ) : null}
           </div>
         ) : connectionMode === "auto" ? (
           <div className="space-y-3 text-sm">
             <ol className="list-decimal list-inside space-y-2 text-slate-300">
-              <li>Убедитесь, что прокси назначен и Instagram доступен.</li>
-              <li>Нажмите «Создать сессию» — сервер выполнит вход через Playwright Chromium.</li>
-              <li>Если на аккаунте включена 2FA, укажите TOTP seed в настройках аккаунта.</li>
-              <li>После успеха sessionid сохранится в БД (без mobile-проверки).</li>
+              {isIg ? (
+                <>
+                  <li>Убедитесь, что прокси назначен и Instagram доступен.</li>
+                  <li>Нажмите «Создать сессию» — сервер выполнит вход через Playwright Chromium.</li>
+                  <li>Если на аккаунте включена 2FA, укажите TOTP seed в настройках аккаунта.</li>
+                  <li>После успеха sessionid сохранится в БД (без mobile-проверки).</li>
+                </>
+              ) : (
+                <>
+                  <li>Укажите пароль Google/TikTok и email в карточке аккаунта (для Google — поле email).</li>
+                  <li>Нажмите «Создать сессию» — headless откроет {studioLabel}.</li>
+                  <li>При 2FA/CAPTCHA переключитесь на «Через браузер» или дождитесь VNC из автовхода.</li>
+                  <li>После успеха cookies сохранятся в state.json.</li>
+                </>
+              )}
             </ol>
+            {isIg ? (
             <p className="text-xs text-slate-400">
               Если входите по email или телефону, укажите это в настройках аккаунта в поле «Логин
               Instagram».
             </p>
+            ) : null}
             {firstLoginResult?.challenge ? (
               <div className="rounded-lg border border-amber-500/50 bg-amber-950/40 p-3 text-xs text-amber-100">
-                Instagram запросил подтверждение.{" "}
+                {isIg ? "Instagram" : studioLabel} запросил подтверждение.{" "}
                 <button
                   type="button"
                   className="underline hover:text-amber-50"

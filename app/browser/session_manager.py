@@ -349,6 +349,7 @@ class BrowserSessionState:
     page: Any = None
     poll_task: asyncio.Task | None = None
     auto_stop_task: asyncio.Task | None = None
+    login_orchestration: bool = False
 
     def log(self, level: LogLevel, step: str, message: str) -> None:
         line = {
@@ -378,6 +379,19 @@ class BrowserSessionManager:
 
     def get(self, username: str) -> BrowserSessionState | None:
         return self._sessions.get(username)
+
+    def set_login_orchestration(self, username: str, active: bool = True) -> None:
+        session = self._sessions.get(username)
+        if session is not None:
+            session.login_orchestration = active
+
+    def login_orchestration_active(self, username: str) -> bool:
+        session = self._sessions.get(username)
+        if session is None:
+            return False
+        if session.status in (BrowserSessionStatus.stopped, BrowserSessionStatus.error):
+            return False
+        return bool(session.login_orchestration)
 
     def apply_proxy_snapshot(self, username: str, snapshot: Any) -> None:
         session = self._sessions.get(username)
@@ -434,6 +448,7 @@ class BrowserSessionManager:
             "proxy_instagram_reachable": session.proxy_instagram_reachable,
             "proxy_instagram_login_reachable": session.proxy_instagram_login_reachable,
             "proxy_instagram_login_http_status": session.proxy_instagram_login_http_status,
+            "login_orchestration": session.login_orchestration,
             "logs": list(session.action_logs),
         }
 
@@ -1075,6 +1090,7 @@ class BrowserSessionManager:
         session.poll_task = None
         session.auto_stop_task = None
 
+        session.login_orchestration = False
         if remove:
             self._sessions.pop(session.username, None)
 

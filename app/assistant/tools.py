@@ -154,6 +154,7 @@ ACCOUNT_LOG_KINDS = frozenset(
         "connection_test",
         "publish_job",
         "first_login",
+        "studio_login",
         "mint_mobile_session",
         "browser_session",
     }
@@ -272,23 +273,104 @@ def overview(db: Session) -> dict[str, Any]:
     }
 
 
-def list_accounts(db: Session) -> list[dict[str, Any]]:
+_ACCOUNT_SECRET_KEYS = frozenset(
+    {"password", "email_password", "session_id", "totp_seed", "backup_codes"}
+)
+
+
+def mask_account_secrets(payload: dict[str, Any], *, as_owner: bool) -> dict[str, Any]:
+    """Hide credential fields from operators (chat tools); owners see full card."""
+    if as_owner:
+        return payload
+    out = dict(payload)
+    for key in _ACCOUNT_SECRET_KEYS:
+        if key in out and out[key]:
+            out[key] = None
+    url = out.get("proxy_url")
+    if url:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(str(url))
+        if parsed.scheme and parsed.hostname:
+            port = f":{parsed.port}" if parsed.port else ""
+            out["proxy_url"] = f"{parsed.scheme}://{parsed.hostname}{port}"
+    return out
+
+
+def mask_session_tool_payload(payload: dict[str, Any], *, as_owner: bool) -> dict[str, Any]:
+    """Hide full Instagram sessionid from operators in chat tool JSON."""
+    if as_owner:
+        return payload
+    from app.accounts.session_cookie import sessionid_diag_label
+
+    out = dict(payload)
+    sid = out.pop("session_id", None)
+    if sid:
+        out["session_id"] = None
+        out["session_id_label"] = sessionid_diag_label(str(sid))
+    return out
+
+
+def mask_proxy_url(url: str | None, *, as_owner: bool) -> str | None:
+    """Strip proxy userinfo for operators in chat tool JSON."""
+    if as_owner or not url:
+        return url
+    from app.accounts.account_diagnostics import proxy_endpoint
+
+    endpoint = proxy_endpoint(str(url))
+    if not endpoint:
+        return url
+    from urllib.parse import urlparse
+
+    parsed = urlparse(str(url).strip())
+    if parsed.scheme:
+        return f"{parsed.scheme}://{endpoint}"
+    return endpoint
+
+
+def list_accounts(db: Session, *, as_owner: bool = True) -> list[dict[str, Any]]:
     rows = db.execute(select(Account).order_by(Account.id)).scalars().all()
-    return [_account_public(c) for c in rows]
+    return [mask_account_secrets(_account_public(c), as_owner=as_owner) for c in rows]
 
 
-def account_details(db: Session, account_id: int) -> dict[str, Any]:
+def account_details(db: Session, account_id: int, *, as_owner: bool = True) -> dict[str, Any]:
+    from app.accounts.cookie_formats import STUDIO_PLATFORMS, studio_session_ready
+    from app.accounts.playwright_session import playwright_state_path
+
     account = _account(db, account_id)
     proxy = account.proxy
-    return {
+    platform = _account_platform(account)
+    studio_ready = (
+        studio_session_ready(account.username, platform) if platform in STUDIO_PLATFORMS else None
+    )
+    pw_path = playwright_state_path(account.username)
+    last_run = db.scalars(
+        select(DiagnosticRun)
+        .where(
+            DiagnosticRun.account_id == account.id,
+            DiagnosticRun.kind.in_(
+                (DiagnosticRunKind.first_login, DiagnosticRunKind.studio_login)
+            ),
+        )
+        .order_by(DiagnosticRun.created_at.desc())
+        .limit(1)
+    ).first()
+    payload = {
         **_account_public(account),
         "email": account.email,
         "email_password": account.email_password,
+        "imap_host": account.imap_host,
         "totp_seed": account.totp_seed,
         "backup_codes": account.backup_codes,
         "session_id": account.session_id,
         "login_identifier": account.login_identifier,
         "login_surface": account.login_surface,
+        "studio_session_ready": studio_ready,
+        "playwright_state_exists": pw_path.exists(),
+        "session_source": _account_session_source(account),
+        "last_login_run_id": last_run.id if last_run else None,
+        "last_login_kind": _status_value(last_run.kind) if last_run else None,
+        "last_login_status": _status_value(last_run.status) if last_run else None,
         "notes": account.notes,
         "timezone": account.timezone,
         "daily_post_cap": account.daily_post_cap,
@@ -310,6 +392,10 @@ def account_details(db: Session, account_id: int) -> dict[str, Any]:
             else None
         ),
     }
+    if not as_owner and isinstance(payload.get("proxy"), dict):
+        masked = mask_account_secrets({"proxy_url": payload["proxy"].get("url")}, as_owner=False)
+        payload["proxy"] = {**payload["proxy"], "url": masked.get("proxy_url")}
+    return mask_account_secrets(payload, as_owner=as_owner)
 
 
 def list_posts(
@@ -454,7 +540,9 @@ def list_compositions(db: Session, *, status: str | None = None) -> list[dict[st
     ]
 
 
-def list_proxies(db: Session) -> list[dict[str, Any]]:
+def list_proxies(db: Session, *, as_owner: bool = True) -> list[dict[str, Any]]:
+    from app.geo.country_codes import countries_mismatch
+
     rows = db.execute(select(Proxy).order_by(Proxy.id)).scalars().all()
     counts = dict(
         db.execute(
@@ -463,18 +551,23 @@ def list_proxies(db: Session) -> list[dict[str, Any]]:
             .group_by(Account.proxy_id)
         ).all()
     )
-    return [
-        {
-            "id": p.id,
-            "label": p.label,
-            "url": p.url,
-            "country": p.country,
-            "healthy": p.is_healthy,
-            "last_ip": p.last_known_ip,
-            "accounts": int(counts.get(p.id, 0)),
-        }
-        for p in rows
-    ]
+    out: list[dict[str, Any]] = []
+    for p in rows:
+        out.append(
+            {
+                "id": p.id,
+                "label": p.label,
+                "url": mask_proxy_url(p.url, as_owner=as_owner),
+                "country": p.country,
+                "healthy": p.is_healthy,
+                "last_ip": p.last_known_ip,
+                "last_geo_country": p.last_geo_country,
+                "geo_mismatch": countries_mismatch(p.country, p.last_geo_country),
+                "last_checked_at": _when(p.last_checked_at),
+                "accounts": int(counts.get(p.id, 0)),
+            }
+        )
+    return out
 
 
 def list_operators(db: Session, *, as_owner: bool = True) -> dict[str, Any]:
@@ -648,14 +741,24 @@ def job_logs(db: Session, job_id: int, *, tail: int = 40) -> tuple[dict[str, Any
     )
 
 
+_DIAG_SESSION_ID = re.compile(
+    r"(?i)(session[_\s-]?id\s*[:=]\s*)(\S+)",
+)
+_DIAG_EMAIL_PASS = re.compile(
+    r"(?i)(email[_\s-]?password\s*[:=]\s*)(\S+)",
+)
+
+
 def _redact_diag_message(message: str) -> str:
-    match = _PASSWORD_LOG_LINE.match((message or "").strip())
-    if not match:
-        return message
-    value = (match.group(2) or "").strip()
-    if value in ("", "—", "-", "***"):
-        return message
-    return f"{match.group(1)}***"
+    text = (message or "").strip()
+    match = _PASSWORD_LOG_LINE.match(text)
+    if match:
+        value = (match.group(2) or "").strip()
+        if value not in ("", "—", "-", "***"):
+            text = f"{match.group(1)}***"
+    text = _DIAG_SESSION_ID.sub(r"\1***", text)
+    text = _DIAG_EMAIL_PASS.sub(r"\1***", text)
+    return text
 
 
 def account_logs(
@@ -804,6 +907,7 @@ def _posting_snapshot(db: Session, *, queue_idle: bool, foreign_alive: bool) -> 
 
 _LOGIN_RUN_KINDS = (
     DiagnosticRunKind.first_login,
+    DiagnosticRunKind.studio_login,
     DiagnosticRunKind.connection_test,
     DiagnosticRunKind.mint_mobile_session,
     DiagnosticRunKind.browser_session,
@@ -880,26 +984,79 @@ def _login_snapshot(db: Session) -> dict[str, Any]:
         for run, account in db.execute(failed_stmt).all()
     ]
 
+    from app.behavior.warmup_playwright import playwright_browsers_available
+    from app.browser.vnc_stack import vnc_stack_available
+    from app.config import settings
+
+    missing_by_platform: dict[str, list[dict[str, Any]]] = {
+        "instagram": [],
+        "youtube": [],
+        "tiktok": [],
+    }
+    for row in missing_session:
+        plat = row.get("platform") or "instagram"
+        if plat in missing_by_platform:
+            missing_by_platform[plat].append(row)
+
+    last_login_runs: list[dict[str, Any]] = []
+    login_kinds = (DiagnosticRunKind.first_login, DiagnosticRunKind.studio_login)
+    for account in accounts:
+        run = db.scalars(
+            select(DiagnosticRun)
+            .where(
+                DiagnosticRun.account_id == account.id,
+                DiagnosticRun.kind.in_(login_kinds),
+            )
+            .order_by(DiagnosticRun.created_at.desc())
+            .limit(1)
+        ).first()
+        if run is None:
+            continue
+        last_login_runs.append(
+            {
+                "account_id": account.id,
+                "username": account.username,
+                "platform": _account_platform(account),
+                "kind": _status_value(run.kind),
+                "status": _status_value(run.status),
+                "run_id": run.id,
+                "summary": _redact_diag_message(run.summary or ""),
+                "at": _when(run.created_at),
+            }
+        )
+
     hints: list[str] = []
     if blocked_login:
-        hints.append("аккаунт challenge/cooldown/blocked — account_logs (first_login / connection_test)")
+        hints.append(
+            "аккаунт challenge/cooldown/blocked — account_logs (first_login / studio_login / connection_test)"
+        )
     if missing_ig:
-        hints.append("нет сессии Instagram — get_session / first_login")
+        hints.append("нет сессии Instagram — get_session / login_account")
     if missing_studio:
-        hints.append("нет state.json Studio — import_cookies или start_browser в run")
+        hints.append("нет state.json Studio — login_account или ensure_account_session")
     if failed_runs:
         hints.append("failed diagnostic runs — account_logs по id")
     if no_proxy:
         hints.append("нет proxy_id — attach_proxy / ask_operator")
+    if blocked_login or any(r.get("status") == "warn" for r in last_login_runs):
+        hints.append("challenge / 2FA — submit_login_code, затем login_account с verification_code")
 
     out: dict[str, Any] = {
         "hints": hints,
         "accounts_by_status": counted,
+        "environment": {
+            "playwright_available": playwright_browsers_available(),
+            "browser_vnc_enabled": bool(settings.browser_vnc_enabled),
+            "vnc_stack_available": vnc_stack_available(),
+        },
     }
     out.update(_clip_list(not_active, "not_active"))
     out.update(_clip_list(no_proxy, "no_proxy"))
     out.update(_clip_list(missing_session, "missing_session"))
     out.update(_clip_list(failed_runs, "failed_runs"))
+    out.update(_clip_list(last_login_runs, "last_login_runs"))
+    for plat, rows in missing_by_platform.items():
+        out.update(_clip_list(rows, f"missing_session_{plat}"))
     return out
 
 
@@ -1341,16 +1498,29 @@ def enqueue_publish(
     account = _account(db, account_id)
     path: Path | None = None
     if asset_id is not None:
+        from app.services.media import MediaError, asset_media_path
+
         asset = db.get(MediaAsset, asset_id)
         if asset is None:
             raise ToolError(f"клипа {asset_id} нет")
-        path = (settings.media_dir / asset.filename).resolve()
+        try:
+            path = asset_media_path(settings.media_dir, asset)
+        except MediaError as exc:
+            raise ToolError(str(exc)) from exc
         title = title or asset.label or asset.filename
         filename = asset.filename
     elif filename:
-        safe = Path(filename).name
-        path = (settings.video_source_dir / safe).resolve()
-        title = title or safe
+        from fastapi import HTTPException
+
+        from app.api.routes.videos import _resolve_source_file
+
+        try:
+            path = _resolve_source_file(filename)
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+            raise ToolError(detail) from exc
+        title = title or path.name
+        filename = path.name
     else:
         raise ToolError("нужен filename или asset_id")
     if path is None or not path.is_file():
@@ -1729,6 +1899,7 @@ def import_cookies(
     *,
     data: Any = None,
     path: str | None = None,
+    as_owner: bool = True,
 ) -> dict[str, Any]:
     from app.accounts.cookie_formats import CookieFormatError, import_cookies_data
 
@@ -1751,13 +1922,16 @@ def import_cookies(
     if result.session_id:
         account.session_id = result.session_id
     db.commit()
-    return {
-        "username": account.username,
-        "format": result.format,
-        "session_id": result.session_id,
-        "session_id_imported": bool(result.session_id),
-        "playwright_state_saved": result.playwright_state_saved,
-    }
+    return mask_session_tool_payload(
+        {
+            "username": account.username,
+            "format": result.format,
+            "session_id": result.session_id,
+            "session_id_imported": bool(result.session_id),
+            "playwright_state_saved": result.playwright_state_saved,
+        },
+        as_owner=as_owner,
+    )
 
 
 def import_fingerprint(
@@ -1792,7 +1966,7 @@ def import_fingerprint(
     }
 
 
-def get_session(db: Session, account_id: int) -> dict[str, Any]:
+def get_session(db: Session, account_id: int, *, as_owner: bool = True) -> dict[str, Any]:
     from app.accounts.cookie_formats import STUDIO_PLATFORMS, studio_session_ready
     from app.accounts.playwright_session import cookie_names_from_playwright_state
     from app.accounts.session_export import export_sessionid
@@ -1801,27 +1975,41 @@ def get_session(db: Session, account_id: int) -> dict[str, Any]:
     platform = _account_platform(account)
     if platform in STUDIO_PLATFORMS:
         if not studio_session_ready(account.username, platform):
-            raise ToolError(
-                "Playwright state не найден — импортируйте cookies или сохраните сессию в браузере"
-            )
+            return {
+                "username": account.username,
+                "platform": platform,
+                "ready": False,
+                "playwright_state": False,
+                "hint": "login_account или ensure_account_session",
+            }
         names = cookie_names_from_playwright_state(account.username)
         return {
             "username": account.username,
             "platform": platform,
+            "ready": True,
             "playwright_state": True,
             "cookies": len(names),
             "names": names,
         }
     exported = export_sessionid(account.username, db_session_id=account.session_id)
     if exported is None:
-        raise ToolError("Сессия не найдена — импортируйте cookies или войдите в аккаунт")
-    return {
-        "username": account.username,
-        "platform": platform,
-        "session_id": exported.session_id,
-        "source": exported.source,
-        "session_file_exists": exported.session_file_exists,
-    }
+        return {
+            "username": account.username,
+            "platform": platform,
+            "ready": False,
+            "hint": "login_account или import_cookies",
+        }
+    return mask_session_tool_payload(
+        {
+            "username": account.username,
+            "platform": platform,
+            "ready": True,
+            "session_id": exported.session_id,
+            "source": exported.source,
+            "session_file_exists": exported.session_file_exists,
+        },
+        as_owner=as_owner,
+    )
 
 
 def test_proxies(db: Session, labels: Any = None) -> dict[str, Any]:
@@ -1954,36 +2142,361 @@ def publish_now(
     }
 
 
-def first_login(db: Session, account_id: int, *, login_surface: str | None = None) -> dict[str, Any]:
-    from app.accounts.first_login_service import run_account_first_login
+_login_status_hook: Any = None
 
-    account = _account(db, account_id)
-    _require_instagram(account, "first_login")
-    out = run_account_first_login(account, db, surface=login_surface)
+
+def set_login_status_hook(hook: Any) -> None:
+    global _login_status_hook
+    _login_status_hook = hook
+
+
+def clear_login_status_hook() -> None:
+    global _login_status_hook
+    _login_status_hook = None
+
+
+def _emit_login_status(title: str, detail: str | None = None) -> None:
+    if _login_status_hook is not None:
+        _login_status_hook(title, detail)
+
+
+def _login_log_kind(account: Account) -> str:
+    plat = _account_platform(account)
+    return "studio_login" if plat in ("youtube", "tiktok") else "first_login"
+
+
+def _login_browser_fields(account: Account) -> dict[str, Any]:
+    from app.browser.session_manager import BrowserSessionStatus, browser_session_manager
+
+    status = browser_session_manager.status_dict(account.username)
+    st = status.get("status")
+    active = browser_session_manager.login_orchestration_active(account.username) or st in (
+        BrowserSessionStatus.running.value,
+        BrowserSessionStatus.awaiting_code.value,
+        BrowserSessionStatus.starting.value,
+    )
+    return {
+        "browser_session_active": active,
+        "awaiting_code": bool(status.get("awaiting_code")),
+        "vnc_path": status.get("vnc_path"),
+        "browser_status": st,
+    }
+
+
+def _login_vnc_in_progress_payload(account: Account) -> dict[str, Any] | None:
+    """Block a second login_account while Studio VNC orchestration is still active."""
+    from app.browser.session_manager import BrowserSessionStatus, browser_session_manager
+
+    orchestration = browser_session_manager.login_orchestration_active(account.username)
+    session = browser_session_manager.get(account.username)
+    busy = orchestration
+    if session is not None and session.status in (
+        BrowserSessionStatus.starting,
+        BrowserSessionStatus.running,
+        BrowserSessionStatus.awaiting_code,
+    ):
+        busy = True
+    if not busy:
+        return None
+    browser = _login_browser_fields(account)
     return {
         "username": account.username,
+        "platform": _account_platform(account),
+        "ok": False,
+        "error": (
+            "Вход уже выполняется (активная login-сессия браузера) — "
+            "submit_login_code, browser_status или save_browser_session"
+        ),
+        "challenge": bool(browser.get("awaiting_code")),
+        "login_in_progress": True,
+        **browser,
+        "next_actions": [
+            "submit_login_code",
+            "browser_status",
+            "save_browser_session",
+            "login_account",
+        ],
+    }
+
+
+def _account_session_source(account: Account) -> str:
+    from app.accounts.cookie_formats import STUDIO_PLATFORMS, studio_session_ready
+    from app.accounts.session_export import export_sessionid
+
+    platform = _account_platform(account)
+    if platform in STUDIO_PLATFORMS:
+        return "playwright" if studio_session_ready(account.username, platform) else "none"
+    exported = export_sessionid(account.username, db_session_id=account.session_id)
+    return exported.source if exported else "none"
+
+
+def _login_result_payload(account: Account, out) -> dict[str, Any]:
+    lines = [f"{line.level}: {line.message}" for line in (out.logs or [])[-8:]]
+    kind = _login_log_kind(account)
+    platform = _account_platform(account)
+    browser = _login_browser_fields(account)
+    browser_active = bool(browser.get("browser_session_active"))
+    tab_hint = bool(getattr(out, "browser_tab_hint", False)) and (
+        browser_active or platform in ("youtube", "tiktok")
+    )
+    payload: dict[str, Any] = {
+        "username": account.username,
+        "platform": platform,
         "ok": out.ok,
         "error": out.error,
         "run_id": out.run_id,
         "challenge": out.challenge,
+        "browser_tab_hint": tab_hint,
         "session_imported": out.session_imported,
+        "steps_summary": lines,
+        "account_logs_hint": f"account_logs account_id={account.id} kind={kind}",
+    }
+    payload.update(browser)
+    if out.challenge or tab_hint:
+        if platform == "instagram" and not browser_active:
+            payload["next_actions"] = ["submit_login_code", "login_account"]
+            payload["challenge_path"] = "challenge_file_or_imap"
+        else:
+            payload["next_actions"] = [
+                "submit_login_code",
+                "browser_status",
+                "login_account",
+                "save_browser_session",
+            ]
+        if not payload.get("ok"):
+            payload["ask"] = True
+            payload["why"] = (out.error or "Нужен код подтверждения для входа").strip()
+            payload["questions"] = []
+            payload["fields"] = [
+                {
+                    "id": "verification_code",
+                    "label": "Код 2FA / из почты",
+                    "kind": "password",
+                    "required": True,
+                }
+            ]
+    return payload
+
+
+def submit_login_code(
+    db: Session,
+    *,
+    code: str | None = None,
+    account_id: int | None = None,
+    username: str | None = None,
+) -> dict[str, Any]:
+    from app.accounts.challenge import write_code
+    from app.browser.session_manager import browser_session_manager
+
+    text = (code or "").strip().replace(" ", "")
+    if not text:
+        return {
+            "ask": True,
+            "why": "Нужен код подтверждения (6 цифр)",
+            "questions": [],
+            "fields": [
+                {
+                    "id": "verification_code",
+                    "label": "Код подтверждения",
+                    "kind": "password",
+                    "required": True,
+                }
+            ],
+        }
+    account = _account_lookup(db, account_id=account_id, username=username)
+    status = browser_session_manager.status_dict(account.username)
+    if status.get("awaiting_code") or browser_session_manager.login_orchestration_active(
+        account.username
+    ):
+        return submit_browser_code(
+            db,
+            code=text,
+            account_id=account.id,
+            username=account.username,
+        )
+    write_code(account.username, text)
+    return {
+        "username": account.username,
+        "ok": True,
+        "method": "challenge_file",
+        "hint": "Код записан — вызовите login_account снова",
+        "next_actions": ["login_account"],
     }
 
 
-def mint_mobile_session(db: Session, account_id: int) -> dict[str, Any]:
+def login_account(
+    db: Session,
+    account_id: int,
+    *,
+    login_surface: str | None = None,
+    username: str | None = None,
+    verification_code: str | None = None,
+) -> dict[str, Any]:
+    from app.accounts.login_orchestrator import run_autonomous_account_login
+
+    account = _account_lookup(db, account_id=account_id, username=username)
+    busy = _login_vnc_in_progress_payload(account)
+    if busy is not None and not (verification_code or "").strip():
+        return busy
+    if (verification_code or "").strip():
+        submit_login_code(
+            db,
+            code=verification_code,
+            account_id=account.id,
+            username=account.username,
+        )
+    out = run_autonomous_account_login(
+        account,
+        db,
+        surface=login_surface,
+        on_status=_emit_login_status,
+    )
+    return _login_result_payload(account, out)
+
+
+def ensure_account_session(
+    db: Session,
+    account_id: int,
+    *,
+    username: str | None = None,
+    probe_mobile: bool = False,
+    verification_code: str | None = None,
+    as_owner: bool = True,
+) -> dict[str, Any]:
+    account = _account_lookup(db, account_id=account_id, username=username)
+    if account.proxy_id is None:
+        return {
+            "username": account.username,
+            "platform": _account_platform(account),
+            "ok": False,
+            "error": "Прокси не назначен",
+            "next_actions": ["attach_proxy", "ask_operator"],
+        }
+    busy = _login_vnc_in_progress_payload(account)
+    if busy is not None and not (verification_code or "").strip():
+        busy["ensure_account_session"] = True
+        return busy
+    session_info = get_session(db, account.id, as_owner=as_owner)
+    if session_info.get("ready"):
+        conn = test_connection(db, account.id, probe_mobile=probe_mobile)
+        overall = bool(conn.get("ok", conn.get("overall_ok")))
+        return {
+            "username": account.username,
+            "platform": _account_platform(account),
+            "ok": overall,
+            "skipped_login": True,
+            "session": session_info,
+            "connection_test": conn,
+            "next_actions": [] if overall else ["login_account", "account_logs"],
+        }
+    login_out = login_account(
+        db,
+        account.id,
+        username=username,
+        verification_code=verification_code,
+    )
+    if not login_out.get("ok"):
+        login_out["ensure_account_session"] = True
+        return login_out
+    conn = test_connection(db, account.id, probe_mobile=probe_mobile)
+    overall = bool(conn.get("ok", conn.get("overall_ok")))
+    return {
+        "username": account.username,
+        "platform": _account_platform(account),
+        "ok": overall,
+        "skipped_login": False,
+        "login_run_id": login_out.get("run_id"),
+        "connection_test": conn,
+        "account_logs_hint": login_out.get("account_logs_hint"),
+        "next_actions": [] if overall else ["account_logs"],
+    }
+
+
+def login_orchestration_allows_browser_tool(
+    db: Session,
+    tool_name: str,
+    *,
+    account_id: int | None = None,
+    username: str | None = None,
+) -> bool:
+    from app.browser.session_manager import browser_session_manager
+
+    allowed = frozenset(
+        {"browser_status", "save_browser_session", "submit_browser_code", "submit_login_code"}
+    )
+    if tool_name not in allowed:
+        return False
+    if account_id is None and not (username or "").strip():
+        return False
+    try:
+        account = _account_lookup(db, account_id=account_id or 0, username=username)
+    except ToolError:
+        return False
+    if browser_session_manager.login_orchestration_active(account.username):
+        return True
+    session = browser_session_manager.get(account.username)
+    return session is not None and bool(session.awaiting_code)
+
+
+def login_instagram(
+    db: Session,
+    account_id: int,
+    *,
+    login_surface: str | None = None,
+    username: str | None = None,
+    verification_code: str | None = None,
+) -> dict[str, Any]:
+    from app.accounts.login_orchestrator import run_autonomous_instagram_login
+
+    account = _account_lookup(db, account_id=account_id, username=username)
+    _require_instagram(account, "login_instagram")
+    busy = _login_vnc_in_progress_payload(account)
+    if busy is not None and not (verification_code or "").strip():
+        return busy
+    if (verification_code or "").strip():
+        submit_login_code(
+            db,
+            code=verification_code,
+            account_id=account.id,
+            username=account.username,
+        )
+    out = run_autonomous_instagram_login(
+        account,
+        db,
+        surface=login_surface,
+        on_status=_emit_login_status,
+    )
+    return _login_result_payload(account, out)
+
+
+def first_login(
+    db: Session,
+    account_id: int,
+    *,
+    login_surface: str | None = None,
+    username: str | None = None,
+) -> dict[str, Any]:
+    return login_account(db, account_id, login_surface=login_surface, username=username)
+
+
+def mint_mobile_session(db: Session, account_id: int, *, as_owner: bool = True) -> dict[str, Any]:
     from app.accounts.mint_mobile_session import mint_mobile_session as mint
 
     account = _account(db, account_id)
     _require_instagram(account, "mint_mobile_session")
+    _emit_login_status("Mobile API", f"@{account.username}")
     out = mint(account, db)
-    return {
-        "username": account.username,
-        "ok": out.ok,
-        "error": out.error,
-        "run_id": out.run_id,
-        "challenge": out.challenge,
-        "session_id": out.session_id,
-    }
+    return mask_session_tool_payload(
+        {
+            "username": account.username,
+            "ok": out.ok,
+            "error": out.error,
+            "run_id": out.run_id,
+            "challenge": out.challenge,
+            "session_id": out.session_id,
+        },
+        as_owner=as_owner,
+    )
 
 
 def cancel_render(db: Session, job_id: int, *, confirm: Any = False) -> dict[str, Any]:
@@ -2037,9 +2550,15 @@ def create_render(
     height: int | None = None,
     seed: int | None = None,
     negative_prompt: str = "",
+    input_mode: str | None = None,
+    reference_asset_id: int | None = None,
+    reference_filename: str | None = None,
+    reference_role: str | None = None,
 ) -> dict[str, Any]:
     from app.config import get_settings
+    from app.generation.base import INPUT_MODE_SLIDESHOW
     from app.generation.registry import available_backends, get_backend
+    from app.services.generation_inputs import apply_job_reference_fields
 
     text = (prompt or "").strip()
     if not text:
@@ -2055,9 +2574,6 @@ def create_render(
         name = one_word(backend)
     if name not in available_backends():
         raise ToolError(f"неизвестный бэкенд {name!r}")
-    engine = get_backend(name)
-    if not engine.healthcheck():
-        raise ToolError(engine.health_detail())
     if account_id is not None:
         _account(db, account_id)
     seconds = 5.0 if duration_s is None else float(duration_s)
@@ -2074,6 +2590,18 @@ def create_render(
         status=PipelineStatus.queued,
         scheduled_at=datetime.now(timezone.utc),
     )
+    apply_job_reference_fields(
+        job,
+        input_mode=input_mode,
+        reference_asset_id=reference_asset_id,
+        reference_filename=reference_filename,
+        reference_role=(reference_role or "start_image").strip(),
+    )
+    if job.input_mode == INPUT_MODE_SLIDESHOW:
+        job.backend = "slideshow"
+    engine = get_backend(job.backend)
+    if not engine.healthcheck():
+        raise ToolError(engine.health_detail())
     db.add(job)
     db.commit()
     db.refresh(job)
@@ -2082,6 +2610,7 @@ def create_render(
         "status": _status_value(job.status),
         "prompt": job.prompt,
         "backend": job.backend,
+        "input_mode": job.input_mode,
     }
 
 
@@ -2133,6 +2662,23 @@ def compose(
     missing = [clip_id for clip_id in ids if clip_id not in assets]
     if missing:
         raise ToolError(f"неизвестные клипы: {missing}")
+    from app.services.media import MediaError, asset_media_path
+    from app.config import get_settings
+
+    media_settings = get_settings()
+    for clip_id in ids:
+        try:
+            asset_media_path(media_settings.media_dir, assets[clip_id])
+        except MediaError as exc:
+            raise ToolError(str(exc)) from exc
+    if audio_asset_id is not None:
+        audio = db.get(MediaAsset, audio_asset_id)
+        if audio is None:
+            raise ToolError(f"саундтрек {audio_asset_id} нет")
+        try:
+            asset_media_path(media_settings.media_dir, audio)
+        except MediaError as exc:
+            raise ToolError(str(exc)) from exc
     if account_id is not None:
         _account(db, account_id)
     composition = Composition(
@@ -2290,6 +2836,7 @@ def save_browser_session(
     *,
     account_id: int | None = None,
     username: str | None = None,
+    as_owner: bool = True,
 ) -> dict[str, Any]:
     from app.browser.session_manager import browser_session_manager
 
@@ -2300,13 +2847,16 @@ def save_browser_session(
         raise ToolError(str(exc)) from exc
     db.refresh(account)
     status = browser_session_manager.status_dict(account.username)
-    return {
-        "username": account.username,
-        "platform": _account_platform(account),
-        **result,
-        "session_id": account.session_id,
-        "status": status.get("status"),
-    }
+    return mask_session_tool_payload(
+        {
+            "username": account.username,
+            "platform": _account_platform(account),
+            **result,
+            "session_id": account.session_id,
+            "status": status.get("status"),
+        },
+        as_owner=as_owner,
+    )
 
 
 def submit_browser_code(
@@ -2530,8 +3080,9 @@ def create_proxy(
     country: str | None = None,
     timezone: str | None = None,
     notes: str | None = None,
+    skip_health_check: bool = False,
 ) -> dict[str, Any]:
-    from app.proxies.pool import upsert_proxy
+    from app.proxies.pool import health_check_record, upsert_proxy
 
     if not (label or "").strip() or not (url or "").strip():
         raise ToolError("нужны label и url прокси")
@@ -2543,11 +3094,16 @@ def create_proxy(
         timezone_name=timezone,
         notes=notes,
     )
+    if not skip_health_check:
+        health_check_record(db, proxy)
+        db.refresh(proxy)
     return {
         "id": proxy.id,
         "label": proxy.label,
         "url": proxy.url,
         "country": proxy.country,
+        "healthy": proxy.is_healthy,
+        "last_geo_country": proxy.last_geo_country,
     }
 
 
@@ -2579,7 +3135,13 @@ def update_proxy(
     }
 
 
-def attach_proxy(db: Session, account_id: int, proxy_label: str) -> dict[str, Any]:
+def attach_proxy(
+    db: Session,
+    account_id: int,
+    proxy_label: str,
+    *,
+    as_owner: bool = True,
+) -> dict[str, Any]:
     from app.geo.timezone_normalize import timezone_from_proxy
 
     account = _account(db, account_id)
@@ -2591,7 +3153,7 @@ def attach_proxy(db: Session, account_id: int, proxy_label: str) -> dict[str, An
         "id": account.id,
         "username": account.username,
         "proxy_label": proxy.label,
-        "proxy_url": proxy.url,
+        "proxy_url": mask_proxy_url(proxy.url, as_owner=as_owner),
     }
 
 
@@ -2609,8 +3171,11 @@ def create_account(
     brief: str | None = None,
     notes: str | None = None,
     account_line: str | None = None,
+    vendor_line: str | None = None,
     login_identifier: str | None = None,
     backup_codes: str | None = None,
+    imap_host: str | None = None,
+    as_owner: bool = True,
 ) -> dict[str, Any]:
     return _upsert_account(
         db,
@@ -2625,9 +3190,12 @@ def create_account(
         brief=brief,
         notes=notes,
         account_line=account_line,
+        vendor_line=vendor_line,
         login_identifier=login_identifier,
         backup_codes=backup_codes,
+        imap_host=imap_host,
         creating=True,
+        as_owner=as_owner,
     )
 
 
@@ -2656,7 +3224,7 @@ def _item_text(item: dict[str, Any], key: str) -> str | None:
     return text or None
 
 
-def create_accounts(db: Session, items: Any) -> dict[str, Any]:
+def create_accounts(db: Session, items: Any, *, as_owner: bool = True) -> dict[str, Any]:
     rows = _bulk_items(items)
     created: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
@@ -2691,8 +3259,11 @@ def create_accounts(db: Session, items: Any) -> dict[str, Any]:
                     brief=_item_text(item, "brief"),
                     notes=_item_text(item, "notes"),
                     account_line=_item_text(item, "account_line"),
+                    vendor_line=_item_text(item, "vendor_line"),
                     login_identifier=_item_text(item, "login_identifier"),
                     backup_codes=_item_text(item, "backup_codes"),
+                    imap_host=_item_text(item, "imap_host"),
+                    as_owner=as_owner,
                 )
             )
         except ToolError as exc:
@@ -2772,6 +3343,7 @@ def update_account(
     caption_profile: str | None = None,
     hold_for_review: bool | None = None,
     login_surface: str | None = None,
+    as_owner: bool = True,
 ) -> dict[str, Any]:
     account = _account(db, account_id)
     if username is not None and username.strip():
@@ -2836,7 +3408,7 @@ def update_account(
         account.login_surface = resolve_playwright_surface(login_surface)
     db.commit()
     db.refresh(account)
-    return account_details(db, account.id)
+    return account_details(db, account.id, as_owner=as_owner)
 
 
 def _upsert_account(
@@ -2853,11 +3425,15 @@ def _upsert_account(
     brief: str | None = None,
     notes: str | None = None,
     account_line: str | None = None,
+    vendor_line: str | None = None,
     login_identifier: str | None = None,
     backup_codes: str | None = None,
+    imap_host: str | None = None,
     creating: bool = False,
+    as_owner: bool = True,
 ) -> dict[str, Any]:
     from app.accounts.backup_codes import parse_account_line, serialize_backup_codes
+    from app.accounts.vendor_line import looks_like_vendor_line, parse_vendor_line
     from app.accounts.session_cookie import normalize_sessionid
     from app.accounts.session_manager import clear_session_file, ensure_fingerprint_and_proxy
     from app.accounts.playwright_session import clear_playwright_state
@@ -2867,16 +3443,37 @@ def _upsert_account(
     proxy = _proxy_by_label(db, proxy_label)
     kind = _platform(platform)
     name = (username or "").strip()
-    if account_line:
+    raw_vendor = (vendor_line or "").strip()
+    raw_line = (account_line or "").strip()
+    if raw_vendor:
         try:
-            parsed = parse_account_line(account_line)
+            parsed = parse_vendor_line(raw_vendor)
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
         name = parsed["username"]
         password = parsed["password"]
-        codes = parsed.get("backup_codes") or []
-        if codes:
-            backup_codes = serialize_backup_codes(codes)
+        email = parsed["email"]
+        email_password = parsed["email_password"]
+    elif raw_line:
+        if looks_like_vendor_line(raw_line):
+            try:
+                parsed = parse_vendor_line(raw_line)
+            except ValueError as exc:
+                raise ToolError(str(exc)) from exc
+            name = parsed["username"]
+            password = parsed["password"]
+            email = parsed["email"]
+            email_password = parsed["email_password"]
+        else:
+            try:
+                parsed = parse_account_line(raw_line)
+            except ValueError as exc:
+                raise ToolError(str(exc)) from exc
+            name = parsed["username"]
+            password = parsed["password"]
+            codes = parsed.get("backup_codes") or []
+            if codes:
+                backup_codes = serialize_backup_codes(codes)
     if not name:
         raise ToolError("нужен username")
     existing = db.scalar(select(Account).where(Account.username == name, Account.platform == kind))
@@ -2905,6 +3502,8 @@ def _upsert_account(
         account.email = email or None
     if email_password is not None:
         account.email_password = email_password or None
+    if imap_host is not None:
+        account.imap_host = imap_host.strip() or None
     if brief is not None:
         account.brief = brief
     if notes is not None:
@@ -2926,7 +3525,7 @@ def _upsert_account(
             )
         except OSError:
             pass
-    return account_details(db, account.id)
+    return account_details(db, account.id, as_owner=as_owner)
 
 
 def _account_public(account: Account) -> dict[str, Any]:

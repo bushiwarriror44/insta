@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import io
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -1159,6 +1159,82 @@ def test_enqueue_job_without_hold_is_queued(api_client, app_env, make_account):
     )
     assert res.status_code == 201, res.text
     assert res.json()["status"] == "queued"
+
+
+def test_enqueue_job_rejects_path_traversal(api_client, app_env, make_account):
+    make_account(username="traversal")
+    (app_env.video_source_dir / "safe.mp4").write_bytes(b"\x00" * 8)
+    res = api_client.post(
+        "/api/jobs",
+        json={
+            "username": "traversal",
+            "media_filename": "../safe.mp4",
+            "post_type": "reel",
+        },
+    )
+    assert res.status_code == 404
+
+
+def test_jobs_approve_held_to_queued(api_client, app_env, make_account):
+    make_account(username="approveme", hold_for_review=True)
+    filename = "ap.mp4"
+    (app_env.video_source_dir / filename).write_bytes(b"\x00" * 64)
+    created = api_client.post(
+        "/api/jobs",
+        json={"username": "approveme", "media_filename": filename, "post_type": "reel"},
+    )
+    assert created.status_code == 201
+    job_id = created.json()["id"]
+    assert created.json()["status"] == "awaiting_review"
+    res = api_client.post(f"/api/jobs/{job_id}/approve")
+    assert res.status_code == 200
+    assert res.json()["status"] == "queued"
+
+
+def test_jobs_approve_queued_returns_409(api_client, app_env, make_account):
+    make_account(username="alreadyq")
+    filename = "q.mp4"
+    (app_env.video_source_dir / filename).write_bytes(b"\x00" * 64)
+    created = api_client.post(
+        "/api/jobs",
+        json={"username": "alreadyq", "media_filename": filename, "post_type": "reel"},
+    )
+    assert created.json()["status"] == "queued"
+    res = api_client.post(f"/api/jobs/{created.json()['id']}/approve")
+    assert res.status_code == 409
+
+
+def test_jobs_retry_failed_to_queued(api_client, db_session, make_account):
+    from app.db.models import PostJob, PostJobStatus
+
+    account = make_account(username="retryjob")
+    job = PostJob(
+        account_id=account.id,
+        source_video_path="/tmp/x.mp4",
+        status=PostJobStatus.failed,
+        attempts=2,
+        scheduled_for=datetime.now(timezone.utc),
+    )
+    db_session.add(job)
+    db_session.commit()
+    res = api_client.post(f"/api/jobs/{job.id}/retry")
+    assert res.status_code == 200
+    assert res.json()["status"] == "queued"
+
+
+def test_jobs_reschedule_patch(api_client, app_env, make_account):
+    make_account(username="moveme")
+    filename = "move.mp4"
+    (app_env.video_source_dir / filename).write_bytes(b"\x00" * 64)
+    created = api_client.post(
+        "/api/jobs",
+        json={"username": "moveme", "media_filename": filename, "post_type": "reel"},
+    )
+    job_id = created.json()["id"]
+    new_when = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+    res = api_client.patch(f"/api/jobs/{job_id}", json={"when": new_when})
+    assert res.status_code == 200
+    assert res.json()["scheduled_for"] is not None
 
 
 def test_dashboard_quarantine_counts_cooldown_not_paused(api_client, make_account):

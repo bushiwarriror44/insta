@@ -14,6 +14,7 @@ from app.generation.base import (
     ProgressCallback,
     VideoBackend,
 )
+from app.services.generation_inputs import backend_supports_request
 
 
 class ChainVideoBackend(VideoBackend):
@@ -60,7 +61,7 @@ class ChainVideoBackend(VideoBackend):
 
     def estimate_cost(self, request: GenerationRequest) -> float:
         for child in self.children():
-            if child.healthcheck():
+            if child.healthcheck() and backend_supports_request(child, request):
                 return child.estimate_cost(request)
         return 0.0
 
@@ -74,6 +75,9 @@ class ChainVideoBackend(VideoBackend):
         for child in self.children():
             if not child.healthcheck():
                 errors.append(child.health_detail() or f"{child.name}: выключен")
+                continue
+            if not backend_supports_request(child, request):
+                errors.append(f"{child.name}: не поддерживает режим {request.mode}")
                 continue
             try:
                 result = child.generate(request, out_dir, on_progress=on_progress)

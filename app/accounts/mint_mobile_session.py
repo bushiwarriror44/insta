@@ -95,6 +95,7 @@ def mint_mobile_session(account: Account, db: Session) -> MintMobileSessionOut:
         account.username,
         email=(account.email or "").strip() or None,
         email_password=(account.email_password or "").strip() or None,
+        imap_host=(account.imap_host or "").strip() or None,
     )
 
     def _attempt(login_identifier: str) -> str:

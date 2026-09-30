@@ -40,8 +40,8 @@ URL вида `http://user:pass@host:port`. Метка уникальна. Health
 
 Вход:
 
-- Пароль (+ TOTP / backup-коды / IMAP email) в карточке.
-- `first_login` — stealth Playwright, заполняет логин/пароль, только Instagram. CLI: `python -m app.cli first-login USER`.
+- Пароль (+ TOTP / backup-коды / IMAP email + опционально `imap_host`) в карточке. Таб-строка продавца (`username`, пароль, email, пароль почты) — поле `vendor_line` при создании или вставка в `account_line` без `:`.
+- `login_instagram` / `first_login` — stealth Playwright, при challenge опрос IMAP, затем при необходимости mobile API с `make_handler`. CLI: `python -m app.cli first-login USER`.
 - `mint_mobile_session` — выпустить mobile-сессию instagrapi.
 - Живой браузер в UI (кнопка «Браузер») — VNC, вход руками, «Сохранить» пишет cookies. Из нижнего чата не стартует. Из `POST /api/assistant/run`: `start_browser`.
 
@@ -53,7 +53,7 @@ URL вида `http://user:pass@host:port`. Метка уникальна. Health
 
 Сессия: cookies Google/YouTube или `tiktok.com` в `data/playwright/<username>/state.json`. Проверка подключения: прокси жив **и** на диске есть cookies площадки. Это **не** доказательство, что Google/TikTok ещё считают сессию живой. Антибот и срок кук панель не лечит.
 
-Пароль аккаунта в карточке **не** логинит Google как instagrapi логинит Instagram. Сценарий: импорт cookies **или** живой браузер → войти руками (или `start_browser` + `save_browser_session`) → `publish_now`.
+Автовход: **`login_account`** / кнопка «Создать сессию» (`POST …/first-login`) — headless Studio, при challenge VNC. Пароль + email (Google) в карточке. Импорт cookies или `start_browser` + `save_browser_session` — по-прежнему валидны.
 
 `media_id` после YouTube — URL страницы Studio, не id ролика Data API. TikTok: подпись до ~2200 символов.
 

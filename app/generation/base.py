@@ -14,14 +14,31 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+INPUT_MODE_TEXT = "text_only"
+INPUT_MODE_I2V = "image_to_video"
+INPUT_MODE_V2V = "video_to_video"
+INPUT_MODE_SLIDESHOW = "image_slideshow"
+
+REF_START_IMAGE = "start_image"
+REF_END_IMAGE = "end_image"
+REF_MOTION_VIDEO = "motion_video"
+REF_STYLE_IMAGE = "style_image"
 
 
 class GenerationError(RuntimeError):
     def __init__(self, message: str, *, retryable: bool = False) -> None:
         super().__init__(message)
         self.retryable = retryable
+
+
+@dataclass(slots=True)
+class GenerationReference:
+    role: str
+    path: Path
+    mime: str
 
 
 @dataclass(slots=True)
@@ -32,6 +49,8 @@ class GenerationRequest:
     height: int = 1280
     seed: int | None = None
     negative_prompt: str = ""
+    mode: str = INPUT_MODE_TEXT
+    references: list[GenerationReference] = field(default_factory=list)
 
 
 #: Stages a render passes through, in order. Named for what the operator
@@ -76,6 +95,10 @@ class VideoBackend(abc.ABC):
     #: it is surfaced rather than buried in a provider's docs.
     model_licence: str
     experimental: bool = False
+    supports_text: bool = True
+    supports_i2v: bool = False
+    supports_v2v: bool = False
+    supports_slideshow: bool = False
 
     def health_detail(self) -> str:
         """Why `healthcheck` is false, or empty when the backend is ready."""

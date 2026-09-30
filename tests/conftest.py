@@ -98,13 +98,9 @@ def app_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         future=True,
     )
 
-    from sqlalchemy import event
+    from app.db.session import attach_sqlite_pragmas
 
-    @event.listens_for(engine, "connect")
-    def _enable_sqlite_fk(dbapi_connection, _record):  # noqa: WPS430
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
+    attach_sqlite_pragmas(engine)
 
     SessionLocal = sessionmaker(
         bind=engine,

@@ -72,10 +72,14 @@ class GenerationCreate(BaseModel):
     height: int = Field(default=1280, ge=256, le=1920)
     seed: Optional[int] = None
     account_id: Optional[int] = None
+    input_mode: Optional[str] = None
+    reference_asset_id: Optional[int] = None
+    reference_filename: Optional[str] = None
+    reference_role: str = "start_image"
 
 
 class CompositionIn(BaseModel):
-    clip_ids: list[int] = Field(min_length=1)
+    clip_ids: list[int] = Field(min_length=2)
     audio_asset_id: Optional[int] = None
     account_id: Optional[int] = None
     post_title: str = ""
@@ -348,11 +352,11 @@ def list_generation_backends() -> list[dict[str, Any]]:
 def create_generation(payload: GenerationCreate, db: Session = Depends(get_db)) -> dict[str, Any]:
     if payload.backend not in available_backends():
         raise HTTPException(status_code=400, detail=f"неизвестный бэкенд {payload.backend!r}")
-    engine = get_backend(payload.backend, settings)
-    if not engine.healthcheck():
-        raise HTTPException(status_code=409, detail=engine.health_detail())
     if payload.account_id is not None:
         _account(db, payload.account_id)
+    from app.generation.base import INPUT_MODE_SLIDESHOW
+    from app.services.generation_inputs import apply_job_reference_fields
+
     job = GenerationJob(
         prompt=payload.prompt,
         negative_prompt=payload.negative_prompt,
@@ -365,10 +369,28 @@ def create_generation(payload: GenerationCreate, db: Session = Depends(get_db)) 
         status=PipelineStatus.queued,
         scheduled_at=datetime.now(timezone.utc),
     )
+    apply_job_reference_fields(
+        job,
+        input_mode=payload.input_mode,
+        reference_asset_id=payload.reference_asset_id,
+        reference_filename=payload.reference_filename,
+        reference_role=payload.reference_role,
+    )
+    if job.input_mode == INPUT_MODE_SLIDESHOW:
+        job.backend = "slideshow"
+    engine = get_backend(job.backend, settings)
+    if not engine.healthcheck():
+        raise HTTPException(status_code=409, detail=engine.health_detail())
     db.add(job)
     db.commit()
     db.refresh(job)
-    return {"id": job.id, "status": job.status.value, "prompt": job.prompt}
+    return {
+        "id": job.id,
+        "status": job.status.value,
+        "prompt": job.prompt,
+        "backend": job.backend,
+        "input_mode": job.input_mode,
+    }
 
 
 @router.post("/api/generations/{job_id}/cancel")
@@ -403,6 +425,8 @@ def retry_generation(job_id: int, db: Session = Depends(get_db)) -> dict[str, An
 
 @router.post("/api/compositions")
 def create_composition(payload: CompositionIn, db: Session = Depends(get_db)) -> dict[str, Any]:
+    from app.services.media import MediaError, asset_media_path
+
     assets = {
         asset.id: asset
         for asset in db.scalars(select(MediaAsset).where(MediaAsset.id.in_(payload.clip_ids))).all()
@@ -410,6 +434,19 @@ def create_composition(payload: CompositionIn, db: Session = Depends(get_db)) ->
     missing = [clip_id for clip_id in payload.clip_ids if clip_id not in assets]
     if missing:
         raise HTTPException(status_code=404, detail=f"неизвестные клипы: {missing}")
+    for clip_id in payload.clip_ids:
+        try:
+            asset_media_path(settings.media_dir, assets[clip_id])
+        except MediaError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if payload.audio_asset_id is not None:
+        audio = db.get(MediaAsset, payload.audio_asset_id)
+        if audio is None:
+            raise HTTPException(status_code=404, detail=f"саундтрек asset_id={payload.audio_asset_id} не найден")
+        try:
+            asset_media_path(settings.media_dir, audio)
+        except MediaError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
     composition = Composition(
         width=payload.width,
         height=payload.height,

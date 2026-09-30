@@ -51,6 +51,10 @@ class _FakeUpstream:
 
 
 def _patch_websockets_connect(monkeypatch) -> None:
+    for name in list(sys.modules):
+        if name == "websockets" or name.startswith("websockets."):
+            monkeypatch.delitem(sys.modules, name, raising=False)
+
     fake_module = ModuleType("websockets")
 
     def _connect(*_args, **_kwargs):
@@ -60,13 +64,18 @@ def _patch_websockets_connect(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "websockets", fake_module)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_websockets_module(monkeypatch):
+    """Avoid flaky upstream TCP when the real `websockets` package was imported earlier."""
+    _patch_websockets_connect(monkeypatch)
+
+
 def test_vnc_ws_accepts_query_token_without_bearer_header(auth_client, monkeypatch):
     import app.api.routes.browser as browser_routes
 
     session = MagicMock()
     session.ws_port = 16081
     monkeypatch.setattr(browser_routes.browser_session_manager, "get", lambda _u: session)
-    _patch_websockets_connect(monkeypatch)
 
     with auth_client.websocket_connect(
         "/api/accounts/alice/browser/vnc/ws?token=secret-token"
@@ -80,7 +89,6 @@ def test_vnc_ws_rejects_invalid_query_token(auth_client, monkeypatch):
     session = MagicMock()
     session.ws_port = 16081
     monkeypatch.setattr(browser_routes.browser_session_manager, "get", lambda _u: session)
-    _patch_websockets_connect(monkeypatch)
 
     with pytest.raises(Exception):
         with auth_client.websocket_connect(
@@ -93,7 +101,6 @@ def test_vnc_ws_requires_active_session(auth_client, monkeypatch):
     import app.api.routes.browser as browser_routes
 
     monkeypatch.setattr(browser_routes.browser_session_manager, "get", lambda _u: None)
-    _patch_websockets_connect(monkeypatch)
 
     with pytest.raises(Exception):
         with auth_client.websocket_connect(

@@ -11,9 +11,13 @@ export const ACCOUNT_FORM_FIELDS: AskField[] = [
     options: ["instagram", "youtube", "tiktok"],
     required: true,
   },
-  { id: "password", label: "Пароль", kind: "password", required: true },
-  { id: "totp_seed", label: "TOTP seed", kind: "password", required: false },
+  { id: "password", label: "Пароль Instagram", kind: "password", required: true },
   { id: "email", label: "Email", kind: "text", required: false },
+  { id: "email_password", label: "Пароль email", kind: "password", required: false },
+  { id: "imap_host", label: "IMAP хост (если не авто)", kind: "text", required: false },
+  { id: "login_identifier", label: "Логин (email/телефон)", kind: "text", required: false },
+  { id: "vendor_line", label: "Строка продавца (tab)", kind: "text", required: false },
+  { id: "totp_seed", label: "TOTP seed", kind: "password", required: false },
 ];
 
 export const PROXY_FORM_FIELDS: AskField[] = [

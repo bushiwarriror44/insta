@@ -73,9 +73,9 @@ def auth_is_required(db: Optional[Session] = None) -> bool:
     own = False
     session = db
     if session is None:
-        from app.db import SessionLocal
+        import app.db as db
 
-        session = SessionLocal()
+        session = db.SessionLocal()
         own = True
     try:
         row = session.get(PanelSettings, 1)

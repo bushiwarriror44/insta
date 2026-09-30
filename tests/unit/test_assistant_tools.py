@@ -8,7 +8,14 @@ from datetime import datetime, timedelta, timezone
 
 from app.assistant.chat import run_tool
 from app.assistant.tools import ToolError, list_accounts, open_page, pause_account, plan_account
-from app.db.models import AccountStatus, PipelineStatus, PlanJob, PostJob, PostJobStatus
+from app.db.models import (
+    AccountStatus,
+    GenerationJob,
+    PipelineStatus,
+    PlanJob,
+    PostJob,
+    PostJobStatus,
+)
 
 
 def test_open_page_uses_this_panel_routes():
@@ -37,6 +44,26 @@ def test_plan_account_queues_a_plan_job(db_session, make_account):
     assert job.status is PipelineStatus.queued
 
 
+def test_preview_plan_creates_generations_without_auto_schedule(
+    db_session, make_account, monkeypatch
+):
+    from app.assistant.tools import preview_plan
+    from tests.unit.test_factory_merge import StubAgent
+
+    monkeypatch.setattr(
+        "app.services.planning.get_agent",
+        lambda settings=None: StubAgent(),
+    )
+    account = make_account()
+    account.brief = "misty woods"
+    db_session.commit()
+    out = preview_plan(db_session, account.id, count=1)
+    assert out["planned"] == 1
+    gen = db_session.get(GenerationJob, out["job_ids"][0])
+    assert gen is not None
+    assert gen.auto_schedule is False
+
+
 def test_pause_does_not_touch_proxy_or_password(db_session, make_account):
     account = make_account(password="secret")
     proxy_id = account.proxy_id
@@ -57,11 +84,15 @@ def test_run_tool_has_no_delete_tools(db_session):
             raise AssertionError(f"expected ToolError for {name}")
 
 
-def test_run_tool_creates_proxy_then_youtube_account(db_session):
+def test_run_tool_creates_proxy_then_youtube_account(db_session, monkeypatch):
     from app.assistant.tools import list_accounts, list_proxies
     from app.db.models import Account, Proxy
     from sqlalchemy import select
 
+    monkeypatch.setattr(
+        "app.proxies.pool.health_check_record",
+        lambda db, proxy: (True, None, None),
+    )
     proxy_out, opened_px = run_tool(
         db_session,
         "create_proxy",
@@ -145,6 +176,46 @@ def test_list_operators_reads_entry_path_without_changing_it(db_session):
     assert after == before
 
 
+def test_account_details_masks_secrets_for_operator(db_session, make_account):
+    from app.assistant.tools import account_details
+
+    account = make_account(
+        username="maskme",
+        password="pw-1",
+    )
+    account.session_id = "sessionid123"
+    account.totp_seed = "SEED"
+    account.email_password = "mail-pw"
+    db_session.commit()
+
+    owner_view = account_details(db_session, account.id, as_owner=True)
+    assert owner_view["password"] == "pw-1"
+    assert owner_view["session_id"] == "sessionid123"
+
+    op_view = account_details(db_session, account.id, as_owner=False)
+    assert op_view["password"] is None
+    assert op_view["session_id"] is None
+    assert op_view["email_password"] is None
+    assert op_view["totp_seed"] is None
+
+
+def test_list_accounts_masks_secrets_for_operator(db_session, make_account):
+    from app.assistant.tools import list_accounts
+
+    make_account(username="listed", password="hidden-pw")
+    rows = list_accounts(db_session, as_owner=False)
+    row = next(r for r in rows if r["username"] == "listed")
+    assert row["password"] is None
+
+
+def test_redact_diag_message_masks_session_and_email_password():
+    from app.assistant.tools import _redact_diag_message
+
+    assert _redact_diag_message("Пароль: secret-pass") == "Пароль: ***"
+    assert _redact_diag_message("session_id=abc123") == "session_id=***"
+    assert _redact_diag_message("email_password: hunter2") == "email_password: ***"
+
+
 def test_list_operators_hides_gate_from_operator(db_session):
     import json
 
@@ -185,6 +256,19 @@ def test_open_account_and_post_use_panel_query(db_session, make_account, app_env
     opened_post = open_post(db_session, job.id)
     assert opened_post.path == "/activity"
     assert opened_post.query == {"job": str(job.id)}
+
+
+def test_enqueue_publish_rejects_path_traversal(db_session, make_account, app_env):
+    from app.assistant.tools import ToolError, enqueue_publish
+
+    account = make_account()
+    (app_env.video_source_dir / "clip.mp4").write_bytes(b"x")
+    try:
+        enqueue_publish(db_session, account_id=account.id, filename="../clip.mp4")
+    except ToolError as exc:
+        assert "not found" in str(exc).lower() or "File" in str(exc)
+    else:
+        raise AssertionError("expected ToolError")
 
 
 def test_enqueue_publish_from_library_file(db_session, make_account, app_env):
@@ -372,9 +456,13 @@ def test_account_logs_redacts_password_and_lists_login_runs(db_session, make_acc
         raise AssertionError("expected ToolError")
 
 
-def test_create_and_update_proxy_and_account(db_session, make_proxy):
+def test_create_and_update_proxy_and_account(db_session, make_proxy, monkeypatch):
     from app.assistant.tools import attach_proxy, create_account, create_proxy, update_account, update_proxy
 
+    monkeypatch.setattr(
+        "app.proxies.pool.health_check_record",
+        lambda db, proxy: (True, None, None),
+    )
     proxy = create_proxy(db_session, label="mob-new", url="http://u:p@example:8000", country="US")
     assert proxy["url"] == "http://u:p@example:8000"
     updated = update_proxy(db_session, "mob-new", url="http://u:p@example:9000")
@@ -403,7 +491,7 @@ def test_create_accounts_two_usernames(db_session):
     from app.db.models import Account
     from sqlalchemy import select
 
-    create_proxy(db_session, label="mob-bulk", url="http://u:p@example:8000")
+    create_proxy(db_session, label="mob-bulk", url="http://u:p@example:8000", skip_health_check=True)
     out = create_accounts(
         db_session,
         [
@@ -420,7 +508,7 @@ def test_create_accounts_two_usernames(db_session):
 def test_create_accounts_partial_bad_proxy(db_session):
     from app.assistant.tools import create_accounts, create_proxy
 
-    create_proxy(db_session, label="mob-bulk", url="http://u:p@example:8000")
+    create_proxy(db_session, label="mob-bulk", url="http://u:p@example:8000", skip_health_check=True)
     out = create_accounts(
         db_session,
         [
@@ -669,6 +757,19 @@ def test_export_youtube_cookies_filters_domains(db_session, make_account, app_en
     assert opened.query["download"] == "cookies"
 
 
+def test_get_session_masks_session_id_for_operator(db_session, make_account):
+    from app.assistant.tools import get_session
+
+    sid = "c" * 40
+    account = make_account(username="masksid", session_id=sid)
+    owner = get_session(db_session, account.id, as_owner=True)
+    assert owner["session_id"] == sid
+    op = get_session(db_session, account.id, as_owner=False)
+    assert op.get("session_id") is None
+    assert "session_id_label" in op
+    assert sid not in str(op)
+
+
 def test_get_session_youtube_lists_names_without_values(db_session, make_account, app_env):
     from app.accounts.playwright_session import save_playwright_state
     from app.assistant.tools import get_session
@@ -685,19 +786,26 @@ def test_get_session_youtube_lists_names_without_values(db_session, make_account
     assert "secret" not in str(out)
 
 
-def test_first_login_and_mint_refuse_youtube(db_session, make_account):
-    from app.assistant.tools import ToolError, first_login, mint_mobile_session
+def test_mint_refuses_youtube(db_session, make_account):
+    from app.assistant.tools import ToolError, mint_mobile_session
     from app.db.models import Platform
 
     account = make_account(username="ytrefuse", platform=Platform.youtube)
     try:
-        first_login(db_session, account.id)
+        mint_mobile_session(db_session, account.id)
     except ToolError as exc:
         assert "Instagram" in str(exc)
     else:
         raise AssertionError("expected ToolError")
+
+
+def test_login_instagram_refuses_youtube(db_session, make_account):
+    from app.assistant.tools import ToolError, login_instagram
+    from app.db.models import Platform
+
+    account = make_account(username="ytig", platform=Platform.youtube)
     try:
-        mint_mobile_session(db_session, account.id)
+        login_instagram(db_session, account.id)
     except ToolError as exc:
         assert "Instagram" in str(exc)
     else:
@@ -1225,8 +1333,8 @@ def test_diagnose_caps_missing_session_list(db_session, make_account, monkeypatc
     login = out["login"]
     assert len(login["missing_session"]) == SNAPSHOT_LIST_LIMIT
     assert login["missing_session_omitted"] == 1
-    assert any("first_login" in hint for hint in login["hints"])
-    assert any("first_login" in hint for hint in out["hints"])
+    assert any("login_account" in hint for hint in login["hints"])
+    assert any("login_account" in hint or "account_logs" in hint for hint in out["hints"])
 
 
 def test_diagnose_posting_snapshot_stale_worker_and_challenge(
@@ -1420,7 +1528,7 @@ def test_diagnose_login_and_proxy_snapshots(
     assert any(row["username"] == "challenged" and row["platform"] == "instagram" for row in login["missing_session"])
     assert any(row["username"] == "ytno" and row["platform"] == "youtube" for row in login["missing_session"])
     assert any("account_logs" in hint for hint in login["hints"])
-    assert any("first_login" in hint for hint in login["hints"])
+    assert any("login_account" in hint or "ensure_account_session" in hint for hint in login["hints"])
     assert any("attach_proxy" in hint for hint in login["hints"])
 
     assert proxies["unhealthy"]
@@ -1634,6 +1742,28 @@ def test_create_render_queues_when_key_set(db_session, monkeypatch):
     assert job.backend == "auto"
 
 
+def test_run_tool_create_render_sanitizes_reference_filename(db_session, monkeypatch):
+    import json
+
+    from app.config import settings
+    from app.db.models import GenerationJob
+
+    monkeypatch.setattr(settings, "fal_api_key", "k")
+    out, _opened = run_tool(
+        db_session,
+        "create_render",
+        {
+            "prompt": "туман",
+            "reference_filename": "../../../etc/passwd",
+        },
+    )
+    job = db_session.get(GenerationJob, out["id"])
+    assert job is not None
+    specs = json.loads(job.reference_json or "[]")
+    assert specs[0]["filename"] == "passwd"
+    assert ".." not in specs[0]["filename"]
+
+
 def test_create_render_hf_without_fal_queues_auto(db_session, monkeypatch):
     from app.assistant.tools import create_render
     from app.config import settings
@@ -1648,6 +1778,29 @@ def test_create_render_hf_without_fal_queues_auto(db_session, monkeypatch):
     job = db_session.get(GenerationJob, out["id"])
     assert job is not None
     assert job.backend == "auto"
+
+
+def test_create_render_slideshow_forces_backend(db_session, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.assistant.tools import create_render
+    from app.db.models import GenerationJob
+
+    monkeypatch.setattr(
+        "app.generation.registry.get_backend",
+        lambda _name: SimpleNamespace(healthcheck=lambda: True, health_detail=lambda: ""),
+    )
+    out = create_render(
+        db_session,
+        prompt="ken burns",
+        backend="fal",
+        input_mode="image_slideshow",
+        reference_filename="still.jpg",
+    )
+    assert out["backend"] == "slideshow"
+    job = db_session.get(GenerationJob, out["id"])
+    assert job is not None
+    assert job.backend == "slideshow"
 
 
 def test_create_render_explicit_fal_without_key(db_session, monkeypatch):
@@ -1687,10 +1840,97 @@ def test_compose_without_clips_asks(db_session):
     assert "клип" in " ".join(out["questions"]).lower()
 
 
-def test_compose_queues_two_clips(db_session):
+def test_compose_rejects_removed_asset(db_session, app_env):
+    from datetime import datetime, timezone
+
+    from app.assistant.tools import ToolError, compose
+    from app.config import settings
+    from app.db.models import AssetKind, AssetSource, MediaAsset
+
+    (settings.media_dir / "a.mp4").write_bytes(b"x")
+    (settings.media_dir / "b.mp4").write_bytes(b"x")
+    first = MediaAsset(filename="a.mp4", kind=AssetKind.video, source=AssetSource.generated)
+    second = MediaAsset(
+        filename="b.mp4",
+        kind=AssetKind.video,
+        source=AssetSource.generated,
+        file_removed_at=datetime.now(timezone.utc),
+    )
+    db_session.add_all([first, second])
+    db_session.commit()
+    try:
+        compose(db_session, clip_ids=[first.id, second.id])
+    except ToolError as exc:
+        assert "удалён" in str(exc)
+    else:
+        raise AssertionError("expected ToolError")
+
+
+def test_enqueue_publish_rejects_removed_asset_id(db_session, make_account, app_env):
+    from datetime import datetime, timezone
+
+    from app.assistant.tools import ToolError, enqueue_publish
+    from app.config import settings
+    from app.db.models import AssetKind, AssetSource, MediaAsset
+
+    account = make_account()
+    (settings.media_dir / "vid.mp4").write_bytes(b"x")
+    asset = MediaAsset(
+        filename="vid.mp4",
+        kind=AssetKind.video,
+        source=AssetSource.generated,
+        file_removed_at=datetime.now(timezone.utc),
+    )
+    db_session.add(asset)
+    db_session.commit()
+    try:
+        enqueue_publish(db_session, account_id=account.id, asset_id=asset.id)
+    except ToolError as exc:
+        assert "удалён" in str(exc)
+    else:
+        raise AssertionError("expected ToolError")
+
+
+def test_publish_now_auto_approves_when_hold_for_review(
+    db_session, make_account, monkeypatch, app_env
+):
+    from types import SimpleNamespace
+
+    from sqlalchemy import select
+
+    from app.assistant.tools import publish_now
+    from app.config import settings
+    from app.db.models import PostJob, PostJobStatus
+
+    account = make_account(username="held", hold_for_review=True)
+    (settings.video_source_dir / "clip.mp4").write_bytes(b"fake")
+
+    def fake_run(account, db, probe_mobile=False):
+        return SimpleNamespace(
+            username=account.username,
+            overall_ok=True,
+            proxy_label="px",
+            proxy_health=SimpleNamespace(ok=True, error=None),
+            instagram_auth=SimpleNamespace(ok=True, error=None),
+            run_id=1,
+        )
+
+    monkeypatch.setattr("app.accounts.connection_test.run_account_connection_test", fake_run)
+    out = publish_now(db_session, account.id, filename="clip.mp4")
+    assert out["опубликовано"] is True
+    assert out.get("approved") is True
+    job = db_session.scalar(select(PostJob))
+    assert job is not None
+    assert job.status is PostJobStatus.queued
+
+
+def test_compose_queues_two_clips(db_session, app_env):
     from app.assistant.tools import compose
+    from app.config import settings
     from app.db.models import AssetKind, AssetSource, Composition, MediaAsset
 
+    (settings.media_dir / "join-a.mp4").write_bytes(b"x")
+    (settings.media_dir / "join-b.mp4").write_bytes(b"x")
     first = MediaAsset(filename="join-a.mp4", kind=AssetKind.video, source=AssetSource.upload)
     second = MediaAsset(filename="join-b.mp4", kind=AssetKind.video, source=AssetSource.upload)
     db_session.add_all([first, second])
@@ -1879,6 +2119,68 @@ def test_account_details_includes_cooldown(db_session, make_account):
     db_session.commit()
     details = account_details(db_session, account.id)
     assert details["cooldown_until"]
+
+
+def test_list_proxies_includes_geo_mismatch(db_session, make_proxy):
+    from app.assistant.tools import list_proxies
+
+    proxy = make_proxy(label="px-geo-list", country="DE")
+    proxy.last_geo_country = "NL"
+    db_session.commit()
+    rows = list_proxies(db_session, as_owner=True)
+    row = next(r for r in rows if r["label"] == "px-geo-list")
+    assert row["geo_mismatch"] is True
+    assert row["last_geo_country"] == "NL"
+
+
+def test_list_proxies_masks_url_for_operator(db_session, make_proxy):
+    from app.assistant.tools import list_proxies
+
+    make_proxy(label="px-mask", url="http://secret:pass@host.example:8000")
+    row = next(r for r in list_proxies(db_session, as_owner=False) if r["label"] == "px-mask")
+    assert "secret" not in (row["url"] or "")
+    assert "pass" not in (row["url"] or "")
+    assert "host.example:8000" in (row["url"] or "")
+
+
+def test_attach_proxy_masks_url_for_operator(db_session, make_account, make_proxy):
+    from app.assistant.tools import attach_proxy
+
+    account = make_account(username="attachmask")
+    proxy = make_proxy(label="px-attach", url="http://u:pw@egress.test:9999")
+    out = attach_proxy(db_session, account.id, proxy.label, as_owner=False)
+    assert out["proxy_url"] == "http://egress.test:9999"
+    assert "u:pw" not in out["proxy_url"]
+
+
+def test_create_proxy_runs_health_check(db_session, monkeypatch):
+    from datetime import datetime, timezone
+
+    from app.assistant.tools import create_proxy
+    from app.proxies.pool import HealthSnapshot
+
+    calls: list[str] = []
+
+    def fake_health(db, proxy):
+        calls.append(proxy.label)
+        snap = HealthSnapshot(
+            ok=True,
+            ip="9.9.9.9",
+            country="US",
+            instagram_reachable=True,
+            instagram_login_reachable=True,
+            checked_at=datetime.now(timezone.utc),
+        )
+        proxy.is_healthy = True
+        proxy.last_geo_country = "US"
+        db.commit()
+        return True, snap, None
+
+    monkeypatch.setattr("app.proxies.pool.health_check_record", fake_health)
+    out = create_proxy(db_session, label="px-health", url="http://u:p@h:1")
+    assert calls == ["px-health"]
+    assert out["healthy"] is True
+    assert out["last_geo_country"] == "US"
 
 
 def test_test_proxy_reports_geo_mismatch(db_session, make_proxy, monkeypatch):

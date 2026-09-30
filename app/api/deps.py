@@ -10,9 +10,10 @@ from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+import app.db as db_module
 from app.auth.passwords import verify_password
 from app.config import settings
-from app.db import PanelOperator, PanelSettings, SessionLocal
+from app.db import PanelOperator, PanelSettings
 from app.panel.settings_store import auth_is_required, get_or_create_panel_settings
 
 
@@ -27,11 +28,11 @@ class AuthPrincipal:
 
 
 def get_db() -> Iterator[Session]:
-    db = SessionLocal()
+    session = db_module.SessionLocal()
     try:
-        yield db
+        yield session
     finally:
-        db.close()
+        session.close()
 
 
 def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
@@ -157,7 +158,7 @@ def verify_ws_token(
     own_session = False
     session = db
     if session is None:
-        session = SessionLocal()
+        session = db_module.SessionLocal()
         own_session = True
     try:
         get_or_create_panel_settings(session)

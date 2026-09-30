@@ -1,7 +1,7 @@
 """SQLAlchemy engine, session factory, schema bootstrap."""
 from __future__ import annotations
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
@@ -16,6 +16,28 @@ engine = create_engine(
 )
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False, future=True)
+
+
+def on_sqlite_connect(dbapi_connection, _connection_record) -> None:
+    """Shared pragmas for api + worker on one SQLite file (Docker ./data)."""
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA busy_timeout=30000")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.close()
+
+
+def attach_sqlite_pragmas(eng) -> None:
+    if not str(eng.url).startswith("sqlite"):
+        return
+    if getattr(eng, "_sqlite_pragmas_attached", False):
+        return
+    event.listens_for(eng, "connect")(on_sqlite_connect)
+    eng._sqlite_pragmas_attached = True  # type: ignore[attr-defined]
+
+
+attach_sqlite_pragmas(engine)
 
 
 # ---------------------------------------------------------------------------
@@ -37,6 +59,7 @@ _PENDING_COLUMNS: list[tuple[str, str, str]] = [
     ("accounts", "login_identifier", "VARCHAR(200)"),
     ("accounts", "email", "VARCHAR(200)"),
     ("accounts", "email_password", "VARCHAR(500)"),
+    ("accounts", "imap_host", "VARCHAR(200)"),
     ("accounts", "totp_seed", "VARCHAR(120)"),
     ("accounts", "backup_codes", "TEXT"),
     ("accounts", "login_surface", "VARCHAR(16)"),
@@ -61,6 +84,8 @@ _PENDING_COLUMNS: list[tuple[str, str, str]] = [
     ("post_logs", "share_count", "INTEGER"),
     ("post_logs", "raw_stats_json", "TEXT"),
     ("panel_settings", "admin_notes", "TEXT DEFAULT ''"),
+    ("generation_jobs", "input_mode", "VARCHAR(32) DEFAULT 'text_only'"),
+    ("generation_jobs", "reference_json", "TEXT"),
 ]
 
 
@@ -78,12 +103,27 @@ def _apply_pending_columns() -> None:
             conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {column} {sqltype}'))
 
 
+def _ensure_account_platform_username_index() -> None:
+    """Backfill UNIQUE(platform, username) on DBs created before multi-platform accounts."""
+    inspector = inspect(engine)
+    if "accounts" not in set(inspector.get_table_names()):
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_account_platform_username "
+                "ON accounts (platform, username)"
+            )
+        )
+
+
 def init_db() -> None:
     """Create missing tables and apply backwards-compatible column additions."""
     from app.db.models import Base  # noqa: WPS433
 
     Base.metadata.create_all(bind=engine)
     _apply_pending_columns()
+    _ensure_account_platform_username_index()
     from app.agent.presets import seed_if_empty
 
     with SessionLocal() as session:

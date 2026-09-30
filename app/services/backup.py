@@ -76,6 +76,18 @@ def prune(settings: Settings | None = None) -> list[Path]:
     return doomed
 
 
+def resolve_backup(settings: Settings, name: str) -> Path:
+    """Map a backup filename to a path inside ``backup_dir``, rejecting traversal."""
+    destination = Path(settings.backup_dir).resolve()
+    filename = Path(name).name
+    if not filename.endswith(".db") or not Path(filename).stem.startswith("app-"):
+        raise BackupError("backup name must be an app-*.db file in the backup directory")
+    candidate = (destination / filename).resolve()
+    if candidate.parent != destination:
+        raise BackupError("that backup name escapes the backup directory")
+    return candidate
+
+
 def list_backups(settings: Settings | None = None) -> list[Backup]:
     settings = settings or get_settings()
     destination = Path(settings.backup_dir)
@@ -93,7 +105,9 @@ def list_backups(settings: Settings | None = None) -> list[Backup]:
 
 
 def restore(archive: Path, settings: Settings | None = None) -> Path:
+    """Overwrite the live SQLite file. Restart API and worker after restore."""
     settings = settings or get_settings()
+    archive = resolve_backup(settings, archive.name)
     if not archive.exists():
         raise BackupError(f"no backup at {archive}")
     target = database_path(settings)

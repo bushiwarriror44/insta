@@ -158,6 +158,7 @@ export interface AccountIn {
   login_identifier?: string | null;
   email?: string | null;
   email_password?: string | null;
+  imap_host?: string | null;
   backup_codes?: string | null;
   login_surface?: LoginSurface | null;
   account_line?: string | null;
@@ -457,6 +458,9 @@ export interface RenderBackendOut {
   licence: string;
   experimental: boolean;
   detail: string;
+  supports_i2v?: boolean;
+  supports_v2v?: boolean;
+  supports_slideshow?: boolean;
 }
 
 export interface MediaAssetOut {

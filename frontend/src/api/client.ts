@@ -647,8 +647,16 @@ export const api = {
         "/api/generations"
       ),
     backends: () => request<import("./types").RenderBackendOut[]>("/api/generations/backends"),
-    createGeneration: (body: { prompt: string; account_id?: number; duration_s?: number; backend?: string }) =>
-      request<{ id: number; status: string }>("/api/generations", { method: "POST", body }),
+    createGeneration: (body: {
+      prompt: string;
+      account_id?: number;
+      duration_s?: number;
+      backend?: string;
+      input_mode?: string;
+      reference_asset_id?: number;
+      reference_filename?: string;
+      reference_role?: string;
+    }) => request<{ id: number; status: string }>("/api/generations", { method: "POST", body }),
     cancelGeneration: (id: number) =>
       request<{ id: number; status: string }>(`/api/generations/${id}/cancel`, { method: "POST" }),
     retryGeneration: (id: number) =>

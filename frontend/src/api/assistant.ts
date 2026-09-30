@@ -13,6 +13,10 @@ export type AssistantFocus = {
   job_id?: number;
 };
 
+export type AssistantAskOptions = {
+  allowBrowser?: boolean;
+};
+
 export type AssistantStep =
   | { type: "tool"; text: string; name?: string }
   | { type: "token"; text: string }
@@ -41,7 +45,8 @@ export async function ask(
   onStep: (step: AssistantStep) => void,
   signal?: AbortSignal,
   page?: string,
-  focus?: AssistantFocus
+  focus?: AssistantFocus,
+  options?: AssistantAskOptions
 ): Promise<void> {
   const headers = new Headers({ "Content-Type": "application/json", ...getAuthHeaders() });
   const response = await fetch(`${API_BASE}/api/assistant/stream`, {
@@ -52,6 +57,7 @@ export async function ask(
       page,
       account_id: focus?.account_id,
       job_id: focus?.job_id,
+      allow_browser: Boolean(options?.allowBrowser),
     }),
     signal,
   });

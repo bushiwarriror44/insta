@@ -237,7 +237,10 @@ export function Agent() {
               try {
                 await api.factory.updateBrief(selectedId, brief);
                 const out = await api.factory.preview(selectedId, { count, duration_s: duration });
-                push(`Превью: ${out.planned} постов в очереди рендера`, "success");
+                push(
+                  `Превью: ${out.planned} ролик(ов) в очереди рендера, без PlanJob и календаря`,
+                  "success"
+                );
                 await reload();
               } catch (err) {
                 push(formatApiError(err), "error");

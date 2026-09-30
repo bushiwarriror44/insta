@@ -17,6 +17,11 @@ python -m venv .venv
 pip install -r requirements.txt
 python -m app.cli install-playwright
 copy .env.example .env
+```
+
+Для **локального Ollama** не оставляйте в `.env` строку `AGENT_BASE_URL=` с пустым значением — удалите переменную целиком, иначе чат не увидит `http://localhost:11434/v1`. На Docker/VPS пустой или отсутствующий URL — норма (модель на внешнем GPU).
+
+```text
 python -m app.cli init-db
 python -m app.cli run-api
 ```
@@ -61,7 +66,11 @@ docker compose --profile ollama up -d --build
 
 `AGENT_BASE_URL` берётся из `.env` (пустой — чат 503 до GPU). `OLLAMA_AUTOSTART=false`, `WORKER_AUTOSTART=false` (воркер — отдельный контейнер). Том `./data` общий. `init-db` на старте контейнеров; отключить: `SKIP_AUTO_INIT_DB=1`.
 
-CLI внутри стека: `docker compose exec reels-api python -m app.cli status` (не печатайте путь панели в переписку).
+CLI внутри стека: `docker compose exec reels-api python -m app.cli status` (секретный путь панели по умолчанию не выводится; при необходимости — `status --show-entry-path`, не светите в переписке).
+
+## Перед релизом
+
+Чеклист: [qa-checklist.md §15](qa-checklist.md#15-релиз). Минимум: `python -m pytest tests/ -q`, `cd frontend && npm test -- --run`, на хосте воркера **ffmpeg** в PATH и `python -m app.cli preflight` (в Docker: `docker compose exec reels-worker python -m app.cli preflight`). Ручной smoke (IG, Studio, T2V, slideshow, публикация с `hold_for_review`) — только со staging-прокси и ключами.
 
 ## Переменные `.env`
 
@@ -95,8 +104,11 @@ CLI внутри стека: `docker compose exec reels-api python -m app.cli st
 
 | Переменная | Смысл |
 | --- | --- |
-| `AGENT_BASE_URL` | OpenAI-совместимый чат; пусто на админ-VPS, потом URL GPU (Clore) + `/v1` |
-| `AGENT_MODEL` | обычно `qwen3:8b` |
+| `AGENT_BASE_URL` | OpenAI-совместимый чат; **не задавайте** `=` без URL локально; на VPS — пусто до GPU (Clore) + `/v1` |
+| `AGENT_MODEL` | обычно `qwen3:8b` (совпадает с `ollama-pull` в compose) |
+| `BROWSER_VNC_ENABLED` | `true` в Docker-образе api для noVNC |
+| `GENERATION_TIMEOUT_SECONDS` | таймаут очереди рендера |
+| `MEDIA_URL_SECRET` | подпись ссылок на медиа в production |
 | `ASSISTANT_TIMEOUT_SECONDS` | таймаут HTTP к модели (чат) |
 | `WORKER_AUTOSTART` / `OLLAMA_AUTOSTART` | автостарт при `run-api` |
 | `WORKER_POLL_INTERVAL_SEC` | опрос очереди |

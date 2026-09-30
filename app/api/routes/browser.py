@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.accounts.login_identifier import resolve_login_identifier
-from app.api.deps import AuthDep, get_db, verify_ws_token
+from app.api.deps import AuthDep, AuthPrincipal, get_db, resolve_principal, verify_ws_token
 from app.api.schemas import BrowserCodeIn, BrowserSaveOut, BrowserSessionOut, DiagnosticLogLineOut
 from app.behavior.playwright_surface import resolve_playwright_surface
 from app.browser.session_manager import NavTarget, browser_session_manager
@@ -37,22 +37,28 @@ def _get_proxy(account: Account, db: Session) -> Proxy:
     return proxy
 
 
-def _account_credentials(account: Account) -> dict[str, str | None]:
+def _account_credentials(account: Account, *, include_secrets: bool) -> dict[str, str | None]:
+    login = resolve_login_identifier(account) if include_secrets else None
     return {
         "account_username": account.username,
-        "account_login": resolve_login_identifier(account),
-        "account_password": account.password,
+        "account_login": login,
+        "account_password": account.password if include_secrets else None,
         "account_notes": account.notes,
     }
 
 
-def _browser_session_response(username: str, db: Session) -> BrowserSessionOut:
+def _browser_session_response(
+    username: str,
+    db: Session,
+    principal: AuthPrincipal,
+) -> BrowserSessionOut:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
         raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+    include_secrets = principal.role == "owner"
     payload = {
         **browser_session_manager.status_dict(username),
-        **_account_credentials(account),
+        **_account_credentials(account, include_secrets=include_secrets),
     }
     return BrowserSessionOut(**payload)
 
@@ -62,6 +68,7 @@ async def start_browser_session(
     username: str,
     login_surface: str | None = Query(default=None),
     db: Session = Depends(get_db),
+    principal: AuthPrincipal = Depends(resolve_principal),
 ) -> BrowserSessionOut:
     account = _get_account(username, db)
     proxy = _get_proxy(account, db)
@@ -78,7 +85,7 @@ async def start_browser_session(
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return _browser_session_response(username, db)
+    return _browser_session_response(username, db, principal)
 
 
 @router.post("/{username}/browser/open-instagram", response_model=BrowserSessionOut, dependencies=[AuthDep])
@@ -87,6 +94,7 @@ async def open_instagram_in_browser(
     autofill: bool = Query(default=False),
     target: NavTarget = Query(default="auto"),
     db: Session = Depends(get_db),
+    principal: AuthPrincipal = Depends(resolve_principal),
 ) -> BrowserSessionOut:
     account = _get_account(username, db)
     proxy = _get_proxy(account, db)
@@ -99,12 +107,16 @@ async def open_instagram_in_browser(
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return _browser_session_response(username, db)
+    return _browser_session_response(username, db, principal)
 
 
 @router.get("/{username}/browser/status", response_model=BrowserSessionOut, dependencies=[AuthDep])
-def browser_session_status(username: str, db: Session = Depends(get_db)) -> BrowserSessionOut:
-    return _browser_session_response(username, db)
+def browser_session_status(
+    username: str,
+    db: Session = Depends(get_db),
+    principal: AuthPrincipal = Depends(resolve_principal),
+) -> BrowserSessionOut:
+    return _browser_session_response(username, db, principal)
 
 
 @router.post("/{username}/browser/code", response_model=BrowserSessionOut, dependencies=[AuthDep])
@@ -112,6 +124,7 @@ async def submit_browser_code(
     username: str,
     payload: BrowserCodeIn,
     db: Session = Depends(get_db),
+    principal: AuthPrincipal = Depends(resolve_principal),
 ) -> BrowserSessionOut:
     account = _get_account(username, db)
     try:
@@ -120,7 +133,7 @@ async def submit_browser_code(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return _browser_session_response(username, db)
+    return _browser_session_response(username, db, principal)
 
 
 @router.post("/{username}/browser/save", response_model=BrowserSaveOut, dependencies=[AuthDep])
@@ -128,6 +141,7 @@ async def save_browser_session(
     username: str,
     db: Session = Depends(get_db),
     stop_after_save: bool = Query(default=False),
+    principal: AuthPrincipal = Depends(resolve_principal),
 ) -> BrowserSaveOut:
     """Persist web sessionid from the live browser.
 
@@ -153,7 +167,7 @@ async def save_browser_session(
         summary="browser save: web sessionid" if overall_ok else "browser save incomplete",
     )
 
-    base = _browser_session_response(username, db)
+    base = _browser_session_response(username, db, principal)
     now_ts = datetime.now(timezone.utc).isoformat()
     extra = [
         DiagnosticLogLineOut(
@@ -184,7 +198,11 @@ async def save_browser_session(
 
 
 @router.delete("/{username}/browser/stop", response_model=BrowserSessionOut, dependencies=[AuthDep])
-async def stop_browser_session(username: str, db: Session = Depends(get_db)) -> BrowserSessionOut:
+async def stop_browser_session(
+    username: str,
+    db: Session = Depends(get_db),
+    principal: AuthPrincipal = Depends(resolve_principal),
+) -> BrowserSessionOut:
     account = _get_account(username, db)
     browser_session_manager.persist_action_logs(
         db,
@@ -193,7 +211,7 @@ async def stop_browser_session(username: str, db: Session = Depends(get_db)) -> 
         summary="browser session stopped",
     )
     await browser_session_manager.stop_session(username)
-    return _browser_session_response(username, db)
+    return _browser_session_response(username, db, principal)
 
 
 @router.websocket("/{username}/browser/vnc/ws")

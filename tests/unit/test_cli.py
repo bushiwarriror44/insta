@@ -13,6 +13,7 @@ from app.config import settings
 from app.db import (
     Account,
     AccountStatus,
+    Platform,
     PostJob,
     PostJobStatus,
     Proxy,
@@ -210,6 +211,18 @@ def test_enqueue_post_unknown_account_fails(cli_app, app_env):
     assert result.exit_code == 1
 
 
+def test_enqueue_post_rejects_path_outside_library(cli_app, db_session, make_account, app_env, tmp_path):
+    make_account(username="libonly")
+    outside = tmp_path / "outside.mp4"
+    outside.write_bytes(b"x")
+    result = runner.invoke(
+        cli_app,
+        ["enqueue-post", "--username", "libonly", "--video", str(outside)],
+    )
+    assert result.exit_code == 1
+    assert "video_source_dir" in result.stdout or "library" in result.stdout.lower()
+
+
 def test_enqueue_post_with_explicit_when(cli_app, db_session, make_account, app_env):
     make_account(username="eric")
     video = app_env.video_source_dir / "v.mp4"
@@ -385,3 +398,126 @@ def test_first_login_cli_uses_service(cli_app, db_session, make_account, monkeyp
     result = runner.invoke(cli_app, ["first-login", "clifl"])
     assert result.exit_code == 0, result.stdout
     assert called["id"] == account.id
+
+
+def test_ask_invokes_assistant_with_browser(cli_app, monkeypatch):
+    from app.assistant.chat import Answer
+
+    captured: dict = {}
+
+    def _fake_ask(db, messages, **kwargs):
+        captured.update(kwargs)
+        return Answer(reply="ok", used=["overview"], asks=[], images=[], created={"accounts": [], "proxies": []})
+
+    monkeypatch.setattr("app.assistant.chat.ask", _fake_ask)
+    result = runner.invoke(cli_app, ["ask", "hello"])
+    assert result.exit_code == 0, result.stdout
+    assert captured.get("allow_browser") is True
+    assert captured.get("viewer_role") == "owner"
+    assert "ok" in result.stdout
+
+
+def test_preflight_ok_when_playwright_available(cli_app, make_proxy, monkeypatch):
+    make_proxy(label="pf", url="http://h:1")
+    monkeypatch.setattr(
+        "app.behavior.warmup_playwright.playwright_browsers_available",
+        lambda: True,
+    )
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/ffmpeg" if name == "ffmpeg" else None)
+    result = runner.invoke(cli_app, ["preflight"])
+    assert result.exit_code == 0, result.stdout
+    assert "preflight ok" in result.stdout
+
+
+def test_preflight_fails_without_ffmpeg(cli_app, make_proxy, monkeypatch):
+    make_proxy(label="pf-ff", url="http://h:3")
+    monkeypatch.setattr(
+        "app.behavior.warmup_playwright.playwright_browsers_available",
+        lambda: True,
+    )
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    result = runner.invoke(cli_app, ["preflight"])
+    assert result.exit_code == 1
+    assert "ffmpeg" in result.stdout
+
+
+def test_preflight_fails_without_playwright(cli_app, make_proxy, monkeypatch):
+    make_proxy(label="pf2", url="http://h:2")
+    monkeypatch.setattr(
+        "app.behavior.warmup_playwright.playwright_browsers_available",
+        lambda: False,
+    )
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/ffmpeg" if name == "ffmpeg" else None)
+    result = runner.invoke(cli_app, ["preflight"])
+    assert result.exit_code == 1
+    assert "install-playwright" in result.stdout
+
+
+def test_status_hides_entry_path_by_default(cli_app, db_session):
+    from app.panel.settings_store import get_or_create_panel_settings
+
+    panel = get_or_create_panel_settings(db_session)
+    panel.entry_path = "/secret-gate-qa13"
+    db_session.commit()
+    result = runner.invoke(cli_app, ["status"])
+    assert result.exit_code == 0
+    assert "secret-gate-qa13" not in result.stdout
+    assert "Panel entry path" not in result.stdout
+
+
+def test_status_show_entry_path_flag(cli_app, db_session):
+    from app.panel.settings_store import get_or_create_panel_settings
+
+    panel = get_or_create_panel_settings(db_session)
+    panel.entry_path = "/secret-gate-qa13"
+    db_session.commit()
+    result = runner.invoke(cli_app, ["status", "--show-entry-path"])
+    assert result.exit_code == 0
+    assert "secret-gate-qa13" in result.stdout
+
+
+def test_add_account_platform_youtube(cli_app, db_session, make_proxy):
+    make_proxy(label="yt-proxy", url="http://h:yt", country="US")
+    result = runner.invoke(
+        cli_app,
+        [
+            "add-account",
+            "--username",
+            "studio1",
+            "--password",
+            "pwd",
+            "--proxy",
+            "yt-proxy",
+            "--platform",
+            "youtube",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    account = db_session.scalar(
+        select(Account).where(Account.username == "studio1", Account.platform == Platform.youtube)
+    )
+    assert account is not None
+
+
+def test_refresh_app_versions(cli_app, tmp_path, monkeypatch):
+    path = tmp_path / "versions.json"
+    path.write_text(
+        '[{"version": "1.0.0", "code": "100"}]',
+        encoding="utf-8",
+    )
+    loaded: list = []
+
+    def _set(values):
+        loaded.extend(values)
+
+    monkeypatch.setattr("app.accounts.device_factory.set_app_versions", _set)
+    result = runner.invoke(cli_app, ["refresh-app-versions", "--file", str(path)])
+    assert result.exit_code == 0, result.stdout
+    assert loaded == [("1.0.0", "100")]
+
+
+def test_import_proxies_invalid_json_exits(cli_app, tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("not json", encoding="utf-8")
+    result = runner.invoke(cli_app, ["import-proxies", str(bad)])
+    assert result.exit_code == 1

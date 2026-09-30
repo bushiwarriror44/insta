@@ -11,10 +11,9 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import AuthDep, get_db
 from app.api.schemas import DiagnosticRunOut, EnqueueIn, JobOut
-from app.config import settings
 from app.db import Account, DiagnosticRun, PostJob, PostJobStatus, PostType
 from app.api.routes.diagnostics import _to_run_out
-from app.api.routes.videos import media_type_for_name
+from app.api.routes.videos import _resolve_source_file, media_type_for_name
 from app.services.review import initial_job_status
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"], dependencies=[AuthDep])
@@ -73,7 +72,11 @@ def enqueue_job(payload: EnqueueIn, db: Session = Depends(get_db)) -> JobOut:
 
     filename = payload.selected_filename
     try:
-        media_type = media_type_for_name(filename)
+        src = _resolve_source_file(filename)
+    except HTTPException:
+        raise
+    try:
+        media_type = media_type_for_name(src.name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -81,10 +84,6 @@ def enqueue_job(payload: EnqueueIn, db: Session = Depends(get_db)) -> JobOut:
         raise HTTPException(status_code=400, detail="feed_photo requires an image file")
     if payload.post_type in ("reel", "feed_video", "youtube_short", "tiktok") and media_type != "video":
         raise HTTPException(status_code=400, detail=f"{payload.post_type} requires a video file")
-
-    src = settings.video_source_dir / filename
-    if not src.exists() or not src.is_file():
-        raise HTTPException(status_code=404, detail=f"Media '{filename}' not found in source dir")
 
     when = payload.when or datetime.now(timezone.utc)
     if when.tzinfo is None:

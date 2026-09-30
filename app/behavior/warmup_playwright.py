@@ -868,6 +868,36 @@ def playwright_browsers_available() -> bool:
         return False
 
 
+async def _try_resolve_email_challenge(
+    page,
+    *,
+    email: Optional[str],
+    email_password: Optional[str],
+    imap_host: Optional[str],
+    timeout_sec: int = 90,
+) -> bool:
+    if not (email or "").strip() or not (email_password or "").strip():
+        return False
+    import asyncio
+
+    from app.accounts.email_handler import fetch_instagram_code
+
+    code = await asyncio.to_thread(
+        fetch_instagram_code,
+        email.strip(),
+        email_password.strip(),
+        host=(imap_host or "").strip() or None,
+        timeout_sec=timeout_sec,
+    )
+    if not code:
+        return False
+    if not await submit_verification_code(page, code):
+        return False
+    await _human_wait(3.0, 6.0)
+    await _dismiss_post_login_modals(page)
+    return not await _detect_challenge(page)
+
+
 async def _async_first_login(
     username: str,
     password: str,
@@ -879,6 +909,9 @@ async def _async_first_login(
     login_identifier: Optional[str] = None,
     surface: LoginSurface = "mobile",
     fingerprint=None,
+    email: Optional[str] = None,
+    email_password: Optional[str] = None,
+    imap_host: Optional[str] = None,
 ) -> FirstLoginResult:
     login_id = (login_identifier or username).strip()
     if not (proxy_url or "").strip():
@@ -1032,18 +1065,26 @@ async def _async_first_login(
 
             if await _detect_challenge(page):
                 logger.warning("playwright.challenge_detected", username=username)
-                if await _save_login_debug(page, username):
-                    login_debug_saved = True
-                await context.storage_state(path=str(state_file))
-                await context.close()
-                await browser.close()
-                return FirstLoginResult(
-                    ok=False,
-                    challenge=True,
-                    error="challenge required",
-                    login_debug_saved=login_debug_saved,
-                    page_url=page.url,
-                )
+                if await _try_resolve_email_challenge(
+                    page,
+                    email=email,
+                    email_password=email_password,
+                    imap_host=imap_host,
+                ):
+                    logger.info("playwright.email_challenge_resolved", username=username)
+                else:
+                    if await _save_login_debug(page, username):
+                        login_debug_saved = True
+                    await context.storage_state(path=str(state_file))
+                    await context.close()
+                    await browser.close()
+                    return FirstLoginResult(
+                        ok=False,
+                        challenge=True,
+                        error="challenge required",
+                        login_debug_saved=login_debug_saved,
+                        page_url=page.url,
+                    )
 
         await _human_wait(1.0, 2.0)
         await _dismiss_post_login_modals(page)
@@ -1070,6 +1111,22 @@ async def _async_first_login(
             await context.close()
             await browser.close()
             if challenged:
+                if await _try_resolve_email_challenge(
+                    page,
+                    email=email,
+                    email_password=email_password,
+                    imap_host=imap_host,
+                ):
+                    session_id, cookie_names, challenged = await _resolve_instagram_sessionid(
+                        context, page, state_file
+                    )
+                    if session_id:
+                        await context.storage_state(path=str(state_file))
+                        await context.close()
+                        await browser.close()
+                        return FirstLoginResult(
+                            ok=True, session_id=session_id, cookie_names=cookie_names
+                        )
                 return FirstLoginResult(
                     ok=False,
                     challenge=True,
@@ -1133,6 +1190,9 @@ def first_login(
     totp_seed: Optional[str] = None,
     login_identifier: Optional[str] = None,
     surface: LoginSurface = "mobile",
+    email: Optional[str] = None,
+    email_password: Optional[str] = None,
+    imap_host: Optional[str] = None,
 ) -> FirstLoginResult:
     """Synchronous wrapper around the async stealth login.
 
@@ -1173,6 +1233,9 @@ def first_login(
                 login_identifier=login_identifier,
                 surface=surface,
                 fingerprint=fingerprint,
+                email=email,
+                email_password=email_password,
+                imap_host=imap_host,
             )
         )
     except Exception as exc:  # noqa: BLE001 - surface Playwright failures to caller

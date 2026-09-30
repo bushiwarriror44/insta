@@ -95,6 +95,14 @@ def _api_login_session_id(
     *,
     login_identifier: str,
 ) -> str:
+    from app.accounts.challenge import make_handler
+
+    handler = make_handler(
+        account.username,
+        email=(account.email or "").strip() or None,
+        email_password=(account.email_password or "").strip() or None,
+        imap_host=(account.imap_host or "").strip() or None,
+    )
     return login_and_export_sessionid(
         account.username,
         account.password,
@@ -102,6 +110,7 @@ def _api_login_session_id(
         proxy.url,
         totp_seed=account.totp_seed,
         login_identifier=login_identifier,
+        challenge_handler=handler,
     )
 
 
@@ -209,6 +218,7 @@ def run_account_first_login(
     db: Session,
     *,
     surface: str | None = None,
+    on_status=None,
 ) -> FirstLoginOut:
     collector = DiagnosticCollector(
         db,
@@ -277,6 +287,8 @@ def run_account_first_login(
 
     login_id = resolve_login_identifier(account)
     log_account_credentials(collector, account, proxy)
+    if on_status:
+        on_status("Автовход", f"@{account.username} через браузер")
     collector.info("start", f"Автовход через браузер для @{account.username}")
     collector.info("proxy", proxy_log_line(proxy))
 
@@ -299,6 +311,8 @@ def run_account_first_login(
             f"Часовой пояс прокси «{proxy.timezone}» заменён на {tz_id} (Playwright требует IANA)",
         )
 
+    if on_status:
+        on_status("Браузер", "логин и проверка challenge")
     result: FirstLoginResult = first_login(
         username=account.username,
         password=account.password,
@@ -308,17 +322,35 @@ def run_account_first_login(
         totp_seed=account.totp_seed,
         login_identifier=login_id,
         surface=resolved_surface,
+        email=account.email,
+        email_password=account.email_password,
+        imap_host=account.imap_host,
     )
 
     if result.challenge:
-        collector.warn("login", "Требуется ручное подтверждение (challenge) — откройте вкладку «Браузер»")
+        hint = "Требуется подтверждение — submit_login_code, затем login_account с verification_code"
+        if (account.email or "").strip() and (account.email_password or "").strip():
+            from app.accounts.email_handler import imap_configuration_error
+
+            imap_err = imap_configuration_error(
+                account.email or "",
+                (account.imap_host or "").strip() or None,
+            )
+            if imap_err:
+                hint = f"{hint}. IMAP: {imap_err}"
+            else:
+                hint = (
+                    "Код из почты не пришёл вовремя — submit_login_code, "
+                    "затем login_account с verification_code"
+                )
+        collector.warn("login", hint)
         _log_playwright_failure_diagnostics(collector, account, result)
         collector.finish("warn", CHALLENGE_SUMMARY)
         return FirstLoginOut(
             run_id=collector.run_id,
             ok=False,
             challenge=True,
-            browser_tab_hint=True,
+            browser_tab_hint=False,
             error=result.error or "Требуется подтверждение Instagram",
             login_debug_available=_login_debug_available(account.username, result),
             logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
@@ -328,6 +360,8 @@ def run_account_first_login(
         msg = result.error or "Автовход не удался"
         collector.error("login", msg)
         _log_playwright_failure_diagnostics(collector, account, result)
+        if on_status:
+            on_status("API", "браузер не дал sessionid — mobile API")
         fallback_out, api_err = _try_api_login_fallback(collector, account, db, proxy, fingerprint)
         if fallback_out is not None:
             return fallback_out

@@ -60,6 +60,10 @@ def test_handbook_file_states_local_ollama_and_that_proxies_are_not_for_chat():
     assert "list_questions" in text
     assert "apply_preset" in text
     assert "wait_plan" in text
+    assert "preview_plan" in text
+    assert "GenerationJob" in text
+    assert "hold_for_review" in text
+    assert "awaiting_review" in text
     assert "geo_mismatch" in text
     assert "account_logs" in text
     assert "Только в UI" in text

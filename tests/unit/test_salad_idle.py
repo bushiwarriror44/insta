@@ -82,9 +82,29 @@ def test_tick_stops_quiet_group(app_env, monkeypatch):
 
 def test_tick_skips_queued_local_render(app_env, monkeypatch):
     _enable(monkeypatch)
+    monkeypatch.setattr(settings, "wan_base_url", "https://wan.example/generate", raising=True)
     salad_idle.observe_status(settings, "running", now=START)
     db = app_env.SessionLocal()
     db.add(GenerationJob(prompt="clip", backend="local", status=PipelineStatus.queued))
+    db.commit()
+    db.close()
+    state = salad_gpu.GroupState(status="running", running_count=1)
+    monkeypatch.setattr(salad_gpu, "get_group", lambda settings=None: state)
+    monkeypatch.setattr(
+        salad_gpu,
+        "stop_group",
+        lambda settings=None: (_ for _ in ()).throw(AssertionError("stop")),
+    )
+    assert salad_idle.tick(settings, now=START + timedelta(hours=2)) is False
+
+
+def test_tick_skips_queued_auto_when_wan_and_local_in_chain(app_env, monkeypatch):
+    _enable(monkeypatch)
+    monkeypatch.setattr(settings, "wan_base_url", "https://wan.example/generate", raising=True)
+    monkeypatch.setattr(settings, "video_backend_chain", "local,fal", raising=True)
+    salad_idle.observe_status(settings, "running", now=START)
+    db = app_env.SessionLocal()
+    db.add(GenerationJob(prompt="clip", backend="auto", status=PipelineStatus.queued))
     db.commit()
     db.close()
     state = salad_gpu.GroupState(status="running", running_count=1)

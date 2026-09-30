@@ -33,17 +33,22 @@ def test_zero_height_is_refused():
 
 
 def test_payload_snaps_duration_and_resolution_to_allowed_values(backend):
+    model = backend.settings.fal_model
     payload = backend._payload(
         GenerationRequest(prompt="a ridge at dawn", duration_s=7, width=720, height=1280),
         duration=7,
+        model=model,
     )
     assert payload["resolution"] == "720p"
     assert payload["aspect_ratio"] == "9:16"
 
 
 def test_payload_trims_overlong_prompts(backend):
+    model = backend.settings.fal_model
     payload = backend._payload(
-        GenerationRequest(prompt="x" * 4000, negative_prompt="y" * 900), duration=5
+        GenerationRequest(prompt="x" * 4000, negative_prompt="y" * 900),
+        duration=5,
+        model=model,
     )
     assert len(payload["prompt"]) == 1500
     assert len(payload["negative_prompt"]) == 500

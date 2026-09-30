@@ -54,6 +54,7 @@ from app.db import (
     Account,
     AccountStatus,
     DailyStat,
+    Platform,
     PostJob,
     PostJobStatus,
     Proxy,
@@ -185,23 +186,41 @@ def cmd_add_account(
     min_gap_hours: float = typer.Option(settings.default_min_gap_hours, "--min-gap-hours"),
     active_hour_start: int = typer.Option(settings.default_active_hour_start, "--active-hour-start"),
     active_hour_end: int = typer.Option(settings.default_active_hour_end, "--active-hour-end"),
+    platform: str = typer.Option(
+        "instagram",
+        "--platform",
+        help="instagram, youtube, or tiktok",
+    ),
 ) -> None:
-    """Register an Instagram account and bind it to a proxy."""
+    """Register an account and bind it to a proxy."""
     _bootstrap()
+    try:
+        platform_enum = Platform(platform.strip().lower())
+    except ValueError:
+        console.print(f"[red]Unknown platform {platform!r}[/red]")
+        raise typer.Exit(code=1)
     with SessionLocal() as db:
         proxy = db.scalar(select(Proxy).where(Proxy.label == proxy_label))
         if proxy is None:
             console.print(f"[red]Proxy {proxy_label} not found. Add it first.[/red]")
             raise typer.Exit(code=1)
 
-        existing = db.scalar(select(Account).where(Account.username == username))
+        existing = db.scalar(
+            select(Account).where(
+                Account.username == username,
+                Account.platform == platform_enum,
+            )
+        )
         if existing is not None:
-            console.print(f"[yellow]Account {username} already exists. Updating fields.[/yellow]")
+            console.print(
+                f"[yellow]Account {username} ({platform_enum.value}) already exists. Updating fields.[/yellow]"
+            )
             account = existing
         else:
-            account = Account(username=username)
+            account = Account(username=username, platform=platform_enum)
             db.add(account)
 
+        account.platform = platform_enum
         account.password = password
         account.email = email
         account.email_password = email_password
@@ -325,6 +344,13 @@ def cmd_enqueue(
 ) -> None:
     """Enqueue a single video for the given account."""
     _bootstrap()
+    from app.services.media import MediaError, resolve_library_media_path
+
+    try:
+        src = resolve_library_media_path(video, settings.video_source_dir)
+    except MediaError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1)
     with SessionLocal() as db:
         account = db.scalar(select(Account).where(Account.username == username))
         if account is None:
@@ -340,7 +366,7 @@ def cmd_enqueue(
             scheduled_for = datetime.now(timezone.utc) + timedelta(minutes=_r.randint(1, 30))
         job = PostJob(
             account_id=account.id,
-            source_video_path=str(video.resolve()),
+            source_video_path=str(src),
             caption_template=caption_template,
             scheduled_for=scheduled_for,
             status=initial_job_status(account),
@@ -418,7 +444,12 @@ def cmd_ask(prompt: str = typer.Argument(..., help="Text instruction for the loc
 
     with SessionLocal() as db:
         try:
-            answer = ask(db, [{"role": "user", "content": prompt}], allow_browser=True)
+            answer = ask(
+                db,
+                [{"role": "user", "content": prompt}],
+                allow_browser=True,
+                viewer_role="owner",
+            )
         except AssistantError as exc:
             console.print(f"[red]{exc}[/red]")
             raise typer.Exit(code=1) from exc
@@ -496,7 +527,13 @@ def cmd_list_accounts() -> None:
 
 
 @app.command("status")
-def cmd_status() -> None:
+def cmd_status(
+    show_entry_path: bool = typer.Option(
+        False,
+        "--show-entry-path",
+        help="Print the panel secret URL path (sensitive; default is hidden).",
+    ),
+) -> None:
     """Quick health snapshot: jobs in flight, recent errors, daily stats."""
     _bootstrap()
     today = datetime.now(timezone.utc).date().isoformat()
@@ -504,7 +541,8 @@ def cmd_status() -> None:
         from app.panel.settings_store import get_or_create_panel_settings
 
         panel = get_or_create_panel_settings(db)
-        console.print(f"[bold]Panel entry path:[/bold] {panel.entry_path}")
+        if show_entry_path:
+            console.print(f"[bold]Panel entry path:[/bold] {panel.entry_path}")
         queued = db.scalar(select(PostJob).where(PostJob.status == PostJobStatus.queued).order_by(PostJob.scheduled_for).limit(1))
         running = db.scalars(select(PostJob).where(PostJob.status == PostJobStatus.running)).all()
         dead = db.scalars(
@@ -534,9 +572,15 @@ def cmd_preflight() -> None:
         issues.append("data_dir missing")
     if not settings.sessions_dir.exists():
         issues.append("sessions_dir missing")
-    browser_path = Path("/ms-playwright")
-    if not browser_path.exists() or not any(browser_path.iterdir()):
+    from app.behavior.warmup_playwright import playwright_browsers_available
+
+    if not playwright_browsers_available():
         issues.append("playwright browser cache is empty (run install-playwright)")
+
+    import shutil
+
+    if shutil.which("ffmpeg") is None:
+        issues.append("ffmpeg missing (slideshow/uniquify)")
 
     with SessionLocal() as db:
         proxies = db.scalars(select(Proxy)).all()

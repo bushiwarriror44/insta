@@ -64,6 +64,7 @@ def make_handler(
     *,
     email: str | None = None,
     email_password: str | None = None,
+    imap_host: str | None = None,
 ) -> Callable[[str, ChallengeChoice], str]:
     """Return a ``challenge_code_handler`` bound to a specific account.
 
@@ -97,7 +98,8 @@ def make_handler(
                 code = fetch_instagram_code(
                     email=email,
                     email_password=email_password,
-                    timeout_sec=min(60, timeout_sec),
+                    host=imap_host,
+                    timeout_sec=min(90, timeout_sec),
                 )
             except Exception as exc:  # noqa: BLE001 - never fail the login from email path
                 logger.warning("challenge.email_handler_error", error=str(exc))
