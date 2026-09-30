@@ -64,7 +64,9 @@ docker compose --profile ollama up -d --build
 | `reels-ollama-pull` | одноразово тянет `AGENT_MODEL` |
 | `reels-frontend` | nginx UI, порт хоста `3000` → контейнер `:80` |
 
-`AGENT_BASE_URL` берётся из `.env` (пустой — чат 503 до GPU). `OLLAMA_AUTOSTART=false`, `WORKER_AUTOSTART=false` (воркер — отдельный контейнер). Том `./data` общий. `init-db` на старте контейнеров; отключить: `SKIP_AUTO_INIT_DB=1`.
+`AGENT_BASE_URL` берётся из `.env` (пустой — чат 503 до GPU). `OLLAMA_AUTOSTART=false`, `WORKER_AUTOSTART=false` (воркер — отдельный контейнер). Том `./data` общий. `init-db` на старте **обоих** `reels-api` и `reels-worker` (идемпотентно: lock в `data/.init_db.lock` + игнор `duplicate column` при гонке ALTER). Отключить auto-init: `SKIP_AUTO_INIT_DB=1`.
+
+**Salad / GPU:** в логах API `GET …salad.cloud/…` с **503** при **200** от `api.salad.com` — норма, пока группа **Stopped** или образ качается. Карточка «GPU Salad» → Start; `WAN_BASE_URL` / `AGENT_BASE_URL` имеют смысл только когда контейнер **Running** и Ollama/Wan отвечает.
 
 CLI внутри стека: `docker compose exec reels-api python -m app.cli status` (секретный путь панели по умолчанию не выводится; при необходимости — `status --show-entry-path`, не светите в переписке).
 

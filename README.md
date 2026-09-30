@@ -148,7 +148,7 @@ notepad .env   # e.g. ADMIN_TOKEN, DATABASE_URL unchanged for local SQLite under
 docker compose up -d --build
 ```
 
-On every start, `reels-worker` and `reels-api` run `init-db` automatically (safe to repeat).
+On every start, `reels-worker` and `reels-api` run `init-db` automatically (safe to repeat; shared SQLite uses a migration lock and ignores duplicate-column races).
 To disable that, set `SKIP_AUTO_INIT_DB=1` in `.env`.
 
 - Admin UI: [http://localhost:3000](http://localhost:3000)

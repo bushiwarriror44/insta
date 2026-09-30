@@ -95,6 +95,38 @@ def test_init_db_adds_pending_generation_multimodal_columns(app_env):
     assert "reference_json" in cols
 
 
+def test_init_db_is_idempotent(app_env):
+    from app.db.session import init_db
+
+    init_db()
+    init_db()
+
+
+def test_apply_pending_columns_tolerates_duplicate_column(app_env, monkeypatch):
+    """Race: column on disk but stale inspect → ALTER duplicate must not crash init."""
+    from app.db.session import _apply_pending_columns, init_db
+
+    engine = app_env.engine
+    init_db()
+    assert "imap_host" in {c["name"] for c in inspect(engine).get_columns("accounts")}
+
+    real_inspect = inspect
+
+    class _StaleInspector:
+        def get_table_names(self):
+            return real_inspect(engine).get_table_names()
+
+        def get_columns(self, table):
+            if table == "accounts":
+                names = {c["name"] for c in real_inspect(engine).get_columns(table)}
+                names.discard("imap_host")
+                return [{"name": n} for n in names]
+            return real_inspect(engine).get_columns(table)
+
+    monkeypatch.setattr("app.db.session.inspect", lambda _eng: _StaleInspector())
+    _apply_pending_columns()
+
+
 def test_account_username_unique(db_session, make_proxy):
     proxy = make_proxy()
     db_session.add(Account(username="dup", password="x", proxy_id=proxy.id))

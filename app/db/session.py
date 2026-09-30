@@ -1,7 +1,12 @@
 """SQLAlchemy engine, session factory, schema bootstrap."""
 from __future__ import annotations
 
+import contextlib
+import os
+import time
+
 from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
@@ -89,18 +94,53 @@ _PENDING_COLUMNS: list[tuple[str, str, str]] = [
 ]
 
 
+def _duplicate_column_error(exc: BaseException) -> bool:
+    return "duplicate column name" in str(exc).lower()
+
+
+@contextlib.contextmanager
+def _init_db_migration_lock():
+    """One ALTER writer at a time when api and worker share ./data (Docker)."""
+    if not str(engine.url).startswith("sqlite"):
+        yield
+        return
+    lock_path = settings.data_dir / ".init_db.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    acquired = False
+    for _ in range(120):
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            acquired = True
+            break
+        except FileExistsError:
+            time.sleep(0.1)
+    if not acquired:
+        raise TimeoutError("timed out waiting for init_db migration lock")
+    try:
+        yield
+    finally:
+        lock_path.unlink(missing_ok=True)
+
+
 def _apply_pending_columns() -> None:
     """ALTER TABLE ADD COLUMN for any column that exists in models but not yet on disk."""
-    inspector = inspect(engine)
-    existing_tables = set(inspector.get_table_names())
-    for table, column, sqltype in _PENDING_COLUMNS:
-        if table not in existing_tables:
-            continue
-        cols = {c["name"] for c in inspector.get_columns(table)}
-        if column in cols:
-            continue
-        with engine.begin() as conn:
-            conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {column} {sqltype}'))
+    with _init_db_migration_lock():
+        inspector = inspect(engine)
+        existing_tables = set(inspector.get_table_names())
+        for table, column, sqltype in _PENDING_COLUMNS:
+            if table not in existing_tables:
+                continue
+            cols = {c["name"] for c in inspector.get_columns(table)}
+            if column in cols:
+                continue
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {sqltype}"))
+            except OperationalError as exc:
+                if _duplicate_column_error(exc):
+                    continue
+                raise
 
 
 def _ensure_account_platform_username_index() -> None:
