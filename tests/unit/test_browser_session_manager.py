@@ -1,8 +1,7 @@
 """Browser session manager unit tests (mocked Playwright/VNC)."""
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -342,7 +341,6 @@ async def test_save_session_youtube_without_instagram_sessionid(tmp_path, monkey
     from pathlib import Path
     from types import SimpleNamespace
 
-    import app.browser.session_manager as sm
     from app.accounts.playwright_session import playwright_state_path
     from app.browser.session_manager import BrowserSessionManager, BrowserSessionState, BrowserSessionStatus
 
@@ -513,7 +511,6 @@ async def test_open_instagram_browser_partial_success_on_login(monkeypatch):
 async def test_start_session_survives_goto_failure(monkeypatch):
     from app.config import settings
     import app.browser.session_manager as sm
-    from app.browser.session_manager import _GOTO_WARNING_MESSAGE
 
     monkeypatch.setattr(settings, "browser_vnc_enabled", True)
     monkeypatch.setattr(sm, "vnc_stack_available", lambda: True)

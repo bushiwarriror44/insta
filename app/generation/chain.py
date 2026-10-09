@@ -14,6 +14,7 @@ from app.generation.base import (
     ProgressCallback,
     VideoBackend,
 )
+from app.generation.local_offer import LOCAL_SWITCH_OFFER_MARKER, skip_local_in_auto_chain
 from app.services.generation_inputs import backend_supports_request
 
 
@@ -72,7 +73,12 @@ class ChainVideoBackend(VideoBackend):
         on_progress: ProgressCallback | None = None,
     ) -> GenerationResult:
         errors: list[str] = []
+        skipped_local_healthy = False
         for child in self.children():
+            if child.name == "local" and skip_local_in_auto_chain(self.settings):
+                if child.healthcheck():
+                    skipped_local_healthy = True
+                continue
             if not child.healthcheck():
                 errors.append(child.health_detail() or f"{child.name}: выключен")
                 continue
@@ -98,4 +104,10 @@ class ChainVideoBackend(VideoBackend):
             )
         if not errors:
             raise GenerationError(self.health_detail(), retryable=True)
-        raise GenerationError("; ".join(errors), retryable=True)
+        joined = "; ".join(errors)
+        if skipped_local_healthy:
+            raise GenerationError(
+                f"{LOCAL_SWITCH_OFFER_MARKER} {joined}",
+                retryable=True,
+            )
+        raise GenerationError(joined, retryable=True)

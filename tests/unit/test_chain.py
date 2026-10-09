@@ -101,6 +101,37 @@ def test_chain_healthcheck_any_child():
     assert "API-ключ" in dead.health_detail()
 
 
+def test_chain_skips_pollinations_auth_failure_to_next_backend(tmp_path):
+    chain = ChainVideoBackend(
+        Settings(),
+        backends=[
+            FakeEngine(
+                "pollinations",
+                error="pollinations rejected the credentials (generate)",
+                retryable=True,
+            ),
+            FakeEngine("local"),
+        ],
+    )
+    result = chain.generate(GenerationRequest(prompt="fog"), tmp_path)
+    assert result.backend == "local"
+
+
+def test_chain_offers_local_instead_of_auto_try_when_wan_configured(tmp_path):
+    local = FakeEngine("local")
+    chain = ChainVideoBackend(
+        Settings(wan_base_url="http://wan/generate", local_render_requires_confirm=True),
+        backends=[
+            FakeEngine("fal", error="down", retryable=True),
+            local,
+        ],
+    )
+    with pytest.raises(GenerationError) as exc:
+        chain.generate(GenerationRequest(prompt="fog"), tmp_path)
+    assert "LOCAL_SWITCH_OFFER:" in str(exc.value)
+    assert local.calls == 0
+
+
 def test_run_generation_job_writes_actual_backend(db_session, app_env, monkeypatch):
     from app.config import settings
 

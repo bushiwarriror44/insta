@@ -1,22 +1,26 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ToastProvider } from "../../context/ToastContext";
 import { Assistant } from "../Assistant";
 import { ask } from "../../api/assistant";
-import { api } from "../../api/client";
 
 const useAuthMock = vi.hoisted(() => vi.fn());
+
+const apiMock = vi.hoisted(() => ({
+  accounts: { list: vi.fn() },
+  videos: { upload: vi.fn() },
+  factory: { getGeneration: vi.fn() },
+}));
 
 vi.mock("../../context/AuthContext", () => ({
   useAuth: useAuthMock,
 }));
 
 vi.mock("../../api/client", () => ({
-  api: {
-    accounts: { list: vi.fn().mockResolvedValue([{ username: "alice" }]) },
-  },
+  api: apiMock,
   formatApiError: (err: unknown) => String(err),
 }));
 
@@ -34,8 +38,10 @@ function LocationProbe() {
 function renderDock(ui = <Assistant />, path = "/") {
   return render(
     <MemoryRouter initialEntries={[path]}>
-      <LocationProbe />
-      {ui}
+      <ToastProvider>
+        <LocationProbe />
+        {ui}
+      </ToastProvider>
     </MemoryRouter>
   );
 }
@@ -43,7 +49,12 @@ function renderDock(ui = <Assistant />, path = "/") {
 beforeEach(() => {
   window.localStorage.clear();
   useAuthMock.mockReturnValue({ role: "owner", state: "open" });
-  vi.mocked(api.accounts.list).mockResolvedValue([{ username: "alice" }]);
+  apiMock.accounts.list.mockResolvedValue([{ username: "alice" }]);
+  apiMock.videos.upload.mockResolvedValue({
+    filename: "paste.png",
+    media_type: "image",
+    size_bytes: 100,
+  });
   askMock.mockReset();
   askMock.mockResolvedValue(undefined);
 });
@@ -655,6 +666,42 @@ describe("Assistant", () => {
     await user.click(screen.getByRole("tab", { name: /^ещё/ }));
     expect(screen.getByText("второй ответ")).toBeInTheDocument();
     release?.();
+  });
+
+  it("uploads a pasted image into the draft reference strip", async () => {
+    const uploadMock = apiMock.videos.upload;
+    renderDock();
+    const box = await screen.findByLabelText(/спросить агента/i);
+    const file = new File([new Uint8Array([1, 2, 3])], "shot.png", { type: "image/png" });
+    await act(async () => {
+      fireEvent.paste(box, {
+        clipboardData: {
+          files: [file],
+          items: [],
+        },
+      });
+    });
+    await waitFor(() => expect(uploadMock).toHaveBeenCalled());
+  });
+
+  it("shows render progress when generation events arrive", async () => {
+    const user = userEvent.setup();
+    askMock.mockImplementation(async (_messages, onStep) => {
+      onStep({ type: "generation", text: "running", name: "42", detail: "backend=auto|stage=encoding" });
+      onStep({
+        type: "done",
+        reply: "жду",
+        open_url: null,
+        opened: null,
+        used: ["wait_render"],
+        images: [],
+      });
+    });
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "рендер");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect(await screen.findByTestId("render-progress-card")).toBeInTheDocument();
+    expect(screen.getByText(/рендер #42/i)).toBeInTheDocument();
   });
 
   it("opens a saved single thread as the first chat", async () => {

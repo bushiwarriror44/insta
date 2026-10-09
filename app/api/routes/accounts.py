@@ -15,7 +15,6 @@ from app.accounts.backup_codes import parse_account_line, serialize_backup_codes
 from app.accounts.connection_test import run_account_connection_test
 from app.accounts.cookie_formats import CookieFormatError, import_cookies_data, write_dolphin_cookies_export
 from app.accounts.device_factory import DeviceFingerprint, device_path, load_fingerprint, save_fingerprint
-from app.accounts.login_identifier import resolve_login_identifier
 from app.accounts.first_login_service import run_account_first_login
 from app.accounts.mint_mobile_session import mint_mobile_session
 from app.accounts.playwright_session import (

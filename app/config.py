@@ -104,6 +104,8 @@ class Settings(BaseSettings):
     pollinations_video_url: str = Field(default="https://gen.pollinations.ai/video")
     pollinations_api_key: str = Field(default="")
     wan_base_url: str = Field(default="")
+    # When set with WAN_BASE_URL, auto chain skips local until operator confirms retry.
+    local_render_requires_confirm: bool = Field(default=True)
     wan_api_key: str = Field(default="")
     salad_api_key: str = Field(default="")
     salad_organization: str = Field(default="")

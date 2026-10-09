@@ -5,7 +5,6 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
 
 from app.config import settings
 from app.db.models import AssetSource, GenerationJob, MediaAsset, PipelineStatus
@@ -125,6 +124,7 @@ def test_run_generation_unsupported_backend_fails(db_session, app_env):
     db_session.refresh(job)
     assert job.status in (PipelineStatus.failed, PipelineStatus.dead)
     assert "не поддерживает режим" in (job.last_error or "")
+    assert "Локальный рендер:" in (job.last_error or "")
     assert job.attempts == 0
 
 

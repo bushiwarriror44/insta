@@ -1512,7 +1512,7 @@ def test_diagnose_login_and_proxy_snapshots(
         summary="Instagram не выдал sessionid — splash",
     )
     lonely = Account(username="noproxy", password="x")
-    studio = make_account(username="ytno", platform=Platform.youtube)
+    make_account(username="ytno", platform=Platform.youtube)
     db_session.add_all([run, lonely])
     db_session.commit()
 
@@ -1688,6 +1688,7 @@ def test_create_render_without_key_quotes_healthcheck(db_session, monkeypatch):
     except ToolError as exc:
         assert "не настроен" in str(exc)
         assert "API-ключ" in str(exc)
+        assert "Локальный рендер:" in str(exc)
     else:
         raise AssertionError("expected ToolError")
 

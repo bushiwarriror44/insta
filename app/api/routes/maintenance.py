@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
 from app.api.deps import AuthDep, DocsOwnerDep
 from app.config import Settings, get_settings

@@ -18,9 +18,16 @@ from app.config import Settings, get_settings
 router = APIRouter(prefix="/api/assistant", tags=["assistant"], dependencies=[AuthDep])
 
 
+class AssistantAttachment(BaseModel):
+    filename: str = Field(min_length=1)
+    media_type: str = "image"
+    role: str = "start_image"
+
+
 class AssistantMessage(BaseModel):
     role: str
     content: str
+    attachments: list[AssistantAttachment] = Field(default_factory=list)
 
 
 class AssistantIn(BaseModel):
@@ -65,7 +72,7 @@ def talk(
     try:
         answer = ask(
             db,
-            [m.model_dump() for m in payload.messages],
+            [m.model_dump(mode="json") for m in payload.messages],
             settings=settings,
             token=_bearer(authorization),
             page=payload.page,
@@ -131,7 +138,7 @@ def talk_streaming(
         try:
             for step in stream(
                 db,
-                [m.model_dump() for m in payload.messages],
+                [m.model_dump(mode="json") for m in payload.messages],
                 settings=settings,
                 token=token,
                 page=payload.page,
@@ -154,6 +161,7 @@ def talk_streaming(
                             "created": step.created,
                             "thinking": step.thinking,
                             "cut": step.cut,
+                            "offer_local_switch": step.offer_local_switch,
                         }
                     )
                 elif isinstance(step, Step):

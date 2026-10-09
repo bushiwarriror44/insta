@@ -1,5 +1,5 @@
 import { Ban, Clapperboard, Layers, Play, RefreshCw } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import clsx from "clsx";
 
 import { api, formatApiError } from "../api/client";
@@ -10,6 +10,9 @@ import { StatusBadge } from "../components/StatusBadge";
 import { useToast } from "../context/ToastContext";
 import { usePollWhenVisible } from "../hooks/usePollWhenVisible";
 import { useAssistantMutate } from "../lib/assistantMutate";
+import { withLocalRenderHint } from "../lib/renderErrors";
+import { retryGenerationOnLocal } from "../lib/pollGeneration";
+import { RenderLocalSwitchModal, type LocalSwitchOffer } from "../components/RenderLocalSwitchModal";
 import type { AccountOut, RenderBackendOut } from "../api/types";
 
 type Gen = {
@@ -21,7 +24,9 @@ type Gen = {
   last_error: string | null;
   cost_usd: number;
   backend?: string;
+  offer_local_switch?: boolean;
 };
+const LOCAL_OFFER_DISMISS_KEY = "renders:local-offer-dismissed";
 type Join = { id: number; status: string; post_title: string; last_error: string | null; clips: number };
 
 function backendLabel(name: string) {
@@ -41,6 +46,8 @@ export function Renders() {
   const [libraryFiles, setLibraryFiles] = useState<Array<{ filename: string; media_type: string }>>([]);
   const [referenceFilename, setReferenceFilename] = useState("");
   const [inputMode, setInputMode] = useState("");
+  const [localOffer, setLocalOffer] = useState<LocalSwitchOffer | null>(null);
+  const [localOfferBusy, setLocalOfferBusy] = useState(false);
 
   const reload = useCallback(async () => {
     const [g, c, accs, engines, uploads] = await Promise.all([
@@ -65,7 +72,7 @@ export function Renders() {
         await fn();
         await reload();
       } catch (err) {
-        push(formatApiError(err), "error");
+        push(withLocalRenderHint(formatApiError(err)), "error");
       }
     },
     [push, reload]
@@ -78,6 +85,36 @@ export function Renders() {
     [push, reload]
   );
   usePollWhenVisible(poll, 8000);
+
+  useEffect(() => {
+    if (localOffer || localOfferBusy) return;
+    let dismissed: number[] = [];
+    try {
+      dismissed = JSON.parse(sessionStorage.getItem(LOCAL_OFFER_DISMISS_KEY) || "[]") as number[];
+    } catch {
+      dismissed = [];
+    }
+    const dismissedSet = new Set(dismissed);
+    const row = gens.find((g) => g.offer_local_switch && !dismissedSet.has(g.id));
+    if (row) {
+      setLocalOffer({
+        job_id: row.id,
+        message:
+          "Облачные бэкенды не справились. Сейчас сработает переключение на локальный Wan (Salad / WAN_BASE_URL).",
+      });
+    }
+  }, [gens, localOffer, localOfferBusy]);
+
+  const dismissLocalOffer = (jobId: number) => {
+    try {
+      const prev = JSON.parse(sessionStorage.getItem(LOCAL_OFFER_DISMISS_KEY) || "[]") as number[];
+      if (!prev.includes(jobId)) {
+        sessionStorage.setItem(LOCAL_OFFER_DISMISS_KEY, JSON.stringify([...prev, jobId]));
+      }
+    } catch {
+      sessionStorage.setItem(LOCAL_OFFER_DISMISS_KEY, JSON.stringify([jobId]));
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -183,7 +220,7 @@ export function Renders() {
               push("Рендер в очереди", "success", { label: "Открыть", href: "/renders" });
               await reload();
             } catch (err) {
-              push(formatApiError(err), "error");
+              push(withLocalRenderHint(formatApiError(err)), "error");
             }
           }}
         >
@@ -201,6 +238,7 @@ export function Renders() {
               <th>Бэкенд</th>
               <th>Заголовок</th>
               <th>Стадия</th>
+              <th>Ошибка</th>
               <th>$</th>
               <th />
             </tr>
@@ -208,7 +246,7 @@ export function Renders() {
           <tbody>
             {gens.length === 0 ? (
               <tr>
-                <td colSpan={7}>
+                <td colSpan={8}>
                   <EmptyState>пока пусто</EmptyState>
                 </td>
               </tr>
@@ -224,6 +262,15 @@ export function Renders() {
                   {g.post_title || g.prompt.slice(0, 60)}
                 </td>
                 <td className="truncate">{g.stage}</td>
+                <td
+                  className={clsx(
+                    "max-w-[200px] truncate text-xs",
+                    ["failed", "dead"].includes(g.status) && g.last_error ? "text-rose-300" : "text-slate-500"
+                  )}
+                  title={g.last_error || undefined}
+                >
+                  {g.last_error || "—"}
+                </td>
                 <td className="tabular-nums">{g.cost_usd}</td>
                 <td className="text-right">
                   <div className="flex justify-end gap-1 flex-wrap">
@@ -335,6 +382,36 @@ export function Renders() {
           </tbody>
         </table>
       </Card>
+      <RenderLocalSwitchModal
+        offer={localOffer}
+        busy={localOfferBusy}
+        onCancel={() => {
+          if (localOffer) dismissLocalOffer(localOffer.job_id);
+          setLocalOffer(null);
+        }}
+        onConfirm={() => {
+          if (!localOffer) return;
+          const jobId = localOffer.job_id;
+          setLocalOfferBusy(true);
+          void (async () => {
+            try {
+              const row = await retryGenerationOnLocal(jobId);
+              setLocalOffer(null);
+              dismissLocalOffer(jobId);
+              await reload();
+              if (row.status === "done") {
+                push(`Рендер #${jobId} готов на local`, "success");
+              } else {
+                push(withLocalRenderHint(row.last_error || `Рендер #${jobId}: ${row.status}`), "error");
+              }
+            } catch (err) {
+              push(withLocalRenderHint(formatApiError(err)), "error");
+            } finally {
+              setLocalOfferBusy(false);
+            }
+          })();
+        }}
+      />
     </div>
   );
 }

@@ -91,9 +91,10 @@ def test_run_path_in_openapi(api_client):
 def test_ui_tools_do_not_include_browser():
     names = {item["function"]["name"] for item in TOOLS}
     assert "start_browser" not in names
-    assert "wait_render" not in names
+    assert "wait_render" in names
     assert "wait_plan" not in names
     run_names = {item["function"]["name"] for item in tool_specs(allow_browser=True)}
+    assert "wait_render" in run_names
     assert BROWSER_TOOL_NAMES <= run_names
     assert "start_browser" in run_names
     assert "wait_plan" in run_names
@@ -456,9 +457,6 @@ def test_run_chain_proxy_account_browser_render_publish(
         if n["i"] == 4:
             return _call("create_render", {"prompt": "fog over a forest"})
         if n["i"] == 5:
-            job = db_session.scalars(select(GenerationJob).order_by(GenerationJob.id.desc())).first()
-            return _call("wait_render", {"job_id": job.id})
-        if n["i"] == 6:
             account = db_session.scalar(select(Account).where(Account.username == "ytuser"))
             return _call("publish_now", {"account_id": account.id, "filename": "clip.mp4"})
         return {"role": "assistant", "content": "готово"}

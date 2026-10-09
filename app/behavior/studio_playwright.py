@@ -6,13 +6,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, Optional
 
-StatusCallback = Callable[[str, Optional[str]], None]
-
 from app.accounts.cookie_formats import studio_session_ready
 from app.accounts.playwright_session import playwright_state_path, save_playwright_state
 from app.behavior.warmup_playwright import _parse_proxy, playwright_browsers_available
 from app.config import settings
 from app.logging_setup import get_logger
+
+StatusCallback = Callable[[str, Optional[str]], None]
 
 logger = get_logger(__name__)
 

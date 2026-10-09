@@ -33,6 +33,7 @@ from app.generation.base import (
     Progress,
     VideoBackend,
 )
+from app.generation.hints import enrich_generation_error
 from app.generation.registry import get_backend
 from app.services.generation_inputs import backend_supports_request, resolve_generation_inputs
 from app.scheduler.queue import claim_due, fail
@@ -48,6 +49,26 @@ def claim_due_generation_job(
     session: Session, *, now: datetime | None = None
 ) -> GenerationJob | None:
     return claim_due(session, GenerationJob, now=now)
+
+
+def _fail_generation(
+    session: Session,
+    job: GenerationJob,
+    message: str,
+    *,
+    retryable: bool,
+    now: datetime | None,
+) -> None:
+    fail(
+        session,
+        job,
+        enrich_generation_error(message, backend=job.backend),
+        kind="generation_failed",
+        retryable=retryable,
+        max_attempts=MAX_ATTEMPTS,
+        account_id=job.account_id,
+        now=now,
+    )
 
 
 def run_generation_job(
@@ -66,16 +87,7 @@ def run_generation_job(
     except GenerationError as exc:
         job.stage = ""
         job.queue_position = None
-        fail(
-            session,
-            job,
-            str(exc),
-            kind="generation_failed",
-            retryable=False,
-            max_attempts=MAX_ATTEMPTS,
-            account_id=job.account_id,
-            now=now,
-        )
+        _fail_generation(session, job, str(exc), retryable=False, now=now)
         return
 
     backend_name = (job.backend or "auto").strip().lower()
@@ -87,14 +99,11 @@ def run_generation_job(
     if not backend_supports_request(backend, request):
         job.stage = ""
         job.queue_position = None
-        fail(
+        _fail_generation(
             session,
             job,
             f"бэкенд {backend.name!r} не поддерживает режим {request.mode!r}",
-            kind="generation_failed",
             retryable=False,
-            max_attempts=MAX_ATTEMPTS,
-            account_id=job.account_id,
             now=now,
         )
         return
@@ -131,16 +140,7 @@ def run_generation_job(
         # it stopped — that part is this queue's own, not the policy's.
         job.stage = ""
         job.queue_position = None
-        fail(
-            session,
-            job,
-            str(exc),
-            kind="generation_failed",
-            retryable=exc.retryable,
-            max_attempts=MAX_ATTEMPTS,
-            account_id=job.account_id,
-            now=now,
-        )
+        _fail_generation(session, job, str(exc), retryable=exc.retryable, now=now)
         return
 
     # Rename into the same uuid-style namespace uploads live in, so nothing

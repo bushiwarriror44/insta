@@ -20,6 +20,7 @@ const failedGen = {
   id: 11,
   status: "failed",
   post_title: "Storm",
+  last_error: "pollinations rejected — Локальный рендер: WAN_BASE_URL",
 };
 
 const account = { id: 1, username: "alice" };
@@ -190,6 +191,34 @@ describe("Renders page", () => {
     const row = (await screen.findByText("Storm")).closest("tr") as HTMLElement;
     fireEvent.click(within(row).getByRole("button", { name: /повторить/i }));
     await waitFor(() => expect(apiMock.factory.retryGeneration).toHaveBeenCalledWith(11));
+  });
+
+  it("does not open local switch modal without offer_local_switch", async () => {
+    apiMock.factory.generations.mockResolvedValue([failedGen]);
+    renderRenders();
+    await screen.findByText("Storm");
+    expect(screen.queryByRole("heading", { name: /переключить на локальный wan/i })).toBeNull();
+  });
+
+  it("opens local switch modal when offer_local_switch is set", async () => {
+    apiMock.factory.generations.mockResolvedValue([
+      {
+        ...failedGen,
+        last_error: "LOCAL_SWITCH_OFFER: fal: down",
+        offer_local_switch: true,
+      },
+    ]);
+    renderRenders();
+    expect(
+      await screen.findByRole("heading", { name: /переключить на локальный wan/i })
+    ).toBeInTheDocument();
+  });
+
+  it("shows last_error for a failed generation", async () => {
+    apiMock.factory.generations.mockResolvedValue([failedGen]);
+    renderRenders();
+    expect(await screen.findByText(/pollinations rejected/i)).toBeInTheDocument();
+    expect(screen.getByText(/Локальный рендер/i)).toBeInTheDocument();
   });
 
   it("shows an error toast when cancel fails", async () => {

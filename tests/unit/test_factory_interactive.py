@@ -322,7 +322,66 @@ def test_retry_generation_requires_health(api_client, db_session, monkeypatch):
     )
     res = api_client.post(f"/api/generations/{job.id}/retry")
     assert res.status_code == 409
-    assert "не настроен" in res.json()["detail"]
+    detail = res.json()["detail"]
+    assert "не настроен" in detail
+    assert "Локальный рендер:" in detail
+
+
+def test_generations_list_offer_local_only_with_marker(api_client, db_session, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.db.models import GenerationJob, PipelineStatus
+
+    plain = GenerationJob(
+        prompt="a",
+        backend="fal",
+        status=PipelineStatus.failed,
+        last_error="network timeout",
+    )
+    offered = GenerationJob(
+        prompt="b",
+        backend="auto",
+        status=PipelineStatus.failed,
+        last_error="LOCAL_SWITCH_OFFER: fal: down",
+    )
+    db_session.add_all([plain, offered])
+    db_session.commit()
+    monkeypatch.setattr(
+        "app.generation.registry.get_backend",
+        lambda *_a, **_k: SimpleNamespace(healthcheck=lambda: True),
+    )
+    rows = api_client.get("/api/generations").json()
+    by_id = {row["id"]: row for row in rows}
+    assert by_id[plain.id]["offer_local_switch"] is False
+    assert by_id[offered.id]["offer_local_switch"] is True
+
+
+def test_retry_generation_can_set_backend_local(api_client, db_session, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.db.models import GenerationJob, PipelineStatus
+
+    job = GenerationJob(
+        prompt="z",
+        backend="auto",
+        status=PipelineStatus.failed,
+        attempts=1,
+        last_error="LOCAL_SWITCH_OFFER: fal: down",
+    )
+    db_session.add(job)
+    db_session.commit()
+    monkeypatch.setattr(
+        "app.api.routes.factory.get_backend",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            healthcheck=lambda: True,
+            health_detail=lambda: "",
+        ),
+    )
+    res = api_client.post(f"/api/generations/{job.id}/retry", json={"backend": "local"})
+    assert res.status_code == 200
+    db_session.refresh(job)
+    assert job.backend == "local"
+    assert job.status == PipelineStatus.queued
 
 
 def test_create_composition_rejects_removed_asset(api_client, db_session, app_env):
@@ -384,4 +443,6 @@ def test_create_generation_auto_rejected_when_none_healthy(api_client, monkeypat
     monkeypatch.setattr(settings, "hf_space_id", "")
     res = api_client.post("/api/generations", json={"prompt": "mist"})
     assert res.status_code == 409
-    assert "не настроен" in res.json()["detail"]
+    detail = res.json()["detail"]
+    assert "не настроен" in detail
+    assert "Локальный рендер:" in detail

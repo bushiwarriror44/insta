@@ -3,16 +3,26 @@ import {
   useEffect,
   useRef,
   useState,
+  type ClipboardEvent,
   type FormEvent,
   type KeyboardEvent,
 } from "react";
-import { Check, ChevronDown, Pencil, Plus, Send, Sparkle, Square, Trash2 } from "lucide-react";
+import { Check, ChevronDown, Pencil, Plus, Send, Sparkle, Square, Trash2, X } from "lucide-react";
 import clsx from "clsx";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { api, formatApiError } from "../api/client";
-import { ask, type AskField } from "../api/assistant";
+import { ask, type AskField, type AssistantMessageAttachment } from "../api/assistant";
+import { mediaApiPath } from "../api/media";
+import {
+  generationFromStep,
+  isTerminalGeneration,
+  mergeGeneration,
+  RenderProgressCard,
+  type ActiveGeneration,
+} from "./RenderProgressCard";
 import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
 import { library, search, type PromptGroup } from "../api/prompts";
 import { CHAT_MANUAL, pageHint, toolHint } from "../lib/agentManual";
 import { emitAssistantMutate } from "../lib/assistantMutate";
@@ -24,6 +34,8 @@ import {
   PROXY_FORM_FIELDS,
 } from "../lib/setupForms";
 import { SHOW_ASSISTANT } from "../lib/uiEvents";
+import { retryGenerationOnLocal } from "../lib/pollGeneration";
+import { RenderLocalSwitchModal, type LocalSwitchOffer } from "./RenderLocalSwitchModal";
 
 const HIDDEN_KEY = "assistant-dock:hidden";
 const ALLOW_BROWSER_KEY = "assistant-dock:allow-browser-run";
@@ -153,11 +165,14 @@ function onlyMediaPhrase(text: string): boolean {
   return rest.replace(/[\s.:;,-]/g, "") === "";
 }
 
+type UserAttachment = AssistantMessageAttachment & { previewUrl?: string };
+
 interface Said {
   role: "user" | "assistant";
   content: string;
   used?: string[];
   images?: string[];
+  attachments?: UserAttachment[];
   thinking?: string;
   steps?: string[];
   cut?: string;
@@ -216,6 +231,7 @@ interface Live {
   progressText: string | null;
   progressDetail: string | null;
   progressRatio: number | null;
+  activeGeneration: ActiveGeneration | null;
 }
 
 function emptyLive(): Live {
@@ -234,6 +250,7 @@ function emptyLive(): Live {
     progressText: null,
     progressDetail: null,
     progressRatio: null,
+    activeGeneration: null,
   };
 }
 
@@ -284,6 +301,14 @@ function readStore(): { activeId: string; chats: Chat[] } {
           customTitle: Boolean(chat.customTitle),
           messages: chat.messages
             .filter((message) => message && (message.role === "user" || message.role === "assistant") && typeof message.content === "string")
+            .map((message) => ({
+              ...message,
+              attachments: message.attachments?.map(({ filename, media_type, role: refRole }) => ({
+                filename,
+                media_type,
+                role: refRole,
+              })),
+            }))
             .slice(-40),
         }));
       if (chats.length) {
@@ -306,15 +331,22 @@ function writeStore(chats: Chat[], activeId: string) {
         id: chat.id,
         title: chat.title,
         customTitle: chat.customTitle,
-        messages: chat.messages.slice(-40).map(({ role, content, used, thinking, steps, cut, images }) => ({
-          role,
-          content,
-          used,
-          thinking,
-          steps,
-          cut,
-          images,
-        })),
+        messages: chat.messages.slice(-40).map(
+          ({ role, content, used, thinking, steps, cut, images, attachments }) => ({
+            role,
+            content,
+            used,
+            thinking,
+            steps,
+            cut,
+            images,
+            attachments: attachments?.map(({ filename, media_type, role: refRole }) => ({
+              filename,
+              media_type,
+              role: refRole,
+            })),
+          })
+        ),
       })),
     };
     window.localStorage.setItem(CHATS_KEY, JSON.stringify(slim));
@@ -396,6 +428,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   activeRef.current = activeId;
   const [groups, setGroups] = useState<PromptGroup[]>(() => library([]));
   const { role } = useAuth();
+  const { push: toast } = useToast();
   const owner = role === "owner";
   const [browsing, setBrowsing] = useState(false);
   const [readingManual, setReadingManual] = useState(false);
@@ -404,6 +437,9 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const [modeOpen, setModeOpen] = useState(false);
   const [needle, setNeedle] = useState("");
   const [hidden, setHidden] = useState(readHidden);
+  const [localSwitchOffer, setLocalSwitchOffer] = useState<LocalSwitchOffer | null>(null);
+  const [localSwitchBusy, setLocalSwitchBusy] = useState(false);
+  const [draftAttachments, setDraftAttachments] = useState<UserAttachment[]>([]);
 
   const box = useRef<HTMLTextAreaElement>(null);
   const tail = useRef<HTMLDivElement>(null);
@@ -484,8 +520,22 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
       const question = text.trim();
       const id = activeRef.current;
       const chat = chatsRef.current.find((item) => item.id === id);
-      if (!question || !chat || busyIds.current.has(id)) return;
-      const asked: Said[] = [...chat.messages, { role: "user", content: question }];
+      const attachments = draftAttachments.map(({ filename, media_type, role, previewUrl }) => ({
+        filename,
+        media_type: media_type ?? "image",
+        role: role ?? "start_image",
+        previewUrl,
+      }));
+      if ((!question && attachments.length === 0) || !chat || busyIds.current.has(id)) return;
+      const userLine = question || "Сделай ролик по вложенному изображению (image_to_video).";
+      const asked: Said[] = [
+        ...chat.messages,
+        {
+          role: "user",
+          content: userLine,
+          attachments: attachments.length ? attachments : undefined,
+        },
+      ];
       const notes: Said[] = [];
       const pushStatus = (line: string) => {
         if (notes.some((item) => item.content === line)) return;
@@ -494,6 +544,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
       };
       replaceMessages(id, asked);
       setDraft("");
+      setDraftAttachments([]);
       writingRef.current[id] = "";
       thinkRef.current[id] = "";
       doingRef.current[id] = [];
@@ -512,6 +563,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         progressText: null,
         progressDetail: null,
         progressRatio: null,
+        activeGeneration: null,
       });
       setBrowsing(false);
       setReadingManual(false);
@@ -540,7 +592,15 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
       };
       try {
         await ask(
-          asked.map(({ role, content }) => ({ role, content })),
+          asked.map(({ role, content, attachments: msgAttachments }) => ({
+            role,
+            content,
+            attachments: msgAttachments?.map(({ filename, media_type, role: refRole }) => ({
+              filename,
+              media_type,
+              role: refRole,
+            })),
+          })),
           (step) => {
             if (controller.signal.aborted) return;
             if (step.type === "status") {
@@ -551,6 +611,23 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                 progressDetail: step.detail ?? null,
                 progressRatio: typeof step.ratio === "number" ? step.ratio : null,
               });
+            } else if (step.type === "generation") {
+              const next = generationFromStep(step.text, step.name ?? "", step.detail);
+              if (next) {
+                setLive((prev) => {
+                  const current = prev[id] ?? emptyLive();
+                  return {
+                    ...prev,
+                    [id]: {
+                      ...current,
+                      activeGeneration: mergeGeneration(current.activeGeneration, next),
+                      progressText: null,
+                      progressDetail: null,
+                      progressRatio: null,
+                    },
+                  };
+                });
+              }
             } else if (step.type === "tool") {
               doingRef.current[id] = [...(doingRef.current[id] ?? []), step.text];
               patchLive(id, {
@@ -637,6 +714,9 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                 }
                 openInPlace(navigate, step.open_url);
               }
+              if (step.offer_local_switch) {
+                setLocalSwitchOffer(step.offer_local_switch);
+              }
             }
           },
           controller.signal,
@@ -680,8 +760,34 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         if (activeRef.current === id) box.current?.focus();
       }
     },
-    [page, accountId, jobId, navigate, replaceMessages, patchLive, owner, allowBrowserRun]
+    [page, accountId, jobId, navigate, replaceMessages, patchLive, owner, allowBrowserRun, draftAttachments]
   );
+
+  const confirmLocalSwitch = useCallback(async () => {
+    if (!localSwitchOffer) return;
+    setLocalSwitchBusy(true);
+    const jobId = localSwitchOffer.job_id;
+    try {
+      const row = await retryGenerationOnLocal(jobId);
+      setLocalSwitchOffer(null);
+      emitAssistantMutate();
+      const line =
+        row.status === "done"
+          ? `Рендер #${jobId} готов (asset_id=${row.asset_id ?? "нет"}).`
+          : `Рендер #${jobId}: статус ${row.status}. ${row.last_error ?? ""}`;
+      await send(line);
+    } catch (err) {
+      await send(`Не удалось переключить на local: ${formatApiError(err)}`);
+    } finally {
+      setLocalSwitchBusy(false);
+    }
+  }, [localSwitchOffer, send]);
+
+  const cancelLocalSwitch = useCallback(() => {
+    if (localSwitchBusy) return;
+    setLocalSwitchOffer(null);
+    void send("Оператор отменил переключение на локальный Wan.");
+  }, [localSwitchBusy, send]);
 
   const chat = chats.find((item) => item.id === activeId) ?? chats[0];
   const thread = chat?.messages ?? [];
@@ -700,7 +806,72 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const progressText = view.progressText;
   const progressDetail = view.progressDetail;
   const progressRatio = view.progressRatio;
+  const activeGeneration = view.activeGeneration;
   const anyBusy = Object.values(live).some((item) => item.busy);
+
+  useEffect(() => {
+    if (!chat?.id || !activeGeneration) return;
+    if (isTerminalGeneration(activeGeneration.status)) return;
+    const chatId = chat.id;
+    const jobId = activeGeneration.id;
+    const timer = window.setInterval(() => {
+      void api.factory
+        .getGeneration(jobId)
+        .then((row) => {
+          setLive((prev) => {
+            const current = prev[chatId] ?? emptyLive();
+            if (!current.activeGeneration || current.activeGeneration.id !== jobId) return prev;
+            return {
+              ...prev,
+              [chatId]: {
+                ...current,
+                activeGeneration: mergeGeneration(current.activeGeneration, {
+                  id: jobId,
+                  status: row.status,
+                  stage: row.stage || "",
+                  backend: row.backend || "",
+                  assetId: row.asset_id ?? null,
+                }),
+              },
+            };
+          });
+        })
+        .catch(() => undefined);
+    }, 2500);
+    return () => window.clearInterval(timer);
+    // Poll by job id + status; full activeGeneration object would reset the interval each SSE tick.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: id + status only
+  }, [chat?.id, activeGeneration?.id, activeGeneration?.status]);
+
+  const handlePaste = useCallback(
+    (event: ClipboardEvent) => {
+      const fromFiles = event.clipboardData?.files?.[0];
+      const item = Array.from(event.clipboardData?.items ?? []).find((one) =>
+        one.type.startsWith("image/")
+      );
+      const file = fromFiles?.type?.startsWith("image/")
+        ? fromFiles
+        : item?.getAsFile() ?? null;
+      if (!file || !file.type.startsWith("image/")) return;
+      event.preventDefault();
+      void api.videos
+        .upload(file)
+        .then((out) => {
+          setDraftAttachments([
+            {
+              filename: out.filename,
+              media_type: out.media_type ?? "image",
+              role: "start_image",
+              previewUrl: mediaApiPath(out.filename),
+            },
+          ]);
+        })
+        .catch((err) => {
+          toast(formatApiError(err), "error");
+        });
+    },
+    [toast]
+  );
 
   const setAskAnswers = (
     update: Record<string, string> | ((prev: Record<string, string>) => Record<string, string>)
@@ -814,7 +985,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
 
   const shown = search(groups, needle);
   const hasAskForm = asks.length > 0 || (askFields?.length ?? 0) > 0;
-  const open = thread.length > 0 || busy || hasAskForm;
+  const open = thread.length > 0 || busy || hasAskForm || localSwitchOffer !== null;
 
   const showSetupForm = (fields: AskField[], prompt: string) => {
     if (!chat || busy) return;
@@ -867,6 +1038,23 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                     {message.content}
                   </p>
                 ) : null}
+                {message.role === "user" && message.attachments?.length ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {message.attachments.map((att) => (
+                      <div
+                        key={att.filename}
+                        className="overflow-hidden rounded-lg border border-slate-700"
+                        title={`Референс: ${att.filename}`}
+                      >
+                        <img
+                          src={att.previewUrl || mediaApiPath(att.filename)}
+                          alt="Референс"
+                          className="h-24 w-auto"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
                 {message.cut ? <p className="mt-1 text-xs text-slate-500">{message.cut}</p> : null}
                 {message.steps && message.steps.length > 0 && (
                   <div className="mt-1 space-y-0.5">
@@ -893,9 +1081,14 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                 )}
               </div>
             ))}
+            {activeGeneration ? (
+              <div className="mb-2">
+                <RenderProgressCard job={activeGeneration} />
+              </div>
+            ) : null}
             {busy && (
               <div role="status" className="space-y-2">
-                {progressText ? (
+                {progressText && !activeGeneration ? (
                   <div className="space-y-2 rounded-lg border border-slate-800 bg-slate-900/70 p-3">
                     <div className="flex items-center gap-2 text-sm text-slate-200">
                       <ThinkingSparkle quiet />
@@ -1230,15 +1423,41 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                 </div>
               ) : null}
             </div>
+            {draftAttachments.length > 0 ? (
+              <div
+                className="mb-2 flex flex-wrap items-center gap-2 border-b border-slate-800 pb-2"
+                data-testid="draft-attachments"
+              >
+                <span className="text-xs text-slate-500">Референс для рендера</span>
+                {draftAttachments.map((att) => (
+                  <div key={att.filename} className="relative">
+                    <img
+                      src={att.previewUrl || mediaApiPath(att.filename)}
+                      alt=""
+                      className="h-14 w-14 rounded-md border border-slate-700 object-cover"
+                    />
+                    <button
+                      type="button"
+                      aria-label="Убрать вложение"
+                      className="absolute -right-1 -top-1 rounded-full bg-slate-900 p-0.5 text-slate-400 hover:text-white"
+                      onClick={() => setDraftAttachments([])}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <textarea
               ref={box}
               rows={1}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={onKeyDown}
+              onPaste={handlePaste}
               disabled={busy}
               aria-label="Спросить агента"
-              placeholder="Спросите агента…"
+              placeholder="Спросите агента… (Ctrl+V — картинка для I2V)"
               className="max-h-28 min-h-9 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500"
             />
             <div className="relative">
@@ -1362,6 +1581,12 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
           )}
         </div>
       </div>
+      <RenderLocalSwitchModal
+        offer={localSwitchOffer}
+        busy={localSwitchBusy}
+        onCancel={cancelLocalSwitch}
+        onConfirm={() => void confirmLocalSwitch()}
+      />
     </div>
   );
 }

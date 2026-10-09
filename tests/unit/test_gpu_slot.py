@@ -13,7 +13,7 @@ from app.assistant.chat import AssistantError, _prepare_runtime
 from app.config import Settings
 from app.generation.base import GenerationError, GenerationRequest
 from app.generation.local import LocalVideoBackend
-from app.services import gpu_slot, runtime
+from app.services import gpu_slot
 
 
 def make_settings(tmp_path: Path, **over) -> Settings:

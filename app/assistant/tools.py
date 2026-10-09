@@ -2515,16 +2515,25 @@ def cancel_render(db: Session, job_id: int, *, confirm: Any = False) -> dict[str
     return {"id": job.id, "status": "cancelled"}
 
 
-def retry_render(db: Session, job_id: int) -> dict[str, Any]:
-    from app.generation.registry import get_backend
+def retry_render(db: Session, job_id: int, *, backend: str | None = None) -> dict[str, Any]:
+    from app.generation.hints import enrich_generation_error
+    from app.generation.registry import available_backends, get_backend
     from app.services.retry import NotRetriable, revive
 
     job = db.get(GenerationJob, job_id)
     if job is None:
         raise ToolError(f"рендера {job_id} нет")
-    backend = get_backend(job.backend)
-    if not backend.healthcheck():
-        raise ToolError(backend.health_detail())
+    if backend:
+        name = backend.strip().lower()
+        if name not in available_backends():
+            raise ToolError(f"неизвестный бэкенд {name!r}")
+        job.backend = name
+    engine = get_backend(job.backend)
+    if not engine.healthcheck():
+        detail = engine.health_detail()
+        if job.backend != "slideshow":
+            detail = enrich_generation_error(detail, backend=job.backend)
+        raise ToolError(detail)
     try:
         revive(job)
     except NotRetriable as exc:
@@ -2599,9 +2608,14 @@ def create_render(
     )
     if job.input_mode == INPUT_MODE_SLIDESHOW:
         job.backend = "slideshow"
+    from app.generation.hints import enrich_generation_error
+
     engine = get_backend(job.backend)
     if not engine.healthcheck():
-        raise ToolError(engine.health_detail())
+        detail = engine.health_detail()
+        if job.backend != "slideshow":
+            detail = enrich_generation_error(detail, backend=job.backend)
+        raise ToolError(detail)
     db.add(job)
     db.commit()
     db.refresh(job)
@@ -2889,16 +2903,60 @@ def submit_browser_code(
     }
 
 
+_render_wait_hook: Any = None
+_render_generation_hook: Any = None
+
+
+def set_render_wait_hook(hook: Any) -> None:
+    global _render_wait_hook
+    _render_wait_hook = hook
+
+
+def clear_render_wait_hook() -> None:
+    global _render_wait_hook
+    _render_wait_hook = None
+
+
+def set_render_generation_hook(hook: Any) -> None:
+    global _render_generation_hook
+    _render_generation_hook = hook
+
+
+def clear_render_generation_hook() -> None:
+    global _render_generation_hook
+    _render_generation_hook = None
+
+
+def _emit_render_wait(stage: str, detail: str = "") -> None:
+    if _render_wait_hook is not None:
+        _render_wait_hook(stage, detail)
+
+
+def _emit_render_generation(job: GenerationJob) -> None:
+    if _render_generation_hook is not None:
+        _render_generation_hook(job)
+
+
 def wait_render(
     db: Session,
     job_id: int,
     *,
-    timeout_s: float = 300.0,
+    timeout_s: float | None = None,
     poll_s: float = 2.0,
 ) -> dict[str, Any]:
+    from app.config import get_settings
+    from app.generation.local_offer import should_offer_local_switch
+
+    settings = get_settings()
     job = db.get(GenerationJob, job_id)
     if job is None:
         raise ToolError(f"рендера {job_id} нет")
+    if timeout_s is None:
+        timeout_s = (
+            float(settings.generation_timeout_seconds) + 120.0
+            if (job.backend or "").strip().lower() == "local"
+            else 900.0
+        )
     deadline = time.monotonic() + max(0.0, float(timeout_s))
     interval = max(0.05, float(poll_s))
     terminal = {
@@ -2909,7 +2967,24 @@ def wait_render(
     }
     while True:
         db.refresh(job)
+        stage = (job.stage or "").strip() or job.status.value
+        _emit_render_wait(stage, (job.last_error or "").strip())
+        _emit_render_generation(job)
         if job.status in terminal:
+            if job.status in (PipelineStatus.failed, PipelineStatus.dead) and should_offer_local_switch(
+                job, settings
+            ):
+                return {
+                    "id": job.id,
+                    "status": _status_value(job.status),
+                    "asset_id": job.asset_id,
+                    "last_error": job.last_error,
+                    "offer_local_switch": True,
+                    "message": (
+                        "Облачные бэкенды не справились. Сейчас можно переключить рендер "
+                        "на локальный Wan (Salad / WAN_BASE_URL)."
+                    ),
+                }
             return {
                 "id": job.id,
                 "status": _status_value(job.status),

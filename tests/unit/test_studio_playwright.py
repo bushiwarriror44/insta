@@ -1,7 +1,6 @@
 """Tests for headless Studio login."""
 from __future__ import annotations
 
-import asyncio
 
 from app.behavior import studio_playwright as sp
 

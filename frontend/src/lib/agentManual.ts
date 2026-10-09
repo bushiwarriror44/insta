@@ -47,6 +47,7 @@ export const CHAT_MANUAL: ManualSection[] = [
       "Нижний чат вызывает tools в ту же SQLite, что и кнопки панели. Справочник модели — сжатый handbook, не этот мануал.",
       "Сломанный постинг, вход или прокси — секции handbook «Если постинг сломался» / «Если вход сломался» / «Если прокси сломался» и tool diagnose, не память.",
       "Неполная задача (нет username, прокси, ролика, промпта) — чат спросит уточнения. Пока нет ответа «Уточнения: …» — create не вызывает.",
+      "Ctrl+V в поле чата — картинка в библиотеку как референс I2V (filename уходит агенту). После create_render агент ждёт wait_render; в чате виден прогресс рендера.",
     ],
   },
   {
@@ -79,7 +80,7 @@ export const CHAT_MANUAL: ManualSection[] = [
 const PAGE_HINTS: Record<string, string> = {
   "/": "Сейчас панель: сводка очередей. Чат смотрит overview и открывает страницы здесь.",
   "/accounts": "Сейчас аккаунты: карточка, прокси, сессия. Чат создаёт и правит, удалять нельзя. Сломался вход или прокси — diagnose, не память.",
-  "/publishing": "Сейчас библиотека: клипы, рендер, публикация. Чат не загружает файлы с диска и не удаляет клипы.",
+  "/publishing": "Сейчас библиотека: клипы, рендер, публикация. Ctrl+V в чате кладёт картинку в библиотеку для I2V; с диска ПК чат файлы не читает и клипы не удаляет.",
   "/agent": "Сейчас страница Агент: план роликов (PlanJob), не этот чат и не тумблер воркера.",
   "/renders": "Сейчас рендеры: $ в таблице — fal. local на Salad тарится часами GPU, пока нода Running.",
   "/calendar": "Сейчас календарь. Новые слоты — enqueue_publish / plan_account; дату — reschedule_job.",
@@ -156,11 +157,12 @@ const TOOL_HINTS: Record<string, string> = {
   publish_now: "Сначала проверка подключения. Если не ok — ролика не ставит.",
   first_login: "Автовход только Instagram. Живой браузер из этого чата не откроет.",
   mint_mobile_session: "Mobile-сессия только Instagram.",
-  retry_render: "Повтор GenerationJob.",
+  retry_render: "Повтор GenerationJob; backend local — переключить на Wan.",
+  wait_render: "После create_render/generate_wan — ждать done/failed; чат занят. При LOCAL_SWITCH_OFFER — модалка переключения на local.",
   cancel_render: "Отмена рендера после подтверждения.",
   create_render:
-    "Промпт обязателен. reference_filename / reference_asset_id + input_mode image_to_video|video_to_video|image_slideshow. slideshow (ffmpeg) — cost 0. fal I2V — 0.05 USD/с. local — часы Salad.",
-  generate_wan: "Ролик на Wan (local). Пока рендерится, чат-модель на этой видеокарте выгружается. Ждать — только если попросили.",
+    "Промпт обязателен. reference_filename / reference_asset_id + input_mode image_to_video|video_to_video|image_slideshow. slideshow (ffmpeg) — cost 0. fal I2V — 0.05 USD/с. local — часы Salad. При ошибке облака — Salad Running, WAN_BASE_URL, бэкенд local.",
+  generate_wan: "Ролик на Wan (local). Сразу после — wait_render. GPU занята, чат-модель выгружается.",
   compose: "Нужны минимум два clip_ids из библиотеки.",
   cancel_composition: "Отмена склейки после подтверждения.",
   retry_composition: "Повтор склейки.",

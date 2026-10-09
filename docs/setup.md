@@ -134,7 +134,8 @@ CLI внутри стека: `docker compose exec reels-api python -m app.cli st
 | `FAL_API_KEY` | fal; без ключа этот движок выключен |
 | `FAL_MODEL` | модель fal (Wan 2.5 по умолчанию) |
 | `HF_TOKEN` / `HF_VIDEO_MODEL` | Hugging Face Inference |
-| `POLLINATIONS_VIDEO_URL` | публичный T2V; пусто — выключен |
+| `POLLINATIONS_VIDEO_URL` | T2V endpoint; пусто — движок выключен |
+| `POLLINATIONS_API_KEY` | Bearer для Pollinations; **битый ключ → 403** `rejected the credentials`. Удалите строку или задайте ключ из кабинета Pollinations |
 | `WAN_BASE_URL` | свой GPU HTTP, не compose панели. Сборка образа чат+Wan: `docker/salad-gpu` |
 | `SALAD_API_KEY` | ключ Salad Public API для Start/Stop группы с `/administration`. В чат и логи не копировать |
 | `SALAD_ORGANIZATION` / `SALAD_PROJECT` / `SALAD_CONTAINER_GROUP` | slug-имена из кабинета Salad, не URL |
@@ -142,5 +143,23 @@ CLI внутри стека: `docker compose exec reels-api python -m app.cli st
 | `HF_SPACE_ID` | optional Gradio Space, experimental |
 | `DEFAULT_DAILY_POST_CAP` и часы | дефолты новых аккаунтов |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | алерты (необязательно) |
+
+### Рендер: диагностика `.env` (VPS)
+
+Без вывода секретов:
+
+```bash
+cd /opt/insta
+bash scripts/audit_render_env.sh .env
+docker compose up -d
+```
+
+Проверка Pollinations из worker:
+
+```bash
+docker compose exec reels-worker python scripts/probe_pollinations.py
+```
+
+Типичная ошибка `pollinations rejected the credentials (generate)` — HTTP 401/403: нет `FAL_API_KEY` / `HF_TOKEN`, цепочка дошла до Pollinations. Решения: **`FAL_API_KEY`** (рекомендуется), исправить/убрать `POLLINATIONS_API_KEY`, **`WAN_BASE_URL`** + Salad Running, или `VIDEO_BACKEND_CHAIN=fal,local` без pollinations.
 
 Дальше: [panel.md](panel.md).

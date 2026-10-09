@@ -1,6 +1,5 @@
 """Studio login orchestration service."""
 from app.accounts.studio_login_service import run_studio_login
-from app.api.schemas import FirstLoginOut
 
 
 def test_studio_login_no_proxy(db_session, make_account, monkeypatch):

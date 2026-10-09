@@ -71,8 +71,8 @@ fingerprint только для Instagram, `get_session`, проверить п�
 поставить план (`plan_account`: duration_s / auto_schedule; список — `list_plans` / `list_questions` / `list_sources` / `list_presets`, пресет — `apply_preset`), превью (`preview_plan`), \
 поставить рендер (`create_render`, по умолчанию цепочка `auto`) и склейку (`compose`), \
 статусы движков — `list_render_backends`, \
-ролик на Wan — только `generate_wan` (бэкенд local, не цепочка auto). В ответе назови id задачи и страницу рендеров. \
-`wait_render` после Wan вызывай только если оператор просит подождать: ролик занимает ту же видеокарту, и чат-модель на это время выгружается. \
+ролик на Wan — `generate_wan` (бэкенд local). После каждого `create_render` и `generate_wan` **всегда** вызывай `wait_render` с job_id: \
+пока рендер идёт, чат занят, видеокарта под ролик (чат-модель выгружается). Дождись done или failed, затем ответь оператору. \
 подготовка к постингу — `ensure_account_session`; автовход — `login_account`; код 2FA — `submit_login_code`; mint mobile только для Instagram, \
 паузу, ответить на вопрос агента, \
 добавить источник, читать файлы проекта, `diagnose`, `docker_logs`. \
@@ -805,8 +805,18 @@ TOOLS = [
     ),
     schema(
         "retry_render",
-        "Повторить упавший рендер. auto снова идёт по цепочке.",
-        {"job_id": {"type": "integer"}},
+        "Повторить упавший рендер. backend local — переключить на Wan после подтверждения оператора.",
+        {"job_id": {"type": "integer"}, "backend": {"type": "string"}},
+        ["job_id"],
+    ),
+    schema(
+        "wait_render",
+        "Ждать, пока рендер станет done/failed. Вызывай сразу после create_render или generate_wan.",
+        {
+            "job_id": {"type": "integer"},
+            "timeout_s": {"type": "number"},
+            "poll_s": {"type": "number"},
+        },
         ["job_id"],
     ),
     schema(
@@ -817,7 +827,7 @@ TOOLS = [
     ),
     schema(
         "create_render",
-        "Поставить рендер. Промпт обязателен. Фото/клип: reference_filename (библиотека) или reference_asset_id; reference_role start_image|motion_video; input_mode image_to_video|video_to_video|image_slideshow. backend auto — fal/local для I2V. Нет промпта — ask.",
+        "Поставить рендер. Промпт обязателен. После постановки всегда wait_render. Если у оператора вложение-картинка в чате — reference_filename из вложения и input_mode=image_to_video. Иначе reference_filename/reference_asset_id; image_to_video|video_to_video|image_slideshow. Нет промпта — ask.",
         {
             "prompt": {"type": "string"},
             "account_id": {"type": "integer"},
@@ -833,7 +843,7 @@ TOOLS = [
     ),
     schema(
         "generate_wan",
-        "Поставить ролик на Wan (backend local). Промпт обязателен. Не жди wait_render, пока оператор сам не попросил подождать.",
+        "Поставить ролик на Wan (backend local). Промпт обязателен. Сразу после — wait_render с тем же job_id.",
         {
             "prompt": {"type": "string"},
             "duration_s": {"type": "number", "description": "длина клипа 5–10 секунд"},
@@ -880,6 +890,8 @@ TOOLS = [
 ]
 
 
+RENDER_WAIT_TOOLS = frozenset({"wait_render"})
+
 LOGIN_PROGRESS_TOOLS = frozenset(
     {
         "login_account",
@@ -905,7 +917,6 @@ BROWSER_TOOL_NAMES = frozenset(
         "browser_status",
         "save_browser_session",
         "submit_browser_code",
-        "wait_render",
         "wait_plan",
     }
 )
@@ -942,16 +953,6 @@ BROWSER_TOOLS = [
             "username": {"type": "string"},
         },
         [],
-    ),
-    schema(
-        "wait_render",
-        "Ждать, пока рендер станет done/failed. Вызови после create_render, прежде чем публиковать.",
-        {
-            "job_id": {"type": "integer"},
-            "timeout_s": {"type": "number"},
-            "poll_s": {"type": "number"},
-        },
-        ["job_id"],
     ),
     schema(
         "wait_plan",
@@ -1021,6 +1022,7 @@ class Answer:
     created: dict[str, list[int]] = field(default_factory=lambda: {"accounts": [], "proxies": []})
     thinking: str = ""
     cut: str = ""
+    offer_local_switch: dict[str, Any] | None = None
 
 
 def run_tool(
@@ -1401,7 +1403,14 @@ def run_tool(
             None,
         )
     if name == "retry_render":
-        return tools.retry_render(db, _row_id(args, "job_id")), None
+        return (
+            tools.retry_render(
+                db,
+                _row_id(args, "job_id"),
+                backend=_optional_text(args, "backend"),
+            ),
+            None,
+        )
     if name == "cancel_render":
         return tools.cancel_render(db, _row_id(args, "job_id"), confirm=args.get("confirm")), None
     if name == "create_render":
@@ -1635,6 +1644,151 @@ class Step:
     detail: str = ""
 
 
+def _generation_step_detail(job: Any) -> str:
+    parts: list[str] = []
+    backend = getattr(job, "backend", None)
+    stage = getattr(job, "stage", None)
+    asset_id = getattr(job, "asset_id", None)
+    if backend:
+        parts.append(f"backend={backend}")
+    if stage:
+        parts.append(f"stage={stage}")
+    if asset_id:
+        parts.append(f"asset_id={asset_id}")
+    return "|".join(parts)
+
+
+def _generation_step(job: Any) -> Step:
+    status = getattr(getattr(job, "status", None), "value", None) or str(
+        getattr(job, "status", "") or ""
+    )
+    job_id = getattr(job, "id", None)
+    return Step(
+        kind="generation",
+        text=status or "running",
+        name=str(job_id) if job_id is not None else "",
+        detail=_generation_step_detail(job),
+    )
+
+
+def _generation_create_detail(result: dict[str, Any]) -> str:
+    backend = str(result.get("backend") or "").strip()
+    return f"backend={backend}" if backend else ""
+
+
+def _generation_step_from_create_result(result: dict[str, Any]) -> Step:
+    return Step(
+        kind="generation",
+        text="queued",
+        name=str(result["id"]),
+        detail=_generation_create_detail(result),
+    )
+
+
+@dataclass
+class _ToolOutcome:
+    result: Any
+    went: Any
+
+
+def _will_wait_render_later(calls: list[Any], after_index: int, job_id: int) -> bool:
+    for call in calls[after_index + 1 :]:
+        name, args = _read_call(call)
+        if name != "wait_render":
+            continue
+        try:
+            wid = int(args.get("job_id"))
+        except (TypeError, ValueError):
+            continue
+        if wid == job_id:
+            return True
+    return False
+
+
+def _iter_hooked_tool_run(
+    db: Session,
+    name: str,
+    args: dict[str, Any],
+    *,
+    settings: Settings,
+    token: str | None,
+    allow_browser: bool,
+    viewer_role: str | None,
+) -> Iterator[Step | _ToolOutcome]:
+    login_status: list[tuple[str, str | None]] = []
+    render_status: list[tuple[str, str]] = []
+    generation_events: list[Any] = []
+    if name in LOGIN_PROGRESS_TOOLS:
+        tools.set_login_status_hook(
+            lambda title, detail=None: login_status.append((title, detail))
+        )
+    if name in RENDER_WAIT_TOOLS:
+        tools.set_render_wait_hook(
+            lambda stage, detail="": render_status.append((stage, detail))
+        )
+        tools.set_render_generation_hook(lambda job: generation_events.append(job))
+
+    def _run_tool_call() -> tuple[Any, Any]:
+        return run_tool(
+            db,
+            name,
+            args,
+            settings=settings,
+            token=token,
+            allow_browser=allow_browser,
+            viewer_role=viewer_role,
+        )
+
+    result: Any
+    went: Any = None
+    try:
+        if name in LOGIN_PROGRESS_TOOLS or name in RENDER_WAIT_TOOLS:
+            emitted_login = 0
+            emitted_render = 0
+            emitted_gen = 0
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(_run_tool_call)
+                while not future.done():
+                    while emitted_login < len(login_status):
+                        title, detail = login_status[emitted_login]
+                        emitted_login += 1
+                        line = title if not detail else f"{title} · {detail}"
+                        yield Step(kind="status", text=line)
+                    while emitted_render < len(render_status):
+                        stage, detail = render_status[emitted_render]
+                        emitted_render += 1
+                        yield Step(
+                            kind="progress",
+                            text=stage,
+                            detail=detail or None,
+                        )
+                    while emitted_gen < len(generation_events):
+                        job = generation_events[emitted_gen]
+                        emitted_gen += 1
+                        yield _generation_step(job)
+                    time.sleep(0.35)
+                result, went = future.result()
+                while emitted_gen < len(generation_events):
+                    job = generation_events[emitted_gen]
+                    emitted_gen += 1
+                    yield _generation_step(job)
+        else:
+            result, went = _run_tool_call()
+    except (ToolError, TypeError, ValueError, KeyError) as exc:
+        result = {"ошибка": str(exc)}
+    finally:
+        if name in LOGIN_PROGRESS_TOOLS:
+            tools.clear_login_status_hook()
+        if name in RENDER_WAIT_TOOLS:
+            tools.clear_render_wait_hook()
+            tools.clear_render_generation_hook()
+
+    for title, detail in login_status:
+        line = title if not detail else f"{title} · {detail}"
+        yield Step(kind="status", text=line)
+    yield _ToolOutcome(result=result, went=went)
+
+
 def describe(name: str, args: dict[str, Any]) -> str:
     query = args.get("query")
     if name == "list_clips":
@@ -1777,6 +1931,31 @@ def note_created(name: str, result: Any, created: dict[str, list[int]]) -> None:
         created["proxies"].extend(_row_ids(result.get("created")))
 
 
+def build_assistant_thread(
+    messages: list[dict[str, Any]],
+    *,
+    page: str | None = None,
+    account_id: int | None = None,
+    job_id: int | None = None,
+    allow_browser: bool = False,
+) -> list[dict[str, Any]]:
+    from app.assistant.attachments import attachment_operator_hint, messages_for_thread
+
+    sys_content = system_message(
+        page=page,
+        account_id=account_id,
+        job_id=job_id,
+        allow_browser=allow_browser,
+    )
+    attach_hint = attachment_operator_hint(messages)
+    if attach_hint:
+        sys_content = f"{sys_content}\n\n---\n{attach_hint}"
+    return [
+        {"role": "system", "content": sys_content},
+        *messages_for_thread(messages),
+    ]
+
+
 def stream(
     db: Session,
     messages: list[dict[str, str]],
@@ -1829,18 +2008,13 @@ def stream(
     if rounds is not None:
         limit = max(1, int(rounds))
 
-    thread: list[dict[str, Any]] = [
-        {
-            "role": "system",
-            "content": system_message(
-                page=page,
-                account_id=account_id,
-                job_id=job_id,
-                allow_browser=allow_browser,
-            ),
-        },
-        *_recent_talk(messages),
-    ]
+    thread = build_assistant_thread(
+        messages,
+        page=page,
+        account_id=account_id,
+        job_id=job_id,
+        allow_browser=allow_browser,
+    )
     opened: Opened | None = None
     used: list[str] = []
     thoughts: list[str] = []
@@ -1902,10 +2076,11 @@ def stream(
                 return
 
             thread.append(message)
-            for call in calls:
+            for call_index, call in enumerate(calls):
                 name, args = _read_call(call)
-                used.append(name)
-                yield Step(kind="tool", text=describe(name, args), name=name)
+                work: list[tuple[str, dict[str, Any], str]] = [
+                    (name, args, str(call.get("id") or "")),
+                ]
                 again = (name, json.dumps(args, sort_keys=True, default=str))
                 if again in asked:
                     thread.append(
@@ -1922,77 +2097,87 @@ def stream(
                     )
                     continue
                 asked.add(again)
-                login_status: list[tuple[str, str | None]] = []
-                if name in LOGIN_PROGRESS_TOOLS:
-                    tools.set_login_status_hook(
-                        lambda title, detail=None: login_status.append((title, detail))
-                    )
 
-                def _run_tool_call() -> tuple[Any, Any]:
-                    return run_tool(
+                for work_name, work_args, tool_call_id in work:
+                    used.append(work_name)
+                    yield Step(
+                        kind="tool", text=describe(work_name, work_args), name=work_name
+                    )
+                    outcome: _ToolOutcome | None = None
+                    for item in _iter_hooked_tool_run(
                         db,
-                        name,
-                        args,
+                        work_name,
+                        work_args,
                         settings=settings,
                         token=token,
                         allow_browser=allow_browser,
                         viewer_role=viewer_role,
-                    )
-
-                result: Any
-                went: Any = None
-                try:
-                    if name in LOGIN_PROGRESS_TOOLS:
-                        emitted = 0
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                            future = pool.submit(_run_tool_call)
-                            while not future.done():
-                                while emitted < len(login_status):
-                                    title, detail = login_status[emitted]
-                                    emitted += 1
-                                    line = title if not detail else f"{title} · {detail}"
-                                    yield Step(kind="status", text=line)
-                                time.sleep(0.35)
-                            result, went = future.result()
-                    else:
-                        result, went = _run_tool_call()
+                    ):
+                        if isinstance(item, _ToolOutcome):
+                            outcome = item
+                        else:
+                            yield item
+                    if outcome is None:
+                        continue
+                    result, went = outcome.result, outcome.went
                     if went is not None:
                         opened = went
                         if went.screenshot_url:
                             images.append(went.screenshot_url)
                             yield Step(kind="image", text=went.screenshot_url)
-                except (ToolError, TypeError, ValueError, KeyError) as exc:
-                    result = {"ошибка": str(exc)}
-                else:
-                    note_created(name, result, created)
-                finally:
-                    if name in LOGIN_PROGRESS_TOOLS:
-                        tools.clear_login_status_hook()
-                for title, detail in login_status:
-                    line = title if not detail else f"{title} · {detail}"
-                    yield Step(kind="status", text=line)
-                thread.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": call.get("id", ""),
-                        "content": _render(result),
-                    }
-                )
-                if isinstance(result, dict) and result.get("ask"):
-                    questions = list(result.get("questions") or [])
-                    fields = list(result.get("fields") or [])
-                    why = str(result.get("why") or "").strip()
-                    yield Step(kind="ask", text=why, questions=questions, fields=fields)
-                    yield Answer(
-                        reply=why or "Нужны уточнения, чтобы продолжить.",
-                        opened=opened,
-                        used=used,
-                        images=images,
-                        asks=questions,
-                        fields=fields,
-                        created=created,
+                    if not (isinstance(result, dict) and "ошибка" in result):
+                        note_created(work_name, result, created)
+                    thread.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "content": _render(result),
+                        }
                     )
-                    return
+                    if work_name in ("create_render", "generate_wan") and isinstance(
+                        result, dict
+                    ):
+                        if not result.get("ask") and result.get("id") is not None:
+                            yield _generation_step_from_create_result(result)
+                            job_id = int(result["id"])
+                            if not _will_wait_render_later(calls, call_index, job_id):
+                                work.append(
+                                    (
+                                        "wait_render",
+                                        {"job_id": job_id},
+                                        f"auto-wait-{job_id}",
+                                    )
+                                )
+                    if isinstance(result, dict) and result.get("ask"):
+                        questions = list(result.get("questions") or [])
+                        fields = list(result.get("fields") or [])
+                        why = str(result.get("why") or "").strip()
+                        yield Step(kind="ask", text=why, questions=questions, fields=fields)
+                        yield Answer(
+                            reply=why or "Нужны уточнения, чтобы продолжить.",
+                            opened=opened,
+                            used=used,
+                            images=images,
+                            asks=questions,
+                            fields=fields,
+                            created=created,
+                        )
+                        return
+                    if isinstance(result, dict) and result.get("offer_local_switch"):
+                        msg = str(
+                            result.get("message")
+                            or "Можно переключить рендер на локальный Wan."
+                        ).strip()
+                        job_id = int(result["id"])
+                        yield Answer(
+                            reply=msg,
+                            opened=opened,
+                            used=used,
+                            images=images,
+                            created=created,
+                            offer_local_switch={"job_id": job_id, "message": msg},
+                        )
+                        return
 
     yield Answer(
         reply="Посмотрел, но не успел договорить — спросите про что-то одно.",

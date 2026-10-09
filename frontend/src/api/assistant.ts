@@ -17,6 +17,18 @@ export type AssistantAskOptions = {
   allowBrowser?: boolean;
 };
 
+export type AssistantMessageAttachment = {
+  filename: string;
+  media_type?: string;
+  role?: string;
+};
+
+export type AssistantChatMessage = {
+  role: string;
+  content: string;
+  attachments?: AssistantMessageAttachment[];
+};
+
 export type AssistantStep =
   | { type: "tool"; text: string; name?: string }
   | { type: "token"; text: string }
@@ -35,13 +47,15 @@ export type AssistantStep =
       created?: { accounts?: number[]; proxies?: number[] };
       thinking?: string;
       cut?: string;
+      offer_local_switch?: { job_id: number; message: string } | null;
     }
     | { type: "status"; text: string }
     | { type: "progress"; text: string; detail?: string; ratio?: number; name?: string }
+    | { type: "generation"; text: string; detail?: string; name?: string }
     | { type: "error"; detail: string; retryable: boolean };
 
 export async function ask(
-  messages: Array<{ role: string; content: string }>,
+  messages: AssistantChatMessage[],
   onStep: (step: AssistantStep) => void,
   signal?: AbortSignal,
   page?: string,

@@ -10,7 +10,6 @@ from app.services.generation_inputs import (
     apply_job_reference_fields,
     build_reference_json,
     infer_input_mode,
-    parse_reference_specs,
     resolve_generation_inputs,
 )
 

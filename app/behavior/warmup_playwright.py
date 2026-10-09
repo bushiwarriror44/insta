@@ -44,7 +44,6 @@ from app.behavior.playwright_surface import (
 )
 
 from app.accounts.playwright_session import (
-    sessionid_from_playwright_state,
     sessionid_from_playwright_state_data,
     storage_state_has_session,
 )
@@ -1205,7 +1204,6 @@ def first_login(
         logger.error("playwright.proxy_required", username=username)
         return FirstLoginResult(ok=False, error="proxy required")
 
-    device_settings = None
     fp_locale = None
     if fingerprint is not None:
         try:

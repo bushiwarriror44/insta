@@ -643,9 +643,33 @@ export const api = {
         duration_ms: number;
       }>(`/api/agent-runs/${id}`),
     generations: () =>
-      request<Array<{ id: number; status: string; prompt: string; stage: string; post_title: string; last_error: string | null; cost_usd: number; backend?: string }>>(
-        "/api/generations"
-      ),
+      request<
+        Array<{
+          id: number;
+          status: string;
+          prompt: string;
+          stage: string;
+          post_title: string;
+          last_error: string | null;
+          cost_usd: number;
+          backend?: string;
+          asset_id?: number | null;
+          offer_local_switch?: boolean;
+        }>
+      >("/api/generations"),
+    getGeneration: (id: number) =>
+      request<{
+        id: number;
+        status: string;
+        prompt: string;
+        stage: string;
+        post_title: string;
+        last_error: string | null;
+        cost_usd: number;
+        backend?: string;
+        asset_id?: number | null;
+        offer_local_switch?: boolean;
+      }>(`/api/generations/${id}`),
     backends: () => request<import("./types").RenderBackendOut[]>("/api/generations/backends"),
     createGeneration: (body: {
       prompt: string;
@@ -659,8 +683,11 @@ export const api = {
     }) => request<{ id: number; status: string }>("/api/generations", { method: "POST", body }),
     cancelGeneration: (id: number) =>
       request<{ id: number; status: string }>(`/api/generations/${id}/cancel`, { method: "POST" }),
-    retryGeneration: (id: number) =>
-      request<{ id: number; status: string }>(`/api/generations/${id}/retry`, { method: "POST" }),
+    retryGeneration: (id: number, body?: { backend?: string }) =>
+      request<{ id: number; status: string }>(`/api/generations/${id}/retry`, {
+        method: "POST",
+        body: body ?? {},
+      }),
     compositions: () =>
       request<Array<{ id: number; status: string; post_title: string; last_error: string | null; clips: number }>>(
         "/api/compositions"

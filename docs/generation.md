@@ -6,11 +6,13 @@
 
 По умолчанию `VIDEO_BACKEND=auto`: воркер идёт по `VIDEO_BACKEND_CHAIN` (fal → huggingface → pollinations → local → hfspace). Retryable ошибка или сеть — следующий движок. Не-retryable (плохой промпт) — стоп. Успех пишет в `job.backend` фактическое имя, не `auto`. Если все упали — одна ошибка со списком причин, цитировать как есть.
 
+При заданном `WAN_BASE_URL` и `LOCAL_RENDER_REQUIRES_CONFIRM=true` (по умолчанию) цепочка **не вызывает** `local` сама: в `last_error` будет маркер `LOCAL_SWITCH_OFFER:` — в чате и на `/renders` модалка «Переключай» ставит retry с `backend=local` **только** если этот маркер есть (и Wan доступен). Явный `backend=local` / `generate_wan` — без подтверждения. После `create_render` чат сам вызывает `wait_render`, если модель не сделала это в том же ответе.
+
 | Имя | Что нужно | Стоимость в `cost_usd` |
 | --- | --- | --- |
 | `fal` | `FAL_API_KEY`, модель Wan 2.5 5 или 10 с | прайс fal за секунду (`0.05` USD/с Wan 2.5 в коде) |
 | `huggingface` | свой `HF_TOKEN`, `HF_VIDEO_MODEL` | 0 |
-| `pollinations` | `POLLINATIONS_VIDEO_URL` (ключ необязателен) | 0 |
+| `pollinations` | `POLLINATIONS_VIDEO_URL`; при 401/403 — проверьте `POLLINATIONS_API_KEY` (неверный ключ хуже пустого). В `auto` отказ по ключу **retryable** → следующий движок (`local`, …) | 0 |
 | `local` | `WAN_BASE_URL` (Comfy/Wan на отдельной GPU, не в compose панели). Образ чат+Wan для Salad: [`docker/salad-gpu`](../docker/salad-gpu/README.md) | 0 |
 | `hfspace` | `HF_SPACE_ID`, experimental | 0 |
 | `slideshow` | `ffmpeg` в PATH на воркере | 0 |
@@ -31,11 +33,13 @@
 
 Чат и UI: `POST /api/generations` / `create_render` с `reference_filename`, `reference_asset_id`, `reference_role`, `input_mode`. Промпт обязателен; `account_id` по желанию; `backend` по умолчанию `auto`. Если healthcheck выбранного (или всей цепочки) не проходит — ошибка **как есть**. Живость: `GET /api/generations/backends`, в чате `list_render_backends` и `diagnose`.
 
+В нижнем чате агента **Ctrl+V** вставляет картинку (upload в библиотеку) и передаёт `filename` модели для `create_render` + `image_to_video`. Во время `wait_render` в чате видна панель прогресса рендера (статус и стадия).
+
 `local` перед запросом к `WAN_BASE_URL` выгружает модели Ollama (`keep_alive: 0`) и держит `data/gpu_slot.lock`, чтобы чат не забрал VRAM посреди ролика. Чат в это время отвечает, что GPU занята рендером. На одной 24 GB карте чат и видео всё равно не живут одновременно.
 
 После постановки статус `queued`: рендерит **воркер**. В автономном run после `create_render` нужен `wait_render`, иначе `publish_now` упрётся в ещё не готовый файл.
 
-Таблица `/renders`: полоса статусов, селект движка, «Поставить рендер», «Отменить» (только `queued`), «Повторить». Чат: `list_renders`, `cancel_render` (с confirm), `retry_render` (`auto` снова идёт по цепочке). Что оплачивать и куда: [costs.md](costs.md).
+Таблица `/renders`: полоса статусов, селект движка, «Поставить рендер», «Отменить» (только `queued`), «Повторить». Чат: `list_renders`, `cancel_render` (с confirm), `retry_render` (`backend: local` — на Wan), после `create_render` / `generate_wan` — **`wait_render`** (чат занят до done/failed). Что оплачивать и куда: [costs.md](costs.md).
 
 ## Склейка
 

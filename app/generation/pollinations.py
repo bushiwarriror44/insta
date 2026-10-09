@@ -63,7 +63,12 @@ class PollinationsVideoBackend(VideoBackend):
                 report(Progress(STAGE_RENDERING))
                 response = self._call(client, root, request)
                 report(Progress(STAGE_DOWNLOADING))
-                path = save_response(client, response, destination, name=self.name)
+                try:
+                    path = save_response(client, response, destination, name=self.name)
+                except GenerationError as exc:
+                    if "rejected the credentials" in str(exc):
+                        raise GenerationError(str(exc), retryable=True) from exc
+                    raise
         except httpx.RequestError as exc:
             raise GenerationError(f"pollinations: {exc}", retryable=True) from exc
         return GenerationResult(

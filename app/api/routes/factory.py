@@ -27,12 +27,36 @@ from app.db.models import (
     PromptPreset,
     SourceKind,
 )
+from app.generation.hints import enrich_generation_error
+from app.generation.local_offer import should_offer_local_switch
 from app.generation.registry import available_backends, describe_backends, get_backend
 from app.agent.sources import SourceError, read_source
 from app.services.clarifications import answer as answer_clarification
 from app.services.clarifications import open_questions
 from app.services.planning import plan_for_channel
 from app.services.retry import NotRetriable, revive
+
+
+def _generation_http_detail(detail: str, backend: str) -> str:
+    if (backend or "").strip().lower() == "slideshow":
+        return detail
+    return enrich_generation_error(detail, backend=backend)
+
+
+def _generation_row(job: GenerationJob) -> dict[str, Any]:
+    return {
+        "id": job.id,
+        "status": job.status.value,
+        "prompt": job.prompt,
+        "stage": job.stage,
+        "post_title": job.post_title,
+        "last_error": job.last_error,
+        "cost_usd": job.cost_usd,
+        "backend": job.backend,
+        "asset_id": job.asset_id,
+        "offer_local_switch": should_offer_local_switch(job, settings),
+    }
+
 
 router = APIRouter(tags=["factory"], dependencies=[AuthDep])
 
@@ -76,6 +100,10 @@ class GenerationCreate(BaseModel):
     reference_asset_id: Optional[int] = None
     reference_filename: Optional[str] = None
     reference_role: str = "start_image"
+
+
+class GenerationRetryIn(BaseModel):
+    backend: Optional[str] = None
 
 
 class CompositionIn(BaseModel):
@@ -380,7 +408,10 @@ def create_generation(payload: GenerationCreate, db: Session = Depends(get_db)) 
         job.backend = "slideshow"
     engine = get_backend(job.backend, settings)
     if not engine.healthcheck():
-        raise HTTPException(status_code=409, detail=engine.health_detail())
+        raise HTTPException(
+            status_code=409,
+            detail=_generation_http_detail(engine.health_detail(), job.backend),
+        )
     db.add(job)
     db.commit()
     db.refresh(job)
@@ -406,14 +437,24 @@ def cancel_generation(job_id: int, db: Session = Depends(get_db)) -> dict[str, A
 
 
 @router.post("/api/generations/{job_id}/retry")
-def retry_generation(job_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+def retry_generation(
+    job_id: int,
+    payload: GenerationRetryIn | None = None,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
     job = db.get(GenerationJob, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Рендер не найден")
-    if not get_backend(job.backend, settings).healthcheck():
+    if payload and payload.backend:
+        name = payload.backend.strip().lower()
+        if name not in available_backends():
+            raise HTTPException(status_code=400, detail=f"неизвестный бэкенд {name!r}")
+        job.backend = name
+    engine = get_backend(job.backend, settings)
+    if not engine.healthcheck():
         raise HTTPException(
             status_code=409,
-            detail=get_backend(job.backend, settings).health_detail(),
+            detail=_generation_http_detail(engine.health_detail(), job.backend),
         )
     try:
         revive(job)
@@ -490,6 +531,14 @@ def retry_composition(job_id: int, db: Session = Depends(get_db)) -> dict[str, A
     return {"id": job.id, "status": job.status.value}
 
 
+@router.get("/api/generations/{job_id}")
+def get_generation(job_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+    job = db.get(GenerationJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Рендер не найден")
+    return _generation_row(job)
+
+
 @router.get("/api/generations")
 def list_generations(
     status_filter: Optional[str] = Query(default=None, alias="status"),
@@ -500,19 +549,7 @@ def list_generations(
     if status_filter:
         stmt = stmt.where(GenerationJob.status == PipelineStatus(status_filter))
     rows = db.scalars(stmt).all()
-    return [
-        {
-            "id": r.id,
-            "status": r.status.value,
-            "prompt": r.prompt,
-            "stage": r.stage,
-            "post_title": r.post_title,
-            "last_error": r.last_error,
-            "cost_usd": r.cost_usd,
-            "backend": r.backend,
-        }
-        for r in rows
-    ]
+    return [_generation_row(r) for r in rows]
 
 
 @router.get("/api/compositions")

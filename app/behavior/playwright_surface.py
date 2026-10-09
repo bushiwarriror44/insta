@@ -1,7 +1,7 @@
 """Playwright browser surface profiles: mobile vs desktop emulation."""
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 LoginSurface = Literal["mobile", "desktop"]
 

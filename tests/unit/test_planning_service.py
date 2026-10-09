@@ -10,7 +10,6 @@ from sqlalchemy import select
 from app.agent.planner import AgentError, ContentIdea, PlanResult, Usage, build_prompt
 from app.db.models import (
     AccountStatus,
-    AssetKind,
     ChannelSource,
     Event,
     GenerationJob,
