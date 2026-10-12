@@ -137,10 +137,8 @@ def schedule_assets(
             if slot <= now:
                 continue
             when = slot
-            spread_nudged = False
             if _other_account_close(session, channel.id, when):
                 when = when + timedelta(minutes=CROSS_ACCOUNT_SPREAD_MINUTES, seconds=30)
-                spread_nudged = True
             if when <= now:
                 continue
             if _scheduled_on_local_day(session, channel, when) >= cap:

@@ -63,7 +63,6 @@ from app.proxies.pool import ProxyError, HealthCheckScope, health_check_cached, 
 from app.publisher.reels_publisher import (
     ActionCooldownError,
     HardPublishError,
-    PublishResult,
     TemporaryPublishError,
     publish_feed_photo,
     publish_feed_video,

@@ -89,8 +89,6 @@ def test_failed_shot_records_blocked_join_once(db_session):
         select(func.count()).select_from(Event).where(Event.kind == "post_join_blocked")
     )
     assert count == 1
-from app.services.generation_inputs import apply_job_reference_fields
-from tests.unit.test_chain import FakeEngine
 
 
 class TextOnlyEngine(VideoBackend):

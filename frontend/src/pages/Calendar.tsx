@@ -85,12 +85,8 @@ export function Calendar() {
   const byDay = useMemo(() => {
     const map: Record<string, JobOut[]> = {};
     for (const day of days) map[dayKey(day)] = [];
-    let skippedCancelled = 0;
     for (const job of jobs ?? []) {
-      if (job.status === "cancelled") {
-        skippedCancelled += 1;
-        continue;
-      }
+      if (job.status === "cancelled") continue;
       const key = dayKey(new Date(job.scheduled_for));
       if (map[key]) map[key].push(job);
     }

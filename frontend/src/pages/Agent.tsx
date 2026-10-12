@@ -255,7 +255,7 @@ export function Agent() {
               setBusy(true);
               try {
                 await api.factory.updateBrief(selectedId, brief);
-                const created = await api.factory.plan(selectedId, {
+                await api.factory.plan(selectedId, {
                   count,
                   duration_s: duration,
                   auto_schedule: autoSchedule,

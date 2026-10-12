@@ -178,14 +178,13 @@ def _proxy_login_blocked(
     (unknown). That must not skip auto-open — otherwise Instagram never opens
     on a fresh proxy.
     """
-    blocked, reason = False, "ok"
     if login_http_status in _RATE_LIMIT_STATUSES:
-        blocked, reason = True, "rate_limit"
-    elif login_http_status in (403, 451):
-        blocked, reason = True, "forbidden"
-    elif login_reachable is False and login_http_status is not None:
-        blocked, reason = True, "unreachable_with_status"
-    return blocked
+        return True
+    if login_http_status in (403, 451):
+        return True
+    if login_reachable is False and login_http_status is not None:
+        return True
+    return False
 
 
 def _warning_from_proxy_preflight(

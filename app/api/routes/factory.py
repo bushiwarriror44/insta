@@ -205,7 +205,6 @@ def cancel_plan(job_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
             status_code=409,
             detail=f"задачу в состоянии «{job.status.value}» отменить нельзя",
         )
-    from_status = job.status.value
     job.status = PipelineStatus.cancelled
     db.commit()
     return {"id": job.id, "status": job.status.value}
@@ -497,7 +496,6 @@ def cancel_generation(job_id: int, db: Session = Depends(get_db)) -> dict[str, A
         PipelineStatus.dead,
     ):
         raise HTTPException(status_code=409, detail=f"задачу в состоянии «{job.status.value}» отменить нельзя")
-    from_status = job.status.value
     job.status = PipelineStatus.cancelled
     db.commit()
     return {"id": job.id, "status": job.status.value}
