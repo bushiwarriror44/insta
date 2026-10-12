@@ -38,7 +38,7 @@ export function RenderLocalSwitchModal({
         <Clapperboard className="mt-0.5 h-5 w-5 shrink-0 text-brand-300" />
         <p>
           {offer?.message ||
-            "Сейчас сработает переключение на локальный Wan (Salad Running, WAN_BASE_URL). Облачные бэкенды больше не используются для этой задачи."}
+            "Сейчас сработает переключение на локальный Wan (Salad в статусе «Работает», WAN_BASE_URL). Облачные бэкенды больше не используются для этой задачи."}
         </p>
       </div>
     </Modal>

@@ -115,7 +115,7 @@ def load_app_versions_from_file(path: Path) -> list[tuple[str, str]]:
     """
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, list):
-        raise ValueError("app_versions.json must contain a top-level list")
+        raise ValueError("app_versions.json должен содержать список верхнего уровня")
     out: list[tuple[str, str]] = []
     for item in raw:
         if not isinstance(item, dict):
@@ -125,7 +125,7 @@ def load_app_versions_from_file(path: Path) -> list[tuple[str, str]]:
         if version and code:
             out.append((version, code))
     if not out:
-        raise ValueError("app_versions.json contained no usable entries")
+        raise ValueError("app_versions.json не содержит пригодных записей")
     return out
 
 

@@ -50,7 +50,7 @@ def _snap(value: float, allowed: tuple[int, ...]) -> int:
 
 def aspect_ratio(width: int, height: int) -> str:
     if height == 0:
-        raise GenerationError("height must be non-zero")
+        raise GenerationError("высота должна быть ненулевой")
     ratio = width / height
     options = {"16:9": 16 / 9, "9:16": 9 / 16, "1:1": 1.0}
     return min(options, key=lambda name: abs(options[name] - ratio))
@@ -149,7 +149,7 @@ class FalVideoBackend(VideoBackend):
         raise_http(response, "fal", "submit")
         request_id = response.json().get("request_id")
         if not request_id:
-            raise GenerationError("fal accepted the job but returned no request_id")
+            raise GenerationError("fal принял задачу, но не вернул request_id")
         return request_id
 
     def generate(
@@ -159,7 +159,7 @@ class FalVideoBackend(VideoBackend):
         on_progress: ProgressCallback | None = None,
     ) -> GenerationResult:
         if not self.healthcheck():
-            raise GenerationError("FAL_API_KEY is not set")
+            raise GenerationError("FAL_API_KEY не задан")
         if request.mode == INPUT_MODE_I2V and not request.references:
             raise GenerationError("fal I2V: нужен start_image")
         if request.mode == INPUT_MODE_V2V and _ref_by_role(request, REF_MOTION_VIDEO) is None:
@@ -214,11 +214,11 @@ class FalVideoBackend(VideoBackend):
             if status == "COMPLETED":
                 break
             if status in TERMINAL_FAILURES:
-                raise GenerationError(f"fal reported {status} for {request_id}")
+                raise GenerationError(f"fal сообщил {status} для {request_id}")
             if time.monotonic() > deadline:
                 raise GenerationError(
-                    f"fal did not finish {request_id} within "
-                    f"{self.settings.generation_timeout_seconds:.0f}s",
+                    f"fal не завершил {request_id} за "
+                    f"{self.settings.generation_timeout_seconds:.0f}с",
                     retryable=True,
                 )
             time.sleep(self.settings.generation_poll_seconds)
@@ -231,7 +231,7 @@ class FalVideoBackend(VideoBackend):
     def _video_url(result: dict[str, Any]) -> str:
         url = (result.get("video") or {}).get("url")
         if not url:
-            raise GenerationError("fal returned no video url")
+            raise GenerationError("fal не вернул url видео")
         return url
 
     def _download(

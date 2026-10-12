@@ -35,6 +35,26 @@ def claim_due_composition(
     return claim_due(session, Composition, now=now)
 
 
+def ensure_composition_media(
+    session: Session,
+    job: Composition,
+    *,
+    settings: Settings | None = None,
+) -> None:
+    """Reject a retry or enqueue when the source clips are gone."""
+    settings = settings or get_settings()
+    media = Path(settings.media_dir)
+    bound = session.get(Composition, job.id)
+    if bound is not None:
+        job = bound
+    if len(job.clips) < 2:
+        raise MediaError("склейка: нужны минимум два клипа")
+    for clip in job.clips:
+        asset_media_path(media, clip.asset)
+    if job.audio is not None:
+        asset_media_path(media, job.audio)
+
+
 def run_composition(
     session: Session,
     job: Composition,

@@ -90,6 +90,7 @@ def _finish(
     )
 
 
+
 def run_account_connection_test(
     account: Account,
     db: Session,
@@ -116,7 +117,7 @@ def run_account_connection_test(
     device_exists = device_path(username).exists()
     platform = _platform_value(account)
     if platform in STUDIO_PLATFORMS:
-        pw_exists = playwright_state_path(username).exists()
+        pw_exists = playwright_state_path(username, platform).exists()
         ready = studio_session_ready(username, platform)
         source: Literal["database", "session_file", "playwright", "none"] = (
             "playwright" if ready else "none"
@@ -267,7 +268,7 @@ def run_account_connection_test(
         collector.info(
             "session_probe",
             f"Площадка={platform}, Playwright state="
-            f"{_yes_no(playwright_state_path(username).exists())}, "
+            f"{_yes_no(playwright_state_path(username, platform).exists())}, "
             f"cookies площадки={_yes_no(has_cookies)}",
         )
         if has_cookies:

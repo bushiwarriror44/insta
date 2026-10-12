@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Agent } from "../Agent";
@@ -12,6 +13,8 @@ const apiMock = vi.hoisted(() => ({
     agentRun: vi.fn(),
     plan: vi.fn(),
     week: vi.fn(),
+    plans: vi.fn(),
+    cancelPlan: vi.fn(),
     preview: vi.fn(),
     updateBrief: vi.fn(),
     presets: vi.fn(),
@@ -88,6 +91,8 @@ function defaults() {
   });
   apiMock.factory.plan.mockResolvedValue({ id: 1, status: "queued" });
   apiMock.factory.week.mockResolvedValue({ id: 2, status: "queued" });
+  apiMock.factory.plans.mockResolvedValue([]);
+  apiMock.factory.cancelPlan.mockResolvedValue({ id: 3, status: "cancelled" });
   apiMock.factory.preview.mockResolvedValue({ planned: 2 });
   apiMock.factory.updateBrief.mockResolvedValue({ brief: "nature" });
   apiMock.factory.presets.mockResolvedValue([]);
@@ -105,8 +110,12 @@ function defaults() {
   });
 }
 
-async function renderReady() {
-  render(<Agent />);
+async function renderReady(path = "/agent") {
+  render(
+    <MemoryRouter initialEntries={[path]}>
+      <Agent />
+    </MemoryRouter>
+  );
   await waitFor(() =>
     expect(screen.getByRole("button", { name: /запланировать/i })).toBeEnabled()
   );
@@ -139,6 +148,36 @@ describe("Agent page", () => {
       })
     );
     expect(apiMock.factory.updateBrief).toHaveBeenCalledWith(1, "nature");
+  });
+
+  it("opens the account from the address", async () => {
+    apiMock.accounts.list.mockResolvedValue([
+      { id: 1, username: "alice", platform: "instagram", brief: "nature" },
+      { id: 2, username: "bob", platform: "youtube", brief: "vlogs" },
+    ]);
+    apiMock.factory.questions.mockImplementation(async (id: number) =>
+      id === 2 ? [question] : []
+    );
+    await renderReady("/agent?account=2");
+    expect(screen.getByLabelText("Аккаунт агента")).toHaveValue("2");
+    expect(await screen.findByText("Какая ниша?")).toBeInTheDocument();
+  });
+
+  it("cancels a failed plan from the plans list", async () => {
+    apiMock.factory.plans.mockResolvedValue([
+      {
+        id: 3,
+        status: "failed",
+        count: 5,
+        planned: 0,
+        spread_over_days: 7,
+        last_error: "agent down",
+        created_at: "2026-03-15T08:00:00Z",
+      },
+    ]);
+    await renderReady();
+    fireEvent.click(await screen.findByRole("button", { name: /отменить план 3/i }));
+    await waitFor(() => expect(apiMock.factory.cancelPlan).toHaveBeenCalledWith(3));
   });
 
   it("sends auto_schedule=false with the week plan when the checkbox is off", async () => {

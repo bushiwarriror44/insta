@@ -80,7 +80,7 @@ def _bootstrap() -> None:
 def cmd_init_db() -> None:
     """Create the SQLite schema."""
     _bootstrap()
-    console.print("[green]Database initialized at[/green]", settings.database_url)
+    console.print("[green]База инициализирована:[/green]", settings.database_url)
 
 
 @app.command("import-proxies")
@@ -103,22 +103,22 @@ def cmd_import_proxies(
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        console.print("[red]Invalid JSON[/red]", exc)
+        console.print("[red]Некорректный JSON[/red]", exc)
         raise typer.Exit(code=1)
     if not isinstance(data, list):
-        console.print("[red]Root JSON value must be a list[/red]")
+        console.print("[red]Корень JSON должен быть списком[/red]")
         raise typer.Exit(code=1)
 
     failures = False
     with SessionLocal() as db:
         for i, raw in enumerate(data):
             if not isinstance(raw, dict):
-                console.print(f"[yellow]Skipping item {i}: not an object[/yellow]")
+                console.print(f"[yellow]Пропуск элемента {i}: не объект[/yellow]")
                 continue
             label = str(raw.get("label", "")).strip()
             url = str(raw.get("url", "")).strip()
             if not label or not url:
-                console.print(f"[yellow]Skipping item {i}: missing label or url[/yellow]")
+                console.print(f"[yellow]Пропуск элемента {i}: нет label или url[/yellow]")
                 continue
             co = raw.get("country")
             tz = raw.get("timezone") or raw.get("timezone_name")
@@ -141,12 +141,14 @@ def cmd_import_proxies(
                 notes=notes_s,
             )
             if skip_health_check:
-                console.print(f"[green]{label}[/green] upserted")
+                console.print(f"[green]{label}[/green] сохранён")
             elif not health_check_record(db, proxy)[0]:
-                console.print(f"[yellow]{label} upserted but health-check failed[/yellow]")
+                console.print(f"[yellow]{label} сохранён, но проверка доступности не прошла[/yellow]")
                 failures = True
             else:
-                console.print(f"[green]{label}[/green] ready ip={proxy.last_known_ip or '?'}")
+                console.print(
+                    f"[green]{label}[/green] готов ip={proxy.last_known_ip or '?'}"
+                )
     if failures:
         raise typer.Exit(code=1)
 
@@ -167,9 +169,14 @@ def cmd_add_proxy(
         if not skip_health_check:
             ok, _snapshot, _err = health_check_record(db, proxy)
             if not ok:
-                console.print(f"[yellow]Proxy {label} is registered but failed health-check.[/yellow]")
+                console.print(
+                    f"[yellow]Прокси {label} зарегистрирован, но проверка доступности не прошла.[/yellow]"
+                )
                 raise typer.Exit(code=1)
-        console.print(f"[green]Proxy {label} ready[/green] ip={proxy.last_known_ip or '?'} country={proxy.country or '?'}")
+        console.print(
+            f"[green]Прокси {label} готов[/green] "
+            f"ip={proxy.last_known_ip or '?'} country={proxy.country or '?'}"
+        )
 
 
 @app.command("add-account")
@@ -197,12 +204,12 @@ def cmd_add_account(
     try:
         platform_enum = Platform(platform.strip().lower())
     except ValueError:
-        console.print(f"[red]Unknown platform {platform!r}[/red]")
+        console.print(f"[red]Неизвестная платформа {platform!r}[/red]")
         raise typer.Exit(code=1)
     with SessionLocal() as db:
         proxy = db.scalar(select(Proxy).where(Proxy.label == proxy_label))
         if proxy is None:
-            console.print(f"[red]Proxy {proxy_label} not found. Add it first.[/red]")
+            console.print(f"[red]Прокси {proxy_label} не найден. Сначала добавьте его.[/red]")
             raise typer.Exit(code=1)
 
         existing = db.scalar(
@@ -213,7 +220,7 @@ def cmd_add_account(
         )
         if existing is not None:
             console.print(
-                f"[yellow]Account {username} ({platform_enum.value}) already exists. Updating fields.[/yellow]"
+                f"[yellow]Аккаунт {username} ({platform_enum.value}) уже есть. Обновляю поля.[/yellow]"
             )
             account = existing
         else:
@@ -249,7 +256,7 @@ def cmd_add_account(
             timezone_id=account.timezone,
         )
         console.print(
-            f"[green]Account {username} ready[/green] "
+            f"[green]Аккаунт {username} готов[/green] "
             f"device={fp.settings['device_settings']['model']} country={fp.country} locale={fp.locale}"
         )
 
@@ -273,7 +280,7 @@ def cmd_refresh_app_versions(
     """
     _bootstrap()
     if not file.exists():
-        console.print(f"[red]File not found: {file}[/red]")
+        console.print(f"[red]Файл не найден: {file}[/red]")
         raise typer.Exit(code=1)
     from app.accounts.device_factory import (
         load_app_versions_from_file,
@@ -282,12 +289,12 @@ def cmd_refresh_app_versions(
     try:
         values = load_app_versions_from_file(file)
     except (ValueError, json.JSONDecodeError) as exc:
-        console.print(f"[red]Failed to load: {exc}[/red]")
+        console.print(f"[red]Не удалось загрузить: {exc}[/red]")
         raise typer.Exit(code=1) from exc
     set_app_versions(values)
     console.print(
-        f"[green]Loaded {len(values)} Instagram app versions[/green] from {file} "
-        f"(latest: {values[-1][0]})"
+        f"[green]Загружено версий Instagram: {len(values)}[/green] из {file} "
+        f"(последняя: {values[-1][0]})"
     )
 
 
@@ -297,16 +304,16 @@ def cmd_install_playwright(
 ) -> None:
     """Install Playwright browser binaries on demand."""
     _bootstrap()
-    console.print(f"[cyan]Installing Playwright browser:[/cyan] {browser}")
+    console.print(f"[cyan]Установка браузера Playwright:[/cyan] {browser}")
     try:
         subprocess.run(
             [str(Path(sys.executable)), "-m", "playwright", "install", browser],
             check=True,
         )
     except subprocess.CalledProcessError as exc:
-        console.print(f"[red]Playwright install failed[/red] (exit={exc.returncode})")
+        console.print(f"[red]Установка Playwright не удалась[/red] (exit={exc.returncode})")
         raise typer.Exit(code=1) from exc
-    console.print(f"[green]Playwright browser installed:[/green] {browser}")
+    console.print(f"[green]Браузер Playwright установлен:[/green] {browser}")
 
 
 @app.command("first-login")
@@ -318,19 +325,21 @@ def cmd_first_login(username: str) -> None:
     with SessionLocal() as db:
         account = db.scalar(select(Account).where(Account.username == username))
         if account is None:
-            console.print(f"[red]Account {username} not found[/red]")
+            console.print(f"[red]Аккаунт {username} не найден[/red]")
             raise typer.Exit(code=1)
         proxy = db.get(Proxy, account.proxy_id) if account.proxy_id else None
         if proxy is None:
-            console.print(f"[red]Account {username} has no proxy assigned. First-login is blocked.[/red]")
+            console.print(
+                f"[red]У аккаунта {username} нет прокси. Первый вход заблокирован.[/red]"
+            )
             raise typer.Exit(code=1)
         out = run_account_first_login(account, db)
         if out.ok:
-            console.print(f"[green]First login flow completed for {username}[/green]")
+            console.print(f"[green]Первый вход для {username} выполнен[/green]")
             return
         console.print(
-            f"[yellow]First login finished with warnings for {username}. "
-            f"{out.error or 'Check logs.'}[/yellow]"
+            f"[yellow]Первый вход для {username} завершился с предупреждениями. "
+            f"{out.error or 'Смотрите логи.'}[/yellow]"
         )
         raise typer.Exit(code=1)
 
@@ -354,8 +363,9 @@ def cmd_enqueue(
     with SessionLocal() as db:
         account = db.scalar(select(Account).where(Account.username == username))
         if account is None:
-            console.print(f"[red]Account {username} not found[/red]")
+            console.print(f"[red]Аккаунт {username} не найден[/red]")
             raise typer.Exit(code=1)
+        explicit_when = bool(when)
         if when:
             scheduled_for = datetime.fromisoformat(when)
             if scheduled_for.tzinfo is None:
@@ -364,6 +374,14 @@ def cmd_enqueue(
             import random as _r
 
             scheduled_for = datetime.now(timezone.utc) + timedelta(minutes=_r.randint(1, 30))
+        from app.services.scheduling import first_legal_slot, placement_problem
+
+        problem = placement_problem(db, account, scheduled_for)
+        if problem:
+            if explicit_when:
+                console.print(f"[red]{problem}[/red]")
+                raise typer.Exit(code=1)
+            scheduled_for = first_legal_slot(db, account, scheduled_for)
         job = PostJob(
             account_id=account.id,
             source_video_path=str(src),
@@ -373,7 +391,10 @@ def cmd_enqueue(
         )
         db.add(job)
         db.commit()
-        console.print(f"[green]Enqueued job[/green] id={job.id} username={username} at {scheduled_for.isoformat()}")
+        console.print(
+            f"[green]Задача в очереди[/green] id={job.id} username={username} "
+            f"at {scheduled_for.isoformat()}"
+        )
 
 
 @app.command("plan-week")
@@ -387,12 +408,12 @@ def cmd_plan_week(
     _bootstrap()
     videos = sorted(p for p in sources_dir.iterdir() if p.suffix.lower() in {".mp4", ".mov", ".m4v"})
     if not videos:
-        console.print(f"[red]No videos found in {sources_dir}[/red]")
+        console.print(f"[red]Видео не найдены в {sources_dir}[/red]")
         raise typer.Exit(code=1)
     with SessionLocal() as db:
         account = db.scalar(select(Account).where(Account.username == username))
         if account is None:
-            console.print(f"[red]Account {username} not found[/red]")
+            console.print(f"[red]Аккаунт {username} не найден[/red]")
             raise typer.Exit(code=1)
         created = schedule_jobs(
             db,
@@ -401,7 +422,9 @@ def cmd_plan_week(
             caption_template=caption_template,
             days_ahead=days,
         )
-        console.print(f"[green]Scheduled {len(created)} jobs[/green] over {days} day(s)")
+        console.print(
+            f"[green]Запланировано задач: {len(created)}[/green] на {days} дн."
+        )
 
 
 @app.command("run-worker")
@@ -458,7 +481,7 @@ def cmd_ask(prompt: str = typer.Argument(..., help="Text instruction for the loc
         for question in answer.asks:
             console.print(f"  ? {question}")
     if answer.used:
-        console.print("[dim]used[/dim]", ", ".join(answer.used))
+        console.print("[dim]использовано[/dim]", ", ".join(answer.used))
 
 
 @app.command("provide-code")
@@ -466,12 +489,7 @@ def cmd_provide_code(username: str, code: str) -> None:
     """Drop a challenge code for an account that's currently waiting."""
     _bootstrap()
     write_code(username, code)
-    with SessionLocal() as db:
-        account = db.scalar(select(Account).where(Account.username == username))
-        if account is not None and account.status == AccountStatus.challenge:
-            account.status = AccountStatus.active
-            db.commit()
-    console.print(f"[green]Code recorded for {username}[/green]")
+    console.print(f"[green]Код для {username} записан[/green]")
 
 
 @app.command("pause-account")
@@ -483,7 +501,20 @@ def cmd_pause(username: str) -> None:
 @app.command("resume-account")
 def cmd_resume(username: str) -> None:
     _bootstrap()
-    _set_status(username, AccountStatus.active)
+    from app.accounts.status import NotResumable, apply_resume
+
+    with SessionLocal() as db:
+        account = db.scalar(select(Account).where(Account.username == username))
+        if account is None:
+            console.print(f"[red]Аккаунт {username} не найден[/red]")
+            raise typer.Exit(code=1)
+        try:
+            apply_resume(account)
+        except NotResumable as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from exc
+        db.commit()
+        console.print(f"[green]Аккаунт {username} → активен[/green]")
 
 
 @app.command("rotate-proxy")
@@ -494,11 +525,13 @@ def cmd_rotate_proxy(username: str, proxy_label: str) -> None:
         account = db.scalar(select(Account).where(Account.username == username))
         proxy = db.scalar(select(Proxy).where(Proxy.label == proxy_label))
         if account is None or proxy is None:
-            console.print("[red]Account or proxy not found[/red]")
+            console.print("[red]Аккаунт или прокси не найден[/red]")
             raise typer.Exit(code=1)
         account.proxy_id = proxy.id
         db.commit()
-        console.print(f"[green]Account {username} now uses proxy {proxy_label}[/green]")
+        console.print(
+            f"[green]Аккаунт {username} теперь на прокси {proxy_label}[/green]"
+        )
 
 
 @app.command("list-accounts")
@@ -506,13 +539,13 @@ def cmd_list_accounts() -> None:
     _bootstrap()
     with SessionLocal() as db:
         accounts = db.scalars(select(Account).order_by(Account.username)).all()
-        table = Table(title="Accounts")
+        table = Table(title="Аккаунты")
         table.add_column("Username")
-        table.add_column("Status")
-        table.add_column("Proxy")
+        table.add_column("Статус")
+        table.add_column("Прокси")
         table.add_column("TZ")
-        table.add_column("Cap")
-        table.add_column("Last publish")
+        table.add_column("Лимит")
+        table.add_column("Последний пост")
         for a in accounts:
             proxy = db.get(Proxy, a.proxy_id) if a.proxy_id else None
             table.add_row(
@@ -542,25 +575,30 @@ def cmd_status(
 
         panel = get_or_create_panel_settings(db)
         if show_entry_path:
-            console.print(f"[bold]Panel entry path:[/bold] {panel.entry_path}")
+            console.print(f"[bold]Путь входа в панель:[/bold] {panel.entry_path}")
         queued = db.scalar(select(PostJob).where(PostJob.status == PostJobStatus.queued).order_by(PostJob.scheduled_for).limit(1))
         running = db.scalars(select(PostJob).where(PostJob.status == PostJobStatus.running)).all()
         dead = db.scalars(
             select(PostJob).where(PostJob.status == PostJobStatus.dead).order_by(PostJob.finished_at.desc()).limit(5)
         ).all()
         stats = db.scalars(select(DailyStat).where(DailyStat.date_key == today)).all()
-        console.print(f"[bold]Today ({today})[/bold]")
+        console.print(f"[bold]Сегодня ({today})[/bold]")
         for s in stats:
             account = db.get(Account, s.account_id)
             uname = account.username if account else f"#{s.account_id}"
-            console.print(f"  @{uname}: posts={s.posts_count} fails={s.failures_count}")
-        console.print(f"\n[bold]Running:[/bold] {len(running)} job(s)")
+            console.print(f"  @{uname}: постов={s.posts_count} сбоев={s.failures_count}")
+        console.print(f"\n[bold]В работе:[/bold] {len(running)} задач(и)")
         if queued is not None:
-            console.print(f"[bold]Next queued:[/bold] job {queued.id} at {queued.scheduled_for.isoformat()}")
+            console.print(
+                f"[bold]Следующая в очереди:[/bold] задача {queued.id} в "
+                f"{queued.scheduled_for.isoformat()}"
+            )
         if dead:
-            console.print("[bold]Recent dead jobs:[/bold]")
+            console.print("[bold]Недавние мёртвые задачи:[/bold]")
             for d in dead:
-                console.print(f"  job {d.id} (account {d.account_id}): {d.last_error}")
+                console.print(
+                    f"  задача {d.id} (аккаунт {d.account_id}): {d.last_error}"
+                )
 
 
 @app.command("preflight")
@@ -569,32 +607,34 @@ def cmd_preflight() -> None:
     _bootstrap()
     issues: list[str] = []
     if not settings.data_dir.exists():
-        issues.append("data_dir missing")
+        issues.append("нет каталога data_dir")
     if not settings.sessions_dir.exists():
-        issues.append("sessions_dir missing")
+        issues.append("нет каталога sessions_dir")
     from app.behavior.warmup_playwright import playwright_browsers_available
 
     if not playwright_browsers_available():
-        issues.append("playwright browser cache is empty (run install-playwright)")
+        issues.append(
+            "кэш браузера playwright пуст (выполните install-playwright)"
+        )
 
     import shutil
 
     if shutil.which("ffmpeg") is None:
-        issues.append("ffmpeg missing (slideshow/uniquify)")
+        issues.append("нет ffmpeg (slideshow/uniquify)")
 
     with SessionLocal() as db:
         proxies = db.scalars(select(Proxy)).all()
         if not proxies:
-            issues.append("no proxies configured")
+            issues.append("прокси не настроены")
         unhealthy = [p.label for p in proxies if not p.is_healthy]
         if unhealthy:
-            issues.append(f"unhealthy proxies: {', '.join(unhealthy[:5])}")
+            issues.append(f"нездоровые прокси: {', '.join(unhealthy[:5])}")
 
     if issues:
         for item in issues:
-            console.print(f"[yellow]preflight:[/yellow] {item}")
+            console.print(f"[yellow]проверка:[/yellow] {item}")
         raise typer.Exit(code=1)
-    console.print("[green]preflight ok[/green]")
+    console.print("[green]проверка ок[/green]")
 
 
 @app.command("browser-vnc-diag")
@@ -612,7 +652,7 @@ def cmd_browser_vnc_diag(
 
     import os
 
-    console.print("[bold]noVNC / browser diagnostics[/bold]")
+    console.print("[bold]Диагностика noVNC / браузера[/bold]")
     console.print(f"  BROWSER_VNC_ENABLED={settings.browser_vnc_enabled}")
     console.print(f"  DISPLAY={os.environ.get('DISPLAY', ':99')}")
 
@@ -622,39 +662,41 @@ def cmd_browser_vnc_diag(
         "websockify": shutil_which("websockify"),
     }
     for name, path in tools.items():
-        status = f"[green]{path}[/green]" if path else "[red]missing[/red]"
+        status = f"[green]{path}[/green]" if path else "[red]нет[/red]"
         console.print(f"  {name}: {status}")
 
     console.print(f"  vnc_stack_available={vnc_stack_available()}")
     console.print(f"  playwright_browsers_available={playwright_browsers_available()}")
-    console.print(f"  novnc_static={'yes' if Path('/usr/share/novnc').is_dir() else 'no'}")
+    console.print(f"  novnc_static={'да' if Path('/usr/share/novnc').is_dir() else 'нет'}")
 
     if username:
         data = browser_session_manager.status_dict(username)
-        console.print(f"\n[bold]Session @{username}[/bold]")
+        console.print(f"\n[bold]Сессия @{username}[/bold]")
         console.print_json(json.dumps(data))
-        token_hint = "YOUR_ADMIN_TOKEN" if settings.admin_token else "(auth disabled)"
-        console.print("\n[dim]HTTP status (from host):[/dim]")
+        token_hint = "YOUR_ADMIN_TOKEN" if settings.admin_token else "(auth выключен)"
+        console.print("\n[dim]HTTP status (с хоста):[/dim]")
         console.print(
             f'  curl -s -H "Authorization: Bearer {token_hint}" '
             f"http://127.0.0.1:8000/api/accounts/{username}/browser/status"
         )
-        console.print("\n[dim]WebSocket (query token, no Bearer header):[/dim]")
+        console.print("\n[dim]WebSocket (query token, без Bearer):[/dim]")
         console.print(
             f'  wscat -c "ws://127.0.0.1:8000/api/accounts/{username}/browser/vnc/ws?token={token_hint}"'
         )
-        console.print("\n[dim]Through frontend nginx:[/dim]")
+        console.print("\n[dim]Через frontend nginx:[/dim]")
         console.print(
             f'  wscat -c "ws://127.0.0.1:3000/api/accounts/{username}/browser/vnc/ws?token={token_hint}"'
         )
 
-    console.print("\n[dim]Host checks:[/dim]")
+    console.print("\n[dim]Проверки на хосте:[/dim]")
     console.print("  docker compose ps")
     console.print("  ss -tlnp | grep -E ':80|:3000|:8000'")
     console.print("  docker compose logs -f reels-api --tail=50")
-    console.print("\n[yellow]If port 80 is host nginx -> :3000 (not docker directly):[/yellow]")
-    console.print("  outer nginx MUST forward WebSocket Upgrade headers.")
-    console.print("  See deploy/host-nginx.conf.example — copy to /etc/nginx/sites-available/insta")
+    console.print(
+        "\n[yellow]Если порт 80 — host nginx → :3000 (не docker напрямую):[/yellow]"
+    )
+    console.print("  внешний nginx ОБЯЗАН пробрасывать WebSocket Upgrade headers.")
+    console.print("  См. deploy/host-nginx.conf.example — скопируйте в /etc/nginx/sites-available/insta")
     console.print("  sudo nginx -t && sudo systemctl reload nginx")
 
 
@@ -672,7 +714,7 @@ def cmd_export_account(username: str) -> None:
 
     fp = load_fingerprint(username)
     if fp is None:
-        console.print(f"[red]No fingerprint found for {username}[/red]")
+        console.print(f"[red]Отпечаток для {username} не найден[/red]")
         raise typer.Exit(code=1)
     console.print_json(json.dumps(fp.to_dict()))
 
@@ -681,11 +723,11 @@ def _set_status(username: str, status: AccountStatus) -> None:
     with SessionLocal() as db:
         account = db.scalar(select(Account).where(Account.username == username))
         if account is None:
-            console.print(f"[red]Account {username} not found[/red]")
+            console.print(f"[red]Аккаунт {username} не найден[/red]")
             raise typer.Exit(code=1)
         account.status = status
         db.commit()
-        console.print(f"[green]Account {username} -> {status.value}[/green]")
+        console.print(f"[green]Аккаунт {username} → {status.value}[/green]")
 
 
 if __name__ == "__main__":

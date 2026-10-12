@@ -10,7 +10,7 @@ export const ARCHITECTURE_SECTIONS: ArchitectureSection[] = [
     title: "Процессы",
     body: [
       "Compose по умолчанию: reels-frontend (nginx, SPA), reels-api (FastAPI create_app, Python 3.11), reels-worker (python -m app.cli run-worker). Общий том ./data.",
-      "reels-ollama и reels-ollama-pull в профиле compose ollama; на админ-VPS не поднимаются. Чат ходит на AGENT_BASE_URL (OpenAI-совместимый хост), не на localhost панели. Карточка GPU Salad на Администрировании шлёт Start/Stop в Salad Public API — это не тумблер воркера и не автостарт при буте API.",
+      "reels-ollama и reels-ollama-pull в профиле compose ollama; на админ-VPS не поднимаются. Чат ходит на AGENT_BASE_URL (OpenAI-совместимый хост), не на localhost панели. Карточка GPU Salad на Администрировании запускает и останавливает группу через Salad Public API — это не тумблер воркера и не автостарт при буте API.",
     ],
   },
   {

@@ -13,7 +13,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { Link, NavLink, Outlet } from "react-router-dom";
 import clsx from "clsx";
 
 import { api } from "../api/client";
@@ -38,7 +38,12 @@ const NAV = [
   { to: "/maintenance", label: "Обслуживание", icon: Wrench, testId: "nav-maintenance" },
 ];
 
-type Badges = { review: number; failed: number; questions: number };
+type Badges = {
+  review: number;
+  failed: number;
+  questions: number;
+  questionsAccountId: number | null;
+};
 
 export function Layout() {
   const { state, logout, authRequired, role } = useAuth();
@@ -48,7 +53,12 @@ export function Layout() {
   const [dockHidden, setDockHidden] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [badges, setBadges] = useState<Badges>({ review: 0, failed: 0, questions: 0 });
+  const [badges, setBadges] = useState<Badges>({
+    review: 0,
+    failed: 0,
+    questions: 0,
+    questionsAccountId: null,
+  });
 
   const loadBadges = useCallback(async () => {
     try {
@@ -57,6 +67,7 @@ export function Layout() {
         review: summary.jobs_awaiting_review ?? 0,
         failed: summary.jobs_failed_24h ?? 0,
         questions: summary.open_questions ?? 0,
+        questionsAccountId: summary.questions_account_id ?? null,
       });
     } catch {
       /* nav badges stay on last known */
@@ -96,16 +107,23 @@ export function Layout() {
 
   return (
     <div className="min-h-screen flex bg-slate-950 text-slate-100">
-      <aside className="w-60 shrink-0 border-r border-slate-800 bg-slate-900/40 flex flex-col">
+      <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col border-r border-slate-800 bg-slate-900/40">
         <div className="px-5 py-5 border-b border-slate-800">
           <div className="text-lg font-semibold tracking-tight">Reels Admin</div>
           <div className="text-xs text-slate-500 mt-0.5">Instagram · YouTube · TikTok</div>
         </div>
-        <nav className="flex-1 px-3 py-4 space-y-1">
-          {NAV.map(({ to, label, icon: Icon, end, testId, badge }) => (
+        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+          {NAV.map(({ to, label, icon: Icon, end, testId, badge }) => {
+            const href =
+              badge === "review" && badges.review > 0
+                ? "/activity?status=awaiting_review"
+                : badge === "questions" && badges.questionsAccountId
+                  ? `/agent?account=${badges.questionsAccountId}`
+                  : to;
+            return (
             <NavLink
               key={to}
-              to={to}
+              to={href}
               end={end}
               data-testid={testId}
               className={({ isActive }) =>
@@ -126,7 +144,8 @@ export function Layout() {
                 <NavBadge count={badges.questions} />
               ) : null}
             </NavLink>
-          ))}
+            );
+          })}
           {showAdmin ? (
             <NavLink
               to="/administration"
@@ -201,7 +220,9 @@ export function Layout() {
           <div className="text-sm text-slate-400">
             Reels Publisher · админ-консоль
             {badges.failed > 0 ? (
-              <span className="ml-2 text-rose-300">ошибки 24ч: {badges.failed}</span>
+              <Link to="/activity?status=errors" className="ml-2 text-rose-300 hover:text-rose-200">
+                ошибки 24ч: {badges.failed}
+              </Link>
             ) : null}
           </div>
           <div className="flex items-center gap-2">

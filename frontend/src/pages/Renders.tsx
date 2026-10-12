@@ -1,6 +1,7 @@
 import { Ban, Clapperboard, Layers, Play, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import clsx from "clsx";
+import { useSearchParams } from "react-router-dom";
 
 import { api, formatApiError } from "../api/client";
 import { Card } from "../components/Card";
@@ -35,6 +36,9 @@ function backendLabel(name: string) {
 
 export function Renders() {
   const { push } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const genFromUrl = Number(searchParams.get("gen") || 0) || null;
+  const joinFromUrl = Number(searchParams.get("join") || 0) || null;
   const [gens, setGens] = useState<Gen[]>([]);
   const [joins, setJoins] = useState<Join[]>([]);
   const [accounts, setAccounts] = useState<AccountOut[]>([]);
@@ -48,6 +52,15 @@ export function Renders() {
   const [inputMode, setInputMode] = useState("");
   const [localOffer, setLocalOffer] = useState<LocalSwitchOffer | null>(null);
   const [localOfferBusy, setLocalOfferBusy] = useState(false);
+  const highlightRef = useRef<HTMLTableRowElement | null>(null);
+
+  useEffect(() => {
+    if (!genFromUrl && !joinFromUrl) return;
+    const node = highlightRef.current;
+    if (node && typeof node.scrollIntoView === "function") {
+      node.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [genFromUrl, joinFromUrl, gens, joins]);
 
   const reload = useCallback(async () => {
     const [g, c, accs, engines, uploads] = await Promise.all([
@@ -207,7 +220,7 @@ export function Renders() {
               const role = libraryFiles.find((f) => f.filename === ref)?.media_type === "video"
                 ? "motion_video"
                 : "start_image";
-              await api.factory.createGeneration({
+              const created = await api.factory.createGeneration({
                 prompt: prompt.trim(),
                 backend: inputMode === "image_slideshow" ? "slideshow" : backend,
                 account_id: typeof accountId === "number" ? accountId : undefined,
@@ -217,7 +230,19 @@ export function Renders() {
               });
               setPrompt("");
               setReferenceFilename("");
-              push("Рендер в очереди", "success", { label: "Открыть", href: "/renders" });
+              const href = created?.id ? `/renders?gen=${created.id}` : "/renders";
+              push("Рендер в очереди", "success", { label: "Открыть", href });
+              if (created?.id) {
+                setSearchParams(
+                  (prev) => {
+                    const next = new URLSearchParams(prev);
+                    next.set("gen", String(created.id));
+                    next.delete("join");
+                    return next;
+                  },
+                  { replace: true }
+                );
+              }
               await reload();
             } catch (err) {
               push(withLocalRenderHint(formatApiError(err)), "error");
@@ -252,7 +277,11 @@ export function Renders() {
               </tr>
             ) : null}
             {gens.map((g) => (
-              <tr key={g.id}>
+              <tr
+                key={g.id}
+                ref={genFromUrl === g.id ? highlightRef : undefined}
+                className={clsx(genFromUrl === g.id && "bg-brand-600/10 ring-1 ring-inset ring-brand-500/30")}
+              >
                 <td className="tabular-nums">{g.id}</td>
                 <td>
                   <StatusBadge value={g.status} />
@@ -274,7 +303,7 @@ export function Renders() {
                 <td className="tabular-nums">{g.cost_usd}</td>
                 <td className="text-right">
                   <div className="flex justify-end gap-1 flex-wrap">
-                    {g.status === "queued" ? (
+                    {["queued", "failed", "dead"].includes(g.status) ? (
                       <button
                         className="btn-ghost btn-compact"
                         aria-label="Отменить"
@@ -313,9 +342,24 @@ export function Renders() {
                 return;
               }
               try {
-                await api.factory.createComposition({ clip_ids, account_id: typeof accountId === "number" ? accountId : undefined });
+                const created = await api.factory.createComposition({
+                  clip_ids,
+                  account_id: typeof accountId === "number" ? accountId : undefined,
+                });
                 setJoinIds("");
-                push("Склейка в очереди", "success", { label: "Открыть", href: "/renders" });
+                const href = created?.id ? `/renders?join=${created.id}` : "/renders";
+                push("Склейка в очереди", "success", { label: "Открыть", href });
+                if (created?.id) {
+                  setSearchParams(
+                    (prev) => {
+                      const next = new URLSearchParams(prev);
+                      next.set("join", String(created.id));
+                      next.delete("gen");
+                      return next;
+                    },
+                    { replace: true }
+                  );
+                }
                 await reload();
               } catch (err) {
                 push(formatApiError(err), "error");
@@ -345,7 +389,11 @@ export function Renders() {
               </tr>
             ) : null}
             {joins.map((j) => (
-              <tr key={j.id}>
+              <tr
+                key={j.id}
+                ref={joinFromUrl === j.id ? highlightRef : undefined}
+                className={clsx(joinFromUrl === j.id && "bg-brand-600/10 ring-1 ring-inset ring-brand-500/30")}
+              >
                 <td className="tabular-nums">{j.id}</td>
                 <td>
                   <StatusBadge value={j.status} />
@@ -356,7 +404,7 @@ export function Renders() {
                 <td className="tabular-nums">{j.clips}</td>
                 <td className="text-right">
                   <div className="flex justify-end gap-1 flex-wrap">
-                    {j.status === "queued" ? (
+                    {["queued", "failed", "dead"].includes(j.status) ? (
                       <button
                         className="btn-ghost btn-compact"
                         aria-label="Отменить"

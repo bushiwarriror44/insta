@@ -31,7 +31,9 @@ def database_path(settings: Settings) -> Path:
     url = settings.database_url
     prefix = "sqlite:///"
     if not url.startswith(prefix):
-        raise BackupError(f"only SQLite is backed up here, not {url.split(':', 1)[0]}")
+        raise BackupError(
+            f"резервные копии поддерживаются только для SQLite, не для {url.split(':', 1)[0]}"
+        )
     return Path(url[len(prefix) :])
 
 
@@ -40,7 +42,7 @@ def take(settings: Settings | None = None, *, now: datetime | None = None) -> Ba
     now = now or datetime.now(timezone.utc)
     source = database_path(settings)
     if not source.exists():
-        raise BackupError(f"no database at {source}")
+        raise BackupError(f"база данных не найдена: {source}")
 
     destination = Path(settings.backup_dir)
     destination.mkdir(parents=True, exist_ok=True)
@@ -52,7 +54,7 @@ def take(settings: Settings | None = None, *, now: datetime | None = None) -> Ba
             live.backup(copy)
     except sqlite3.Error as exc:
         db_copy.unlink(missing_ok=True)
-        raise BackupError(f"could not copy the database: {exc}") from exc
+        raise BackupError(f"не удалось скопировать базу данных: {exc}") from exc
 
     prune(settings)
     return Backup(database=db_copy, taken_at=now)
@@ -81,10 +83,12 @@ def resolve_backup(settings: Settings, name: str) -> Path:
     destination = Path(settings.backup_dir).resolve()
     filename = Path(name).name
     if not filename.endswith(".db") or not Path(filename).stem.startswith("app-"):
-        raise BackupError("backup name must be an app-*.db file in the backup directory")
+        raise BackupError(
+            "имя бэкапа должно быть файлом app-*.db в каталоге резервных копий"
+        )
     candidate = (destination / filename).resolve()
     if candidate.parent != destination:
-        raise BackupError("that backup name escapes the backup directory")
+        raise BackupError("имя бэкапа выходит за пределы каталога резервных копий")
     return candidate
 
 
@@ -109,7 +113,7 @@ def restore(archive: Path, settings: Settings | None = None) -> Path:
     settings = settings or get_settings()
     archive = resolve_backup(settings, archive.name)
     if not archive.exists():
-        raise BackupError(f"no backup at {archive}")
+        raise BackupError(f"бэкап не найден: {archive.name}")
     target = database_path(settings)
     if target.exists():
         kept = target.with_suffix(

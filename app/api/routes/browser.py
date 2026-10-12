@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api/accounts", tags=["browser"])
 def _get_account(username: str, db: Session) -> Account:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
-        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+        raise HTTPException(status_code=404, detail=f"Аккаунт «{username}» не найден")
     return account
 
 
@@ -54,7 +54,7 @@ def _browser_session_response(
 ) -> BrowserSessionOut:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
-        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+        raise HTTPException(status_code=404, detail=f"Аккаунт «{username}» не найден")
     include_secrets = principal.role == "owner"
     payload = {
         **browser_session_manager.status_dict(username),

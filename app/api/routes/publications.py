@@ -63,11 +63,14 @@ def refresh_publication_stats(
 ) -> PublicationOut:
     row = db.get(PostLog, publication_id)
     if row is None:
-        raise HTTPException(status_code=404, detail="Publication not found")
+        raise HTTPException(status_code=404, detail="Публикация не найдена")
     try:
         row = refresh_post_log_stats(db, row)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Stats refresh failed: {exc}") from exc
+        raise HTTPException(
+            status_code=502,
+            detail=f"Не удалось обновить статистику: {exc}",
+        ) from exc
     return _serialize(row, db=db)

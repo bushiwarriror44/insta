@@ -68,7 +68,7 @@ def _is_public(host: str) -> bool:
     try:
         infos = socket.getaddrinfo(host, None)
     except socket.gaierror as exc:
-        raise SourceError(f"{host} does not resolve") from exc
+        raise SourceError(f"{host} не резолвится") from exc
 
     for info in infos:
         address = ipaddress.ip_address(info[4][0])
@@ -87,27 +87,27 @@ def check_url(url: str, settings: Settings) -> str:
     """Validate a URL source, returning its host. Raises `SourceError`."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
-        raise SourceError("only http and https sources are read")
+        raise SourceError("читаются только источники http и https")
 
     host = (parsed.hostname or "").lower()
     if not host:
-        raise SourceError("that URL has no host")
+        raise SourceError("у URL нет хоста")
 
     permitted = allowed_hosts(settings)
     if not permitted:
         raise SourceError(
-            "no hosts are allowed — set REFERENCE_ALLOWED_HOSTS to the sites "
-            "the agent may read"
+            "хосты не разрешены — задайте REFERENCE_ALLOWED_HOSTS сайтами, "
+            "которые агент может читать"
         )
     # A subdomain of an allowed host counts; an unrelated host that merely
     # ends with the same letters does not.
     if not any(
         host == allowed or host.endswith(f".{allowed}") for allowed in permitted
     ):
-        raise SourceError(f"{host} is not in REFERENCE_ALLOWED_HOSTS")
+        raise SourceError(f"{host} нет в REFERENCE_ALLOWED_HOSTS")
 
     if not _is_public(host):
-        raise SourceError(f"{host} resolves to a private address")
+        raise SourceError(f"{host} резолвится в частный адрес")
 
     return host
 
@@ -133,19 +133,19 @@ def read_url(url: str, settings: Settings | None = None) -> str:
         ) as client:
             response = client.get(url, headers={"User-Agent": "content-factory/1.0"})
     except httpx.RequestError as exc:
-        raise SourceError(f"could not reach {url}: {exc}") from exc
+        raise SourceError(f"не удалось достучаться до {url}: {exc}") from exc
 
     if response.is_redirect:
-        raise SourceError("that URL redirects; point the source at the destination")
+        raise SourceError("URL делает редирект — укажите конечный адрес источника")
     if response.status_code >= 400:
-        raise SourceError(f"{url} answered {response.status_code}")
+        raise SourceError(f"{url} ответил кодом {response.status_code}")
 
     body = response.content[: settings.reference_max_bytes].decode(
         response.encoding or "utf-8", errors="replace"
     )
     text = to_text(body)
     if not text:
-        raise SourceError("that page had no readable text")
+        raise SourceError("на странице нет читаемого текста")
     return text[:MAX_CHARS_PER_SOURCE]
 
 
@@ -154,10 +154,10 @@ def resolve_reference(filename: str, settings: Settings) -> Path:
     root = Path(settings.reference_dir).resolve()
     candidate = (root / filename).resolve()
     if candidate.parent != root:
-        raise SourceError("that filename escapes the reference directory")
+        raise SourceError("имя файла выходит за каталог reference")
     if candidate.suffix.lower() not in ALLOWED_FILE_SUFFIXES:
         raise SourceError(
-            f"only {', '.join(sorted(ALLOWED_FILE_SUFFIXES))} files are read"
+            f"читаются только файлы {', '.join(sorted(ALLOWED_FILE_SUFFIXES))}"
         )
     return candidate
 
@@ -167,14 +167,14 @@ def read_file(filename: str, settings: Settings | None = None) -> str:
     path = resolve_reference(filename, settings)
 
     if not path.is_file():
-        raise SourceError(f"{filename} is not in the reference directory")
+        raise SourceError(f"{filename} нет в каталоге reference")
 
     body = path.read_bytes()[: settings.reference_max_bytes].decode(
         "utf-8", errors="replace"
     )
     text = body.strip()
     if not text:
-        raise SourceError(f"{filename} is empty")
+        raise SourceError(f"{filename} пуст")
     return text[:MAX_CHARS_PER_SOURCE]
 
 

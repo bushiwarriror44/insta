@@ -36,11 +36,12 @@ const JOB_STATUS_LABELS: Record<string, string> = {
   failed: "ошибка",
   dead: "прервана",
   cancelled: "отменена",
+  errors: "ошибки",
 };
 
 const DIAG_RUN_STATUS_LABELS: Record<string, string> = {
   running: "выполняется",
-  ok: "OK",
+  ok: "ОК",
   warn: "предупреждение",
   fail: "ошибка",
 };
@@ -52,7 +53,17 @@ const EVENT_LEVEL_LABELS: Record<string, string> = {
   critical: "критическая",
 };
 
-const JOB_STATUSES = ["", "awaiting_review", "queued", "running", "done", "failed", "dead", "cancelled"];
+const JOB_STATUSES = [
+  "",
+  "awaiting_review",
+  "queued",
+  "running",
+  "done",
+  "failed",
+  "dead",
+  "cancelled",
+  "errors",
+];
 const EVENT_LEVELS = ["", "info", "warn", "error", "critical"];
 
 function basename(path: string) {
@@ -77,16 +88,24 @@ export function Activity() {
     return JOB_STATUSES.includes(status) ? status : "";
   })();
   const jobFromUrl = Number(searchParams.get("job") || 0);
+  const laneFromUrl = (() => {
+    const lane = searchParams.get("lane") || "";
+    return lane === "renders" || lane === "joins" || lane === "publishes" ? lane : "publishes";
+  })();
   const [jobs, setJobs] = useState<JobOut[]>([]);
   const [events, setEvents] = useState<EventOut[]>([]);
   const [jobStatus, setJobStatus] = useState(statusFromUrl);
-  const [eventLevel, setEventLevel] = useState<string>("");
+  const levelFromUrl = (() => {
+    const level = searchParams.get("level") || "";
+    return EVENT_LEVELS.includes(level) ? level : "";
+  })();
+  const [eventLevel, setEventLevelState] = useState<string>(levelFromUrl);
   const [loading, setLoading] = useState(true);
   const [selectedJob, setSelectedJob] = useState<JobOut | null>(null);
   const [jobRuns, setJobRuns] = useState<DiagnosticRunOut[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
   const [logsLoading, setLogsLoading] = useState(false);
-  const [lane, setLane] = useState<"publishes" | "renders" | "joins">("publishes");
+  const [lane, setLane] = useState<"publishes" | "renders" | "joins">(laneFromUrl);
   const [renders, setRenders] = useState<Array<{ id: number; status: string; prompt: string; post_title: string; last_error: string | null }>>([]);
   const [joins, setJoins] = useState<Array<{ id: number; status: string; post_title: string; last_error: string | null; clips: number }>>([]);
   const [cursor, setCursor] = useState(0);
@@ -95,6 +114,62 @@ export function Activity() {
   useEffect(() => {
     setJobStatus(statusFromUrl);
   }, [statusFromUrl]);
+
+  useEffect(() => {
+    setLane(laneFromUrl);
+  }, [laneFromUrl]);
+
+  useEffect(() => {
+    setEventLevelState(levelFromUrl);
+  }, [levelFromUrl]);
+
+  const setEventLevel = useCallback(
+    (next: string) => {
+      setEventLevelState(next);
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev);
+          if (next) params.set("level", next);
+          else params.delete("level");
+          return params;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
+
+  const openJob = useCallback(
+    (job: JobOut, index?: number) => {
+      setSelectedJob(job);
+      if (typeof index === "number") setCursor(index);
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev);
+          params.set("job", String(job.id));
+          return params;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
+
+  const selectLane = useCallback(
+    (next: "publishes" | "renders" | "joins") => {
+      setLane(next);
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev);
+          if (next === "publishes") params.delete("lane");
+          else params.set("lane", next);
+          return params;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
 
   const reload = useCallback(async () => {
     const [j, e] = await Promise.all([
@@ -157,12 +232,28 @@ export function Activity() {
       enter: () => {
         if (lane !== "publishes") return;
         const row = jobs[cursor];
-        if (row) setSelectedJob(row);
+        if (row) openJob(row);
       },
     }),
-    [cursor, jobs, lane]
+    [cursor, jobs, lane, openJob]
   );
   useHotkeys(activityKeys, !selectedJob);
+
+  const selectJobStatus = useCallback(
+    (next: string) => {
+      setJobStatus(next);
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev);
+          if (next) params.set("status", next);
+          else params.delete("status");
+          return params;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
 
   const closeLogs = useCallback(() => {
     setSelectedJob(null);
@@ -186,6 +277,22 @@ export function Activity() {
       if (!prev) return prev;
       return jobs.find((j) => j.id === prev.id) ?? prev;
     });
+  }, [jobs, jobFromUrl]);
+
+  useEffect(() => {
+    if (!jobFromUrl || jobs.some((j) => j.id === jobFromUrl)) return;
+    let cancelled = false;
+    api.jobs
+      .list({ limit: 100 })
+      .then((all) => {
+        if (cancelled) return;
+        const found = all.find((j) => j.id === jobFromUrl);
+        if (found) setSelectedJob(found);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
   }, [jobs, jobFromUrl]);
 
   useEffect(() => {
@@ -241,7 +348,7 @@ export function Activity() {
             key={id}
             type="button"
             className={lane === id ? "btn-primary" : "btn-ghost"}
-            onClick={() => setLane(id)}
+            onClick={() => selectLane(id)}
           >
             {label}
           </button>
@@ -265,7 +372,7 @@ export function Activity() {
                     : "text-slate-400 ring-slate-700 hover:bg-slate-800/60"
                 )}
                 aria-pressed={jobStatus === s}
-                onClick={() => setJobStatus(s)}
+                onClick={() => selectJobStatus(s)}
               >
                 {s ? <StatusBadge value={s} /> : "Все статусы"}
               </button>
@@ -274,7 +381,7 @@ export function Activity() {
               className="sr-only"
               aria-label="Статус задачи"
               value={jobStatus}
-              onChange={(e) => setJobStatus(e.target.value)}
+              onChange={(e) => selectJobStatus(e.target.value)}
             >
               {JOB_STATUSES.map((s) => (
                 <option key={s} value={s}>
@@ -322,10 +429,7 @@ export function Activity() {
                     "hover:bg-slate-900/40 align-top cursor-pointer",
                     jobs[cursor]?.id === j.id && "bg-white/[0.05]"
                   )}
-                  onClick={() => {
-                    setSelectedJob(j);
-                    setCursor(jobs.findIndex((row) => row.id === j.id));
-                  }}
+                  onClick={() => openJob(j, jobs.findIndex((row) => row.id === j.id))}
                 >
                   <td className="tabular-nums text-slate-400">#{j.id}</td>
                   <td className="font-medium truncate" title={j.account_username ? `@${j.account_username}` : `id:${j.account_id}`}>
@@ -453,6 +557,7 @@ export function Activity() {
         actions={
           <select
             className="input max-w-[140px] py-1.5 text-xs"
+            aria-label="Уровень события"
             value={eventLevel}
             onChange={(e) => setEventLevel(e.target.value)}
           >

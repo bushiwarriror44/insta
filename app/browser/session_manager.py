@@ -19,6 +19,7 @@ from app.accounts.cookie_formats import cookies_match_platform
 from app.accounts.playwright_session import (
     import_playwright_session_to_account,
     playwright_state_path,
+    playwright_state_write_path,
     sessionid_from_playwright_state_data,
     storage_state_has_session,
 )
@@ -131,11 +132,12 @@ def _is_on_instagram(url: str | None) -> bool:
 
 def _goto_warning_message(http_status: int | None) -> str:
     if http_status == 429:
-        return (
+        msg = (
             "Instagram ограничил запросы с этого IP прокси (HTTP 429). "
             "Подождите 30–60 минут, не перезапускайте браузер часто, или смените прокси. "
             "После паузы попробуйте режим «Десктоп»."
         )
+        return msg
     if http_status is not None:
         return (
             f"Страница логина вернула HTTP {http_status} через прокси. {_GOTO_WARNING_MESSAGE}"
@@ -176,13 +178,14 @@ def _proxy_login_blocked(
     (unknown). That must not skip auto-open — otherwise Instagram never opens
     on a fresh proxy.
     """
+    blocked, reason = False, "ok"
     if login_http_status in _RATE_LIMIT_STATUSES:
-        return True
-    if login_http_status in (403, 451):
-        return True
-    if login_reachable is False and login_http_status is not None:
-        return True
-    return False
+        blocked, reason = True, "rate_limit"
+    elif login_http_status in (403, 451):
+        blocked, reason = True, "forbidden"
+    elif login_reachable is False and login_http_status is not None:
+        blocked, reason = True, "unreachable_with_status"
+    return blocked
 
 
 def _warning_from_proxy_preflight(
@@ -506,11 +509,33 @@ class BrowserSessionManager:
                 await self._cleanup_session(existing, remove=False)
 
             if not settings.browser_vnc_enabled:
-                raise RuntimeError("Interactive browser disabled (set BROWSER_VNC_ENABLED=true)")
+                raise RuntimeError(
+                    "интерактивный браузер отключён (задайте BROWSER_VNC_ENABLED=true)"
+                )
             if not vnc_stack_available():
-                raise RuntimeError("Xvfb/x11vnc/websockify not installed on server")
+                raise RuntimeError("Xvfb/x11vnc/websockify не установлены на сервере")
             if not playwright_browsers_available():
-                raise RuntimeError("Chromium not installed — run install-playwright on server")
+                raise RuntimeError(
+                    "Chromium не установлен — выполните install-playwright на сервере"
+                )
+
+            active = [
+                s
+                for s in self._sessions.values()
+                if s.username != username
+                and s.status
+                not in (
+                    BrowserSessionStatus.stopped,
+                    BrowserSessionStatus.error,
+                    BrowserSessionStatus.saved,
+                )
+            ]
+            if len(active) >= settings.browser_max_sessions:
+                names = ", ".join(s.username for s in active[:3])
+                raise RuntimeError(
+                    f"Уже открыт браузер ({names}). Закройте его — лимит "
+                    f"{settings.browser_max_sessions} сессия(й) для экономии RAM."
+                )
 
             display = self._next_display()
             rfb_port, ws_port = allocate_ports(display)
@@ -570,13 +595,13 @@ class BrowserSessionManager:
                         scope=HealthCheckScope.MINIMAL,
                     )
                 except ProxyError as exc:
-                    session.log("warn", "proxy", f"Preflight прокси не удался: {exc}")
+                    session.log("warn", "proxy", f"Предпроверка прокси не удалась: {exc}")
                     return None
                 except Exception as exc:  # noqa: BLE001
-                    session.log("warn", "proxy", f"Preflight прокси: {exc}")
+                    session.log("warn", "proxy", f"Предпроверка прокси: {exc}")
                     return None
 
-            session.log("info", "vnc", "Старт VNC + preflight прокси…")
+            session.log("info", "vnc", "Старт VNC + предпроверка прокси…")
             snap, _ = await asyncio.gather(_fetch_snapshot(), vnc.start())
             if snap is not None:
                 self.apply_proxy_snapshot(username, snap)
@@ -584,9 +609,9 @@ class BrowserSessionManager:
                     "info",
                     "proxy",
                     (
-                        f"Прокси OK ip={session.proxy_ip or '—'}; "
-                        f"login_reachable={session.proxy_instagram_login_reachable}; "
-                        f"login_http={session.proxy_instagram_login_http_status}"
+                        f"Прокси ок ip={session.proxy_ip or '—'}; "
+                        f"вход доступен={session.proxy_instagram_login_reachable}; "
+                        f"http входа={session.proxy_instagram_login_http_status}"
                     ),
                 )
             session.log("info", "vnc", f"VNC готов (ws_port={ws_port})")
@@ -627,7 +652,7 @@ class BrowserSessionManager:
         try:
             from playwright.async_api import async_playwright
         except ImportError as exc:
-            raise RuntimeError("playwright not installed") from exc
+            raise RuntimeError("playwright не установлен") from exc
 
         stealth_apply = None
         try:
@@ -658,9 +683,9 @@ class BrowserSessionManager:
 
         proxy_arg = _parse_proxy(proxy.url)
         if not proxy_arg:
-            raise RuntimeError("proxy required for interactive browser")
+            raise RuntimeError("для интерактивного браузера нужен прокси")
 
-        state_file = playwright_state_path(account.username)
+        state_file = playwright_state_path(account.username, platform_value)
         if platform_value == "instagram":
             has_saved_session = state_file.exists() and storage_state_has_session(account.username)
         else:
@@ -767,8 +792,8 @@ class BrowserSessionManager:
                 "error",
                 "goto",
                 (
-                    f"Автопереход пропущен: login blocked "
-                    f"(reachable={session.proxy_instagram_login_reachable}, "
+                    f"Автопереход пропущен: вход заблокирован "
+                    f"(доступен={session.proxy_instagram_login_reachable}, "
                     f"http={session.proxy_instagram_login_http_status}). {session.launch_warning}"
                 ),
             )
@@ -874,15 +899,15 @@ class BrowserSessionManager:
     ) -> None:
         session = self._sessions.get(account.username)
         if session is None or session.page is None or session.context is None:
-            raise RuntimeError("No active browser session for this account")
+            raise RuntimeError("нет активной браузерной сессии для этого аккаунта")
         if session.status not in (
             BrowserSessionStatus.running,
             BrowserSessionStatus.awaiting_code,
             BrowserSessionStatus.saved,
         ):
-            raise RuntimeError("Browser session is not running")
+            raise RuntimeError("браузерная сессия не запущена")
 
-        state_file = playwright_state_path(account.username)
+        state_file = playwright_state_path(account.username, _account_platform_value(account))
         need_login = not (
             state_file.exists() and storage_state_has_session(account.username)
         )
@@ -952,19 +977,19 @@ class BrowserSessionManager:
     async def submit_code(self, db: Session, account, code: str | None) -> bool:
         session = self._sessions.get(account.username)
         if session is None or session.page is None:
-            raise RuntimeError("No active browser session for this account")
+            raise RuntimeError("нет активной браузерной сессии для этого аккаунта")
 
         resolved = (code or "").strip()
         if not resolved:
             resolved = consume_next_backup_code(db, account) or ""
         if not resolved:
-            raise ValueError("Verification code is required")
+            raise ValueError("нужен код подтверждения")
 
         session.log("info", "code", "Отправка кода подтверждения…")
         ok = await submit_verification_code(session.page, resolved)
         if not ok:
             session.log("error", "code", "Поле для кода на странице не найдено")
-            raise RuntimeError("Could not find a verification code field on the page")
+            raise RuntimeError("на странице не найдено поле для кода подтверждения")
 
         await _human_wait(0.5, 1.0)
         await _dismiss_post_login_modals(session.page)
@@ -981,7 +1006,7 @@ class BrowserSessionManager:
     async def save_session(self, db: Session, account) -> dict[str, Any]:
         session = self._sessions.get(account.username)
         if session is None or session.context is None:
-            raise RuntimeError("No active browser session for this account")
+            raise RuntimeError("нет активной браузерной сессии для этого аккаунта")
 
         if session.page is None or not await _platform_logged_in(
             session.context, session.page, _account_platform_value(account)
@@ -993,11 +1018,11 @@ class BrowserSessionManager:
                 f"Сначала войдите в {label} в браузере — cookies площадки не найдены"
             )
 
-        state_file = playwright_state_path(account.username)
+        platform = _account_platform_value(account)
+        state_file = playwright_state_write_path(account.username, platform)
         state_file.parent.mkdir(parents=True, exist_ok=True)
         await session.context.storage_state(path=str(state_file))
         data = json.loads(state_file.read_text(encoding="utf-8"))
-        platform = _account_platform_value(account)
         if platform != "instagram":
             session.status = BrowserSessionStatus.saved
             session.awaiting_code = False
@@ -1012,7 +1037,7 @@ class BrowserSessionManager:
         imported = import_playwright_session_to_account(db, account, session_id=session_id)
         if not imported:
             session.log("error", "save", "Не удалось извлечь sessionid из browser state")
-            raise RuntimeError("Could not extract sessionid from browser state")
+            raise RuntimeError("не удалось извлечь sessionid из состояния браузера")
 
         session.status = BrowserSessionStatus.saved
         session.awaiting_code = False

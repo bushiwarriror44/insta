@@ -1671,6 +1671,26 @@ def _generation_step(job: Any) -> Step:
     )
 
 
+def _tool_thread_alignment(thread: list[dict[str, Any]]) -> dict[str, Any]:
+    expected: list[str] = []
+    seen: list[str] = []
+    for item in thread:
+        role = item.get("role")
+        if role == "assistant":
+            for call in item.get("tool_calls") or []:
+                cid = str(call.get("id") or "")
+                if cid:
+                    expected.append(cid)
+        elif role == "tool":
+            seen.append(str(item.get("tool_call_id") or ""))
+    return {
+        "tool_messages": len(seen),
+        "declared_calls": len(expected),
+        "orphan_tool_ids": [cid for cid in seen if cid not in expected],
+        "missing_results": [cid for cid in expected if cid not in seen],
+    }
+
+
 def _generation_create_detail(result: dict[str, Any]) -> str:
     backend = str(result.get("backend") or "").strip()
     return f"backend={backend}" if backend else ""
@@ -2099,6 +2119,23 @@ def stream(
                 asked.add(again)
 
                 for work_name, work_args, tool_call_id in work:
+                    if str(tool_call_id).startswith("auto-wait-"):
+                        thread.append(
+                            {
+                                "role": "assistant",
+                                "content": "",
+                                "tool_calls": [
+                                    {
+                                        "id": tool_call_id,
+                                        "type": "function",
+                                        "function": {
+                                            "name": work_name,
+                                            "arguments": json.dumps(work_args),
+                                        },
+                                    }
+                                ],
+                            }
+                        )
                     used.append(work_name)
                     yield Step(
                         kind="tool", text=describe(work_name, work_args), name=work_name
@@ -2138,7 +2175,8 @@ def stream(
                         result, dict
                     ):
                         if not result.get("ask") and result.get("id") is not None:
-                            yield _generation_step_from_create_result(result)
+                            step = _generation_step_from_create_result(result)
+                            yield step
                             job_id = int(result["id"])
                             if not _will_wait_render_later(calls, call_index, job_id):
                                 work.append(

@@ -1,6 +1,6 @@
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { api, formatApiError } from "../api/client";
 import { PageHeader } from "../components/PageHeader";
@@ -25,12 +25,34 @@ function dayKey(d: Date): string {
   return `${y}-${m}-${dd}`;
 }
 
+function weekFromSearch(raw: string | null): number {
+  if (raw == null || raw === "") return 0;
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.trunc(n) : 0;
+}
+
 export function Calendar() {
   const { push } = useToast();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [jobs, setJobs] = useState<JobOut[] | null>(null);
   const [dragId, setDragId] = useState<number | null>(null);
-  const [weekOffset, setWeekOffset] = useState(0);
+  const weekOffset = weekFromSearch(searchParams.get("week"));
+  const setWeekOffset = useCallback(
+    (next: number | ((prev: number) => number)) => {
+      const value = typeof next === "function" ? next(weekOffset) : next;
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev);
+          if (value === 0) params.delete("week");
+          else params.set("week", String(value));
+          return params;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams, weekOffset]
+  );
   const weekStart = useMemo(() => {
     const start = startOfWeek(new Date());
     start.setDate(start.getDate() + weekOffset * 7);
@@ -63,7 +85,12 @@ export function Calendar() {
   const byDay = useMemo(() => {
     const map: Record<string, JobOut[]> = {};
     for (const day of days) map[dayKey(day)] = [];
+    let skippedCancelled = 0;
     for (const job of jobs ?? []) {
+      if (job.status === "cancelled") {
+        skippedCancelled += 1;
+        continue;
+      }
       const key = dayKey(new Date(job.scheduled_for));
       if (map[key]) map[key].push(job);
     }
@@ -95,7 +122,11 @@ export function Calendar() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <PageHeader icon={CalendarDays} title="Календарь" />
+        <PageHeader
+          icon={CalendarDays}
+          title="Календарь"
+          description="Время этого компьютера. Перетаскивание сохраняет час публикации."
+        />
         <div className="flex items-center gap-2">
           <button type="button" className="btn-ghost text-xs" onClick={() => setWeekOffset((n) => n - 1)}>
             <ChevronLeft className="h-4 w-4" />
@@ -128,17 +159,26 @@ export function Calendar() {
                 <div
                   id={`job-${job.id}`}
                   key={job.id}
-                  draggable
+                  draggable={!["done", "failed", "dead"].includes(job.status)}
                   onClick={(event) => {
                     event.stopPropagation();
                     if (dragId != null) return;
                     navigate(`/activity?job=${job.id}`);
                   }}
-                  onDragStart={() => setDragId(job.id)}
+                  onDragStart={() => {
+                    if (["done", "failed", "dead"].includes(job.status)) return;
+                    setDragId(job.id);
+                  }}
                   onDragEnd={() => setDragId(null)}
                   className="rounded-lg border border-slate-800 bg-slate-900/60 p-2 text-xs cursor-grab hover:border-slate-700 transition-colors"
                 >
                   <div className="font-medium truncate">{job.title || job.account_username}</div>
+                  <div className="mt-1 tabular-nums text-slate-400">
+                    {new Date(job.scheduled_for).toLocaleTimeString("ru-RU", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </div>
                   <div className="mt-1">
                     <StatusBadge value={job.status} />
                   </div>

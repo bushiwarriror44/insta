@@ -65,6 +65,50 @@ def retry_or_die(
     return job.status
 
 
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def reclaim_stale_running(
+    session: Session,
+    model: type,
+    *,
+    running: object,
+    queued: object,
+    older_than: datetime,
+    now: datetime | None = None,
+) -> int:
+    """Return jobs left ``running`` after a dead worker to the queue.
+
+    A render that is still inside its timeout stays ``running``. Only a start
+    time older than ``older_than`` (or a missing start time) is treated as a
+    crash.
+    """
+    now = now or datetime.now(timezone.utc)
+    cutoff = _as_utc(older_than)
+    rows = list(session.scalars(select(model).where(model.status == running)))
+    restored = 0
+    for job in rows:
+        started = getattr(job, "started_at", None)
+        if started is not None and _as_utc(started) >= cutoff:
+            continue
+        job.status = queued
+        job.started_at = None
+        if hasattr(job, "scheduled_at"):
+            job.scheduled_at = now
+        if hasattr(job, "scheduled_for"):
+            job.scheduled_for = now
+        if hasattr(job, "last_error"):
+            job.last_error = "воркер прервался, задача возвращена в очередь"
+        session.add(job)
+        restored += 1
+    if restored:
+        session.commit()
+    return restored
+
+
 def fail(
     session: Session,
     job: Queued,

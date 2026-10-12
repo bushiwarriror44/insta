@@ -45,15 +45,17 @@ def _chat_ok(settings: Settings) -> bool:
 def _payload(state: salad_gpu.GroupState | None, settings: Settings) -> GpuOut:
     ready = salad_gpu.configured(settings)
     if state is None:
+        detail = "" if ready else "Задайте SALAD_API_KEY и имена группы в .env"
         return GpuOut(
             configured=ready,
-            detail="" if ready else "Задайте SALAD_API_KEY и имена группы в .env",
+            detail=detail,
             wan_ok=_wan_ok(settings),
             idle_stop_minutes=int(settings.salad_idle_stop_minutes),
         )
     chat_ok = _chat_ok(settings)
     wan_ok = _wan_ok(settings)
-    if state.status in _DOWN:
+    forced_down = state.status in _DOWN
+    if forced_down:
         chat_ok = False
         if wan_ok is not None:
             wan_ok = False
@@ -85,11 +87,13 @@ def read_gpu() -> GpuOut:
         return _payload(salad_gpu.get_group(settings), settings)
     except salad_gpu.SaladProblem as exc:
         # Keep probes fresh so the Connection menu does not stick on a stale snapshot.
+        chat_ok = _chat_ok(settings)
+        wan_ok = _wan_ok(settings)
         return GpuOut(
             configured=True,
             detail=str(exc),
-            chat_ok=_chat_ok(settings),
-            wan_ok=_wan_ok(settings),
+            chat_ok=chat_ok,
+            wan_ok=wan_ok,
             idle_stop_minutes=int(settings.salad_idle_stop_minutes),
         )
 
@@ -98,7 +102,8 @@ def read_gpu() -> GpuOut:
 def start_gpu() -> GpuOut:
     settings = get_settings()
     try:
-        return _payload(salad_gpu.start_group(settings), settings)
+        state = salad_gpu.start_group(settings)
+        return _payload(state, settings)
     except salad_gpu.SaladProblem as exc:
         raise _http_error(exc) from exc
 
@@ -107,6 +112,7 @@ def start_gpu() -> GpuOut:
 def stop_gpu() -> GpuOut:
     settings = get_settings()
     try:
-        return _payload(salad_gpu.stop_group(settings), settings)
+        state = salad_gpu.stop_group(settings)
+        return _payload(state, settings)
     except salad_gpu.SaladProblem as exc:
         raise _http_error(exc) from exc

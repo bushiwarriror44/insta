@@ -9,6 +9,7 @@ from app.config import Settings, get_settings
 from app.generation.base import (
     INPUT_MODE_SLIDESHOW,
     REF_START_IMAGE,
+    STAGE_RENDERING,
     GenerationError,
     GenerationRequest,
     GenerationResult,
@@ -63,7 +64,7 @@ class SlideshowVideoBackend(VideoBackend):
         if not images:
             raise GenerationError("slideshow: нет изображений")
         report = on_progress or (lambda _: None)
-        report(Progress("rendering"))
+        report(Progress(STAGE_RENDERING))
         duration = max(1.0, float(request.duration_s))
         width = int(request.width)
         height = int(request.height)

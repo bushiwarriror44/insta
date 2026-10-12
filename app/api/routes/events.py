@@ -39,7 +39,10 @@ def list_events(
         try:
             stmt = stmt.where(Event.level == EventLevel(level))
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=400,
+                detail=f"неизвестный уровень события: {level}",
+            ) from exc
     if kind:
         stmt = stmt.where(Event.kind == kind)
     if username:

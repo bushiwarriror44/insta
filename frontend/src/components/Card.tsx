@@ -2,6 +2,7 @@ import clsx from "clsx";
 import type { ReactNode } from "react";
 
 interface Props {
+  id?: string;
   title?: ReactNode;
   description?: ReactNode;
   actions?: ReactNode;
@@ -9,9 +10,9 @@ interface Props {
   children: ReactNode;
 }
 
-export function Card({ title, description, actions, className, children }: Props) {
+export function Card({ id, title, description, actions, className, children }: Props) {
   return (
-    <section className={clsx("card overflow-hidden", className)}>
+    <section id={id} className={clsx("card overflow-hidden", className)}>
       {(title || actions) && (
         <header className="flex items-start justify-between gap-4 px-5 py-4 border-b border-slate-800">
           <div>

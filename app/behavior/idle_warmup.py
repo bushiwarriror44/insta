@@ -151,7 +151,7 @@ def idle_warmup(username: str) -> bool:
                     account_id=account_id,
                     level=EventLevel.info,
                     kind="idle_warmup",
-                    message=f"idle warmup ok (intensity={intensity})",
+                    message=f"прогрев простоя ок (интенсивность={intensity})",
                 )
             )
             db.commit()

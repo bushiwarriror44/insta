@@ -8,7 +8,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.api.deps import AuthDep, AuthPrincipal, get_db
@@ -44,6 +44,14 @@ class AssistantRunIn(BaseModel):
     account_id: Optional[int] = None
     job_id: Optional[int] = None
 
+    @field_validator("prompt")
+    @classmethod
+    def _strip_prompt(cls, value: str) -> str:
+        cleaned = (value or "").strip()
+        if not cleaned:
+            raise ValueError("нужен непустой текст запроса")
+        return cleaned
+
 
 class AssistantOut(BaseModel):
     reply: str
@@ -53,6 +61,15 @@ class AssistantOut(BaseModel):
     images: list[str] = []
     asks: list[str] = []
     created: dict[str, list[int]] = Field(default_factory=lambda: {"accounts": [], "proxies": []})
+
+
+def _ensure_user_turn(messages: list[AssistantMessage]) -> None:
+    for message in messages:
+        if message.role != "user":
+            continue
+        if message.content.strip() or message.attachments:
+            return
+    raise HTTPException(status_code=400, detail="Нужно непустое сообщение пользователя")
 
 
 def _bearer(authorization: Optional[str]) -> str | None:
@@ -69,6 +86,7 @@ def talk(
     authorization: Optional[str] = Header(default=None),
     principal: AuthPrincipal = AuthDep,
 ) -> AssistantOut:
+    _ensure_user_turn(payload.messages)
     try:
         answer = ask(
             db,
@@ -130,6 +148,7 @@ def talk_streaming(
     authorization: Optional[str] = Header(default=None),
     principal: AuthPrincipal = AuthDep,
 ) -> StreamingResponse:
+    _ensure_user_turn(payload.messages)
     token = _bearer(authorization)
     viewer_role = principal.role
     allow_browser = bool(payload.allow_browser and principal.role == "owner")

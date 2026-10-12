@@ -260,7 +260,7 @@ async def _submit_login_form(page) -> None:
         ],
     )
     if submit_sel is None:
-        raise RuntimeError("login submit button not found")
+        raise RuntimeError("кнопка входа не найдена")
     submit = page.locator(submit_sel).first
     await _human_click_locator(page, submit)
     await _human_wait(0.3, 0.7)
@@ -302,7 +302,7 @@ async def _human_type_first_match(page, selectors: list[str], text: str, *, clic
             continue
     if last_exc is not None:
         raise last_exc
-    raise RuntimeError("login form fields not found")
+    raise RuntimeError("поля формы входа не найдены")
 
 
 async def _first_visible_selector(page, selectors: list[str]) -> str | None:
@@ -437,7 +437,7 @@ async def _ensure_login_page(page, *, fast: bool = False) -> None:
         await asyncio.sleep(poll_sleep)
 
     raise RuntimeError(
-        f"login form fields not found (url={page.url!r}, title={await page.title()!r})"
+        f"поля формы входа не найдены (url={page.url!r}, title={await page.title()!r})"
     )
 
 
@@ -446,7 +446,7 @@ async def _fill_login_field(page, *, password: bool, text: str) -> None:
     loc = await _login_field_locator(page, password=password)
     if loc is None:
         raise RuntimeError(
-            f"login form fields not found (url={page.url!r}, title={await page.title()!r})"
+            f"поля формы входа не найдены (url={page.url!r}, title={await page.title()!r})"
         )
     await _human_type_locator(page, loc, text)
 
@@ -595,6 +595,25 @@ async def _detect_challenge(page) -> bool:
     return False
 
 
+def _ru_login_error(text: str) -> str:
+    low = (text or "").strip().lower()
+    if not low:
+        return "Не удалось войти в Instagram"
+    if "неверный пароль" in low:
+        return text.strip()
+    if "password" in low and ("incorrect" in low or "sorry" in low):
+        return "Неверный пароль"
+    if (
+        "doesn't belong" in low
+        or "can't find an account" in low
+        or "check your username" in low
+    ):
+        return "Аккаунт с таким именем не найден"
+    if "problem logging" in low or "couldn't log in" in low or "incorrect password" in low:
+        return "Не удалось войти в Instagram" if "password" not in low else "Неверный пароль"
+    return text.strip()
+
+
 async def _detect_login_error(page) -> str | None:
     """Return a human-readable login error when IG shows one on the page."""
     error_selectors = [
@@ -613,9 +632,7 @@ async def _detect_login_error(page) -> str | None:
             loc = page.locator(sel).first
             if await loc.count() > 0:
                 text = (await loc.inner_text()).strip()
-                if text:
-                    return text
-                return sel.replace("text=", "")
+                return _ru_login_error(text or sel.replace("text=", ""))
         except Exception:
             continue
     return None
@@ -915,13 +932,13 @@ async def _async_first_login(
     login_id = (login_identifier or username).strip()
     if not (proxy_url or "").strip():
         logger.error("playwright.proxy_required", username=username)
-        return FirstLoginResult(ok=False, error="proxy required")
+        return FirstLoginResult(ok=False, error="нужен прокси")
 
     try:
         from playwright.async_api import async_playwright
     except ImportError as exc:  # pragma: no cover
         logger.error("playwright.not_installed", error=str(exc))
-        return FirstLoginResult(ok=False, error="playwright not installed")
+        return FirstLoginResult(ok=False, error="playwright не установлен")
 
     # `playwright-stealth` 1.x exposes ``stealth_async``; 2.x uses ``Stealth``.
     stealth_apply = None
@@ -1080,7 +1097,7 @@ async def _async_first_login(
                     return FirstLoginResult(
                         ok=False,
                         challenge=True,
-                        error="challenge required",
+                        error="нужен challenge",
                         login_debug_saved=login_debug_saved,
                         page_url=page.url,
                     )
@@ -1129,7 +1146,7 @@ async def _async_first_login(
                 return FirstLoginResult(
                     ok=False,
                     challenge=True,
-                    error="challenge required",
+                    error="нужен challenge",
                     cookie_names=cookie_names,
                     login_debug_saved=login_debug_saved,
                     page_url=failure_page_url,
@@ -1202,7 +1219,7 @@ def first_login(
     proxy_url = (proxy_url or "").strip()
     if not proxy_url:
         logger.error("playwright.proxy_required", username=username)
-        return FirstLoginResult(ok=False, error="proxy required")
+        return FirstLoginResult(ok=False, error="нужен прокси")
 
     fp_locale = None
     if fingerprint is not None:

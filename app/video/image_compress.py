@@ -18,9 +18,9 @@ def compress_image_file(
     sources to ``.jpg`` (deletes the original after a successful write).
     """
     if max_edge < 1:
-        raise ValueError("max_edge must be >= 1")
+        raise ValueError("max_edge должен быть >= 1")
     if not 1 <= quality <= 95:
-        raise ValueError("quality must be in 1..95")
+        raise ValueError("quality должен быть в диапазоне 1..95")
 
     with Image.open(path) as img:
         img = ImageOps.exif_transpose(img)

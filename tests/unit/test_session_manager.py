@@ -187,7 +187,7 @@ def test_login_bad_password_raises_authentication_error(app_env, fake_client_cla
     try:
         with pytest.raises(AuthenticationError) as excinfo:
             login_or_resume("eve", "wrong", fingerprint, "http://p:1")
-        assert "bad password" in str(excinfo.value).lower()
+        assert "неверный пароль" in str(excinfo.value).lower()
     finally:
         sm.Client = real_factory  # type: ignore[assignment]
 
@@ -224,7 +224,8 @@ def test_login_please_wait_raises_temporary(app_env, fake_client_class, fingerpr
     try:
         with pytest.raises(AuthenticationError) as excinfo:
             login_or_resume("gina", "pw", fingerprint, "http://p:1")
-        assert "rate" in str(excinfo.value).lower()
+        msg = str(excinfo.value).lower()
+        assert "временно ограничил" in msg or "повторите позже" in msg
     finally:
         sm.Client = real_factory  # type: ignore[assignment]
 

@@ -121,14 +121,14 @@ def refuses(
         budget = channel_budget(session, channel, now=now)
         if budget.would_exceed(cost):
             return (
-                f"{channel.username} has spent ${budget.spent_usd:.2f} of its "
-                f"${budget.cap_usd:.2f} for today"
+                f"{channel.username} потратил ${budget.spent_usd:.2f} из "
+                f"${budget.cap_usd:.2f} на сегодня"
             )
 
     budget = factory_budget(session, settings=settings, now=now)
     if budget.would_exceed(cost):
         return (
-            f"the factory has spent ${budget.spent_usd:.2f} of its "
-            f"${budget.cap_usd:.2f} for today"
+            f"фабрика потратила ${budget.spent_usd:.2f} из "
+            f"${budget.cap_usd:.2f} на сегодня"
         )
     return None

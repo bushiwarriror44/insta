@@ -63,6 +63,17 @@ def dashboard(db: Session = Depends(get_db)) -> DashboardSummary:
         )
         or 0
     )
+    questions_account_id = None
+    if open_questions:
+        questions_account_id = db.scalar(
+            select(Clarification.account_id)
+            .where(
+                Clarification.answer.is_(None),
+                Clarification.dismissed.is_(False),
+            )
+            .order_by(Clarification.asked_at.desc())
+            .limit(1)
+        )
     risk_signals_24h = (
         db.scalar(
             select(func.count(Event.id)).where(
@@ -134,6 +145,7 @@ def dashboard(db: Session = Depends(get_db)) -> DashboardSummary:
         jobs_awaiting_review=jobs_awaiting_review,
         jobs_failed_24h=jobs_failed_24h,
         open_questions=open_questions,
+        questions_account_id=questions_account_id,
         risk_signals_24h=risk_signals_24h,
         quarantined_accounts=quarantined_accounts,
         daily_stats=daily_rows,

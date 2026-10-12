@@ -591,16 +591,17 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         ]);
       };
       try {
-        await ask(
-          asked.map(({ role, content, attachments: msgAttachments }) => ({
-            role,
-            content,
-            attachments: msgAttachments?.map(({ filename, media_type, role: refRole }) => ({
-              filename,
-              media_type,
-              role: refRole,
-            })),
+        const askPayload = asked.map(({ role, content, attachments: msgAttachments }) => ({
+          role,
+          content,
+          attachments: msgAttachments?.map(({ filename, media_type, role: refRole }) => ({
+            filename,
+            media_type,
+            role: refRole,
           })),
+        }));
+        await ask(
+          askPayload,
           (step) => {
             if (controller.signal.aborted) return;
             if (step.type === "status") {

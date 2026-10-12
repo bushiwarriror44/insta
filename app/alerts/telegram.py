@@ -29,10 +29,16 @@ def send(text: str, *, level: EventLevel = EventLevel.info, account_id: Optional
         return
 
     url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
+    level_ru = {
+        "info": "ИНФО",
+        "warn": "ПРЕДУПР",
+        "error": "ОШИБКА",
+        "critical": "КРИТИЧНО",
+    }.get(level.value, level.value.upper())
     icon = {"info": "ℹ️", "warn": "⚠️", "error": "❌", "critical": "🚨"}.get(level.value, "•")
     payload = {
         "chat_id": settings.telegram_chat_id,
-        "text": f"{icon} [{level.value.upper()}] {text}",
+        "text": f"{icon} [{level_ru}] {text}",
         "disable_web_page_preview": True,
     }
     try:
@@ -55,8 +61,8 @@ def _persist_event(*, text: str, level: EventLevel, account_id: Optional[int], k
 
 def notify_challenge(username: str, choice: object, account_id: Optional[int]) -> None:
     send(
-        f"Challenge for @{username} ({choice}). Drop the code into "
-        f"data/challenges/{username}.code",
+        f"Нужен challenge для @{username} ({choice}). "
+        f"Запишите код в data/challenges/{username}.code",
         level=EventLevel.warn,
         account_id=account_id,
         kind="challenge",
@@ -65,7 +71,7 @@ def notify_challenge(username: str, choice: object, account_id: Optional[int]) -
 
 def notify_blocked(username: str, account_id: Optional[int], reason: str) -> None:
     send(
-        f"Account @{username} marked BLOCKED. Reason: {reason}",
+        f"Аккаунт @{username} помечен как заблокирован. Причина: {reason}",
         level=EventLevel.critical,
         account_id=account_id,
         kind="blocked",
@@ -74,7 +80,7 @@ def notify_blocked(username: str, account_id: Optional[int], reason: str) -> Non
 
 def notify_proxy_down(label: str, error: str) -> None:
     send(
-        f"Proxy `{label}` failed health-check: {error}",
+        f"Прокси `{label}` не прошёл проверку доступности: {error}",
         level=EventLevel.error,
         kind="proxy_down",
     )
@@ -82,7 +88,7 @@ def notify_proxy_down(label: str, error: str) -> None:
 
 def notify_publish_failure(username: str, account_id: Optional[int], error: str, attempt: int) -> None:
     send(
-        f"Publish failed for @{username} (attempt {attempt}): {error}",
+        f"Публикация @{username} не удалась (попытка {attempt}): {error}",
         level=EventLevel.warn,
         account_id=account_id,
         kind="publish_failed",

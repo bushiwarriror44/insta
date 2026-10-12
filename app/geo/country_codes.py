@@ -50,6 +50,4 @@ def countries_mismatch(advertised: str | None, actual: str | None) -> bool:
     """True when both are set and differ after normalization."""
     a = normalize_country_code(advertised)
     b = normalize_country_code(actual)
-    if not a or not b:
-        return False
-    return a != b
+    return bool(a and b and a != b)

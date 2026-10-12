@@ -193,6 +193,28 @@ def _parse_stream_events(body: str) -> list[dict]:
     return out
 
 
+def test_stream_rejects_empty_user_turn(api_client, monkeypatch):
+    from app.api.routes import assistant as route
+
+    called = {"n": 0}
+
+    def fake_stream(*_a, **_k):
+        called["n"] += 1
+        if False:
+            yield None
+
+    monkeypatch.setattr(route, "stream", fake_stream)
+    for payload in (
+        {"messages": []},
+        {"messages": [{"role": "user", "content": "   "}]},
+        {"messages": [{"role": "assistant", "content": "hi"}]},
+    ):
+        res = api_client.post("/api/assistant/stream", json=payload)
+        assert res.status_code == 400, payload
+        assert "пользователя" in res.json()["detail"].lower()
+    assert called["n"] == 0
+
+
 def test_stream_enables_browser_for_owner(auth_client, monkeypatch):
     from app.api.routes import assistant as route
     from app.assistant.chat import Answer

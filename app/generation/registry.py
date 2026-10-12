@@ -42,7 +42,7 @@ def get_backend(name: str | None = None, settings: Settings | None = None) -> Vi
     try:
         backend = _BACKENDS[key]
     except KeyError:
-        raise NotImplementedError(f"no video backend named {key!r}") from None
+        raise NotImplementedError(f"нет видео-бэкенда с именем {key!r}") from None
     return backend(settings)
 
 

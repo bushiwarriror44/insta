@@ -79,11 +79,11 @@ export function SaladGpuCard() {
         GPU Salad
       </h2>
       <p className="text-sm leading-relaxed text-slate-400">
-        Start/Stop контейнерной группы из панели, без кабинета Salad. Это не тумблер воркера в
-        шапке. Пока Running — идут GPU-часы. Не пользуешься — Stop. Start после Stop снова качает
+        Запуск и остановка контейнерной группы из панели, без кабинета Salad. Это не тумблер воркера в
+        шапке. Пока группа работает — идут GPU-часы. Не пользуешься — останови. Запуск после остановки снова качает
         образ.
         {gpu.configured && (gpu.idle_stop_minutes ?? 0) > 0
-          ? ` Авто-Stop через ${gpu.idle_stop_minutes} мин простоя (чат или local-рендер).`
+          ? ` Авто-стоп через ${gpu.idle_stop_minutes} мин простоя (чат или local-рендер).`
           : ""}
       </p>
       <div className="flex flex-wrap items-center gap-3">
@@ -105,7 +105,7 @@ export function SaladGpuCard() {
             {loadError
               ? "статус не обновился"
               : gpu.configured
-                ? `Инстансы: running ${gpu.running_count}, creating ${gpu.creating_count}, allocating ${gpu.allocating_count}, stopping ${gpu.stopping_count}. Чат ${gpu.chat_ok ? "отвечает" : "не отвечает"}.`
+                ? `Инстансы: работают ${gpu.running_count}, создаются ${gpu.creating_count}, выделяются ${gpu.allocating_count}, останавливаются ${gpu.stopping_count}. Чат ${gpu.chat_ok ? "отвечает" : "не отвечает"}.`
                 : "Ключ и имена группы задаются в .env на админ-VPS."}
           </div>
         </div>
@@ -116,7 +116,7 @@ export function SaladGpuCard() {
           onClick={() => setAsk("start")}
         >
           <Play size={14} />
-          {busy === "start" ? "Запускаем…" : "Start"}
+          {busy === "start" ? "Запускаем…" : "Запустить"}
         </button>
         <button
           type="button"
@@ -125,7 +125,7 @@ export function SaladGpuCard() {
           onClick={() => setAsk("stop")}
         >
           <Square size={14} />
-          {busy === "stop" ? "Останавливаем…" : "Stop"}
+          {busy === "stop" ? "Останавливаем…" : "Остановить"}
         </button>
       </div>
       {loadError ? <p className="text-sm text-rose-300">{loadError}</p> : null}

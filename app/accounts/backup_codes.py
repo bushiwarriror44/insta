@@ -63,16 +63,16 @@ def parse_account_line(line: str) -> dict[str, Any]:
     """Parse ``username:password:backup_codes:url`` account export lines."""
     raw = (line or "").strip()
     if not raw:
-        raise ValueError("account line is empty")
+        raise ValueError("строка аккаунта пуста")
 
     parts = raw.split(":")
     if len(parts) < 2:
-        raise ValueError("expected username:password[:backup_codes[:url]]")
+        raise ValueError("ожидается username:password[:backup_codes[:url]]")
 
     username = parts[0].strip()
     password = parts[1].strip()
     if not username or not password:
-        raise ValueError("username and password are required")
+        raise ValueError("нужны username и password")
 
     backup_raw = ""
     profile_url = ""

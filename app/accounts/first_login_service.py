@@ -46,11 +46,11 @@ def _format_auth_error(exc: AuthenticationError) -> str:
             "Instagram не находит аккаунт с этим логином — "
             "укажите email/телефон в поле «Логин Instagram»"
         )
-    if "bad password" in msg:
+    if "bad password" in msg or "неверный пароль" in msg:
         return "Неверный пароль — обновите пароль аккаунта в панели"
-    if "2fa" in msg or "verification" in msg:
+    if "2fa" in msg or "verification" in msg or "код 2fa" in msg:
         return "Требуется 2FA — добавьте TOTP seed в настройках аккаунта"
-    if "rate-limited" in msg:
+    if "rate-limited" in msg or "временно ограничил" in msg:
         return "Instagram временно ограничил вход — повторите позже"
     return str(exc).strip() or "Ошибка аутентификации Instagram"
 
@@ -184,7 +184,9 @@ def _try_api_login_fallback(
                 return None, str(exc)
 
     if session_id is None:
-        formatted = _format_auth_error(last_auth_error or AuthenticationError("auth failed"))
+        formatted = _format_auth_error(
+            last_auth_error or AuthenticationError("ошибка аутентификации")
+        )
         collector.error("fallback", f"API-вход не удался: {formatted}")
         return None, formatted
 

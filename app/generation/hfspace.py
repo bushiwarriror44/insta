@@ -89,10 +89,10 @@ class HfSpaceVideoBackend(VideoBackend):
         try:
             body = response.json()
         except ValueError as exc:
-            raise GenerationError("hfspace returned invalid JSON", retryable=True) from exc
+            raise GenerationError("hfspace вернул некорректный JSON", retryable=True) from exc
         event_id = body.get("event_id") or body.get("eventId")
         if not event_id:
-            raise GenerationError("hfspace returned no event_id", retryable=True)
+            raise GenerationError("hfspace не вернул event_id", retryable=True)
         return str(event_id)
 
     def _await_url(

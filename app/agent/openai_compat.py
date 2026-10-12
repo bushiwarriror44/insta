@@ -82,9 +82,9 @@ def extract_json(text: str) -> dict[str, Any]:
             return json.loads(candidate[start : end + 1])
         except json.JSONDecodeError as exc:
             raise ShapeProblem(
-                f"{exc.msg} — the model did not return JSON", retryable=True
+                f"{exc.msg} — модель не вернула JSON", retryable=True
             ) from exc
-    raise ShapeProblem("the model did not return JSON", retryable=True)
+    raise ShapeProblem("модель не вернула JSON", retryable=True)
 
 
 class OpenAICompatAgent(AgentBackend):
@@ -100,7 +100,7 @@ class OpenAICompatAgent(AgentBackend):
     def plan(self, request: PlanRequest) -> PlanResult:
         self.validate(request)
         if not self.healthcheck():
-            raise AgentError("AGENT_BASE_URL is not set")
+            raise AgentError("AGENT_BASE_URL не задан")
 
         prompt = build_prompt(request)
         messages = [
@@ -127,7 +127,7 @@ class OpenAICompatAgent(AgentBackend):
                 plan = self._validate(content)
 
         if not plan.ideas:
-            raise AgentError("the model returned no ideas", retryable=True)
+            raise AgentError("модель не вернула идей", retryable=True)
 
         sent, got = tokens
         return PlanResult(
@@ -152,8 +152,8 @@ class OpenAICompatAgent(AgentBackend):
             return ContentPlan.model_validate(extract_json(content))
         except ValidationError as exc:
             raise AgentError(
-                "the model's plan did not fit the schema: "
-                f"{exc.error_count()} problems",
+                "план модели не подошёл под схему: "
+                f"{exc.error_count()} проблем(ы)",
                 retryable=True,
             ) from exc
 
@@ -192,7 +192,7 @@ class OpenAICompatAgent(AgentBackend):
         try:
             response = client.post(url, json=self._body(messages, schema=schema))
         except httpx.RequestError as exc:
-            raise AgentError(f"could not reach {url}: {exc}", retryable=True) from exc
+            raise AgentError(f"не удалось достучаться до {url}: {exc}", retryable=True) from exc
 
         if response.status_code >= 400:
             self._raise(response, schema=schema)
@@ -202,7 +202,7 @@ class OpenAICompatAgent(AgentBackend):
             content = payload["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, ValueError) as exc:
             raise ShapeProblem(
-                f"unexpected response shape from {url}", retryable=True
+                f"неожиданная форма ответа от {url}", retryable=True
             ) from exc
 
         usage = payload.get("usage") or {}
@@ -212,15 +212,15 @@ class OpenAICompatAgent(AgentBackend):
     def _raise(response: httpx.Response, *, schema: bool) -> None:
         detail = response.text[:200]
         if response.status_code in (401, 403):
-            raise AgentError(f"the model host rejected the key: {detail}")
+            raise AgentError(f"хост модели отклонил ключ: {detail}")
         if response.status_code == 429:
-            raise AgentError(f"the model host rate limited: {detail}", retryable=True)
+            raise AgentError(f"хост модели ограничил частоту: {detail}", retryable=True)
         if response.status_code >= 500:
             raise AgentError(
-                f"model host error {response.status_code}: {detail}", retryable=True
+                f"ошибка хоста модели {response.status_code}: {detail}", retryable=True
             )
         if schema:
             # Hosts that do not implement json_schema answer 400 here; the
             # caller falls back to plain JSON mode.
-            raise SchemaUnsupported(f"the host refused the schema: {detail}")
-        raise AgentError(f"the model host refused the request: {detail}")
+            raise SchemaUnsupported(f"хост отклонил схему: {detail}")
+        raise AgentError(f"хост модели отклонил запрос: {detail}")

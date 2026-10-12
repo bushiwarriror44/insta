@@ -1,5 +1,6 @@
-import { Calendar, CalendarDays, Eye, Plus, Send, Sparkles } from "lucide-react";
+import { Ban, Calendar, CalendarDays, Eye, Plus, Send, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import { api, formatApiError } from "../api/client";
 import { AgentToggle } from "../components/AgentToggle";
@@ -8,6 +9,7 @@ import { EmptyState } from "../components/EmptyState";
 import { Loader } from "../components/Loader";
 import { Modal } from "../components/Modal";
 import { PageHeader } from "../components/PageHeader";
+import { StatusBadge } from "../components/StatusBadge";
 import { useToast } from "../context/ToastContext";
 import { AGENT_PAGE_MANUAL, agentWorkHint } from "../lib/agentManual";
 import { useAssistantMutate } from "../lib/assistantMutate";
@@ -16,6 +18,15 @@ import type { AccountOut } from "../api/types";
 
 type SourceRow = { id: number; kind: string; value: string; label: string; enabled: boolean; last_status: string };
 type QuestionRow = { id: number; question: string; why: string; assumed: string; open: boolean };
+type PlanRow = {
+  id: number;
+  status: string;
+  count: number;
+  planned: number;
+  spread_over_days: number | null;
+  last_error: string | null;
+  created_at: string | null;
+};
 type RunRow = {
   id: number;
   account_username: string | null;
@@ -30,8 +41,10 @@ type RunRow = {
 
 export function Agent() {
   const { push } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const accountFromUrl = Number(searchParams.get("account") || searchParams.get("id") || 0) || null;
   const [accounts, setAccounts] = useState<AccountOut[]>([]);
-  const [accountId, setAccountId] = useState<number | "">("");
+  const [accountId, setAccountIdState] = useState<number | "">(accountFromUrl ?? "");
   const [brief, setBrief] = useState("");
   const [count, setCount] = useState(5);
   const [duration, setDuration] = useState(5);
@@ -40,6 +53,7 @@ export function Agent() {
   const [sourceValue, setSourceValue] = useState("");
   const [sources, setSources] = useState<SourceRow[]>([]);
   const [questions, setQuestions] = useState<QuestionRow[]>([]);
+  const [plans, setPlans] = useState<PlanRow[]>([]);
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [runDetail, setRunDetail] = useState<{
@@ -55,6 +69,22 @@ export function Agent() {
 
   const selectedId = typeof accountId === "number" ? accountId : null;
 
+  const setAccountId = (next: number | "") => {
+    setAccountIdState(next);
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        if (typeof next === "number") params.set("account", String(next));
+        else {
+          params.delete("account");
+          params.delete("id");
+        }
+        return params;
+      },
+      { replace: true }
+    );
+  };
+
   async function reload() {
     const [accs, list, presetList] = await Promise.all([
       api.accounts.list(),
@@ -64,14 +94,33 @@ export function Agent() {
     setAccounts(accs);
     setRuns(list);
     setPresets(presetList);
-    const nextId = selectedId && accs.some((a) => a.id === selectedId) ? selectedId : accs[0]?.id;
+    const fromUrl =
+      accountFromUrl && accs.some((a) => a.id === accountFromUrl) ? accountFromUrl : null;
+    const nextId =
+      fromUrl ??
+      (selectedId && accs.some((a) => a.id === selectedId) ? selectedId : accs[0]?.id);
     if (nextId) {
-      setAccountId(nextId);
+      setAccountIdState(nextId);
+      if (!searchParams.get("account") && !searchParams.get("id")) {
+        setSearchParams(
+          (prev) => {
+            const params = new URLSearchParams(prev);
+            params.set("account", String(nextId));
+            return params;
+          },
+          { replace: true }
+        );
+      }
       const acc = accs.find((a) => a.id === nextId);
       setBrief(acc?.brief || "");
-      const [src, qs] = await Promise.all([api.factory.sources(nextId), api.factory.questions(nextId)]);
+      const [src, qs, planRows] = await Promise.all([
+        api.factory.sources(nextId),
+        api.factory.questions(nextId),
+        api.factory.plans(nextId).catch(() => []),
+      ]);
       setSources(src);
       setQuestions(qs);
+      setPlans(planRows);
     }
   }
 
@@ -82,13 +131,24 @@ export function Agent() {
   }, []);
 
   useEffect(() => {
+    if (accountFromUrl && accountFromUrl !== accountId) {
+      setAccountIdState(accountFromUrl);
+    }
+  }, [accountFromUrl]);
+
+  useEffect(() => {
     if (!selectedId) return;
     const acc = accounts.find((a) => a.id === selectedId);
     if (acc) setBrief(acc.brief || "");
-    void Promise.all([api.factory.sources(selectedId), api.factory.questions(selectedId)])
-      .then(([src, qs]) => {
+    void Promise.all([
+      api.factory.sources(selectedId),
+      api.factory.questions(selectedId),
+      api.factory.plans(selectedId).catch(() => []),
+    ])
+      .then(([src, qs, planRows]) => {
         setSources(src);
         setQuestions(qs);
+        setPlans(planRows);
       })
       .catch((err) => push(formatApiError(err), "error"));
   }, [selectedId]);
@@ -137,6 +197,7 @@ export function Agent() {
           Аккаунт
           <select
             className="input mt-1"
+            aria-label="Аккаунт агента"
             value={accountId}
             onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")}
           >
@@ -194,8 +255,15 @@ export function Agent() {
               setBusy(true);
               try {
                 await api.factory.updateBrief(selectedId, brief);
-                await api.factory.plan(selectedId, { count, duration_s: duration, auto_schedule: autoSchedule });
-                push("План поставлен в очередь", "success");
+                const created = await api.factory.plan(selectedId, {
+                  count,
+                  duration_s: duration,
+                  auto_schedule: autoSchedule,
+                });
+                push("План поставлен в очередь", "success", {
+                  label: "Открыть",
+                  href: `/activity?lane=renders`,
+                });
                 await reload();
               } catch (err) {
                 push(formatApiError(err), "error");
@@ -309,6 +377,47 @@ export function Agent() {
             </li>
           ))}
         </ul>
+      </Card>
+      <Card className="p-4 space-y-3">
+        <h2 className="font-medium">Планы</h2>
+        {plans.length === 0 ? (
+          <EmptyState>Планов пока нет.</EmptyState>
+        ) : (
+          <ul className="text-sm space-y-2">
+            {plans.map((p) => (
+              <li key={p.id} className="flex items-center gap-2 border-t border-slate-800 pt-2">
+                <span className="tabular-nums text-slate-500">#{p.id}</span>
+                <StatusBadge value={p.status} />
+                <span className="text-slate-400">
+                  {p.planned}/{p.count}
+                  {p.spread_over_days ? ` · ${p.spread_over_days}д` : ""}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-xs text-rose-300" title={p.last_error ?? ""}>
+                  {p.last_error || ""}
+                </span>
+                {["queued", "failed", "dead"].includes(p.status) ? (
+                  <button
+                    type="button"
+                    className="btn-ghost btn-compact"
+                    aria-label={`Отменить план ${p.id}`}
+                    onClick={async () => {
+                      try {
+                        await api.factory.cancelPlan(p.id);
+                        push(`План #${p.id} отменён`, "info");
+                        if (selectedId) setPlans(await api.factory.plans(selectedId));
+                      } catch (err) {
+                        push(formatApiError(err), "error");
+                      }
+                    }}
+                  >
+                    <Ban className="h-3.5 w-3.5" />
+                    Отменить
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
       </Card>
       {questions.length > 0 ? (
         <Card className="p-4 space-y-3">

@@ -154,7 +154,7 @@ def health_check(proxy_url: str, timeout: int | None = None) -> dict[str, str]:
                 data = {"ip": response.text.strip()}
             return data
     except (httpx.HTTPError, OSError) as exc:
-        raise ProxyError(f"Proxy {_mask(proxy_url)} unhealthy: {exc}") from exc
+        raise ProxyError(f"Прокси {_mask(proxy_url)} недоступен: {exc}") from exc
 
 
 def reach_instagram(proxy_url: str, timeout: int | None = None) -> bool:
@@ -178,9 +178,13 @@ def reach_instagram(proxy_url: str, timeout: int | None = None) -> bool:
             resp = client.get(url, headers={"User-Agent": "Instagram 351.1.0.39.105 Android"})
             if resp.status_code < 500:
                 return True
-            raise ProxyError(f"Proxy {_mask(proxy_url)} cannot reach Instagram: http {resp.status_code}")
+            raise ProxyError(
+                f"Прокси {_mask(proxy_url)} не достучался до Instagram: http {resp.status_code}"
+            )
     except (httpx.HTTPError, OSError) as exc:
-        raise ProxyError(f"Proxy {_mask(proxy_url)} cannot reach Instagram: {exc}") from exc
+        raise ProxyError(
+            f"Прокси {_mask(proxy_url)} не достучался до Instagram: {exc}"
+        ) from exc
 
 
 def reach_instagram_login_page(proxy_url: str, timeout: int | None = None) -> tuple[bool, int | None]:
@@ -334,7 +338,7 @@ def health_check_cached(
     with _CACHE_LOCK:
         _HEALTH_CACHE[proxy_url] = snapshot
     if not snapshot.ok:
-        raise ProxyError(f"Proxy {_mask(proxy_url)} unhealthy (cached)")
+        raise ProxyError(f"Прокси {_mask(proxy_url)} недоступен (кэш)")
     return snapshot
 
 

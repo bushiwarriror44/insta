@@ -133,12 +133,12 @@ class AccountIn(BaseModel):
             and not self.account_line
             and not (self.vendor_line or "").strip()
         ):
-            raise ValueError("password is required for Instagram accounts")
+            raise ValueError("для Instagram нужен пароль")
         if self.active_hour_end <= self.active_hour_start:
-            raise ValueError("active_hour_end must be greater than active_hour_start")
+            raise ValueError("active_hour_end должен быть больше active_hour_start")
         if self.caption_profile and self.caption_profile not in _CAPTION_PROFILE_ALLOWED:
             allowed = ", ".join(sorted(_CAPTION_PROFILE_ALLOWED))
-            raise ValueError(f"caption_profile must be one of: {allowed}")
+            raise ValueError(f"caption_profile должен быть одним из: {allowed}")
         return self
 
 
@@ -366,7 +366,7 @@ class EnqueueIn(BaseModel):
     @model_validator(mode="after")
     def _require_media_filename(self) -> "EnqueueIn":
         if not (self.media_filename or self.video_filename):
-            raise ValueError("media_filename is required")
+            raise ValueError("нужно указать media_filename или video_filename")
         return self
 
     @property
@@ -436,6 +436,7 @@ class DashboardSummary(BaseModel):
     jobs_awaiting_review: int = 0
     jobs_failed_24h: int = 0
     open_questions: int = 0
+    questions_account_id: Optional[int] = None
     risk_signals_24h: int
     quarantined_accounts: int
     daily_stats: list[DailyStatRow]

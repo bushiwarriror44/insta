@@ -95,7 +95,7 @@ def test_ig_challenge_payload_no_browser_actions(db_session, make_account):
         ok=False,
         challenge=True,
         browser_tab_hint=False,
-        error="challenge required",
+        error="нужен challenge",
         logs=[],
     )
     payload = tools._login_result_payload(account, out)

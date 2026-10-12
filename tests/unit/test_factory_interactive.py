@@ -203,6 +203,7 @@ def test_create_generation_and_join(api_client, db_session, app_env, monkeypatch
         "app.api.routes.factory.get_backend",
         lambda *_args, **_kwargs: SimpleNamespace(healthcheck=lambda: True),
     )
+    (settings.video_source_dir / "still.jpg").write_bytes(b"img")
     gen = api_client.post(
         "/api/generations",
         json={
@@ -256,11 +257,14 @@ def test_api_generations_reference_filename_sanitized(api_client, db_session, mo
         "app.api.routes.factory.get_backend",
         lambda *_args, **_kwargs: SimpleNamespace(healthcheck=lambda: True),
     )
+    from app.config import settings
+
+    (settings.video_source_dir / "passwd.png").write_bytes(b"img")
     res = api_client.post(
         "/api/generations",
         json={
             "prompt": "mist",
-            "reference_filename": "../../../etc/passwd",
+            "reference_filename": "../../../etc/passwd.png",
             "input_mode": "image_to_video",
         },
     )
@@ -270,7 +274,26 @@ def test_api_generations_reference_filename_sanitized(api_client, db_session, mo
     import json
 
     refs = json.loads(job.reference_json)
-    assert refs[0]["filename"] == "passwd"
+    assert refs[0]["filename"] == "passwd.png"
+
+
+def test_api_generations_rejects_missing_reference(api_client, monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "app.api.routes.factory.get_backend",
+        lambda *_args, **_kwargs: SimpleNamespace(healthcheck=lambda: True),
+    )
+    res = api_client.post(
+        "/api/generations",
+        json={
+            "prompt": "mist",
+            "reference_filename": "missing.png",
+            "input_mode": "image_to_video",
+        },
+    )
+    assert res.status_code == 400
+    assert "missing.png" in res.json()["detail"]
 
 
 def test_composition_requires_two_clips(api_client, db_session):
@@ -300,6 +323,32 @@ def test_cancel_generation_queued_only(api_client, db_session):
     assert bad.status_code == 409
 
 
+def test_cancel_generation_dismisses_failed(api_client, db_session):
+    from app.db.models import GenerationJob, PipelineStatus
+
+    job = GenerationJob(prompt="z", backend="auto", status=PipelineStatus.failed, attempts=2)
+    db_session.add(job)
+    db_session.commit()
+    res = api_client.post(f"/api/generations/{job.id}/cancel")
+    assert res.status_code == 200
+    assert res.json()["status"] == "cancelled"
+
+
+def test_cancel_plan_dismisses_failed(api_client, db_session, make_account):
+    from app.db.models import PipelineStatus, PlanJob
+
+    account = make_account(username="planfail")
+    job = PlanJob(account_id=account.id, status=PipelineStatus.failed, count=3, last_error="agent down")
+    db_session.add(job)
+    db_session.commit()
+    listed = api_client.get(f"/api/accounts/{account.id}/plans")
+    assert listed.status_code == 200
+    assert any(row["id"] == job.id for row in listed.json())
+    res = api_client.post(f"/api/plans/{job.id}/cancel")
+    assert res.status_code == 200
+    assert res.json()["status"] == "cancelled"
+
+
 def test_retry_generation_requires_health(api_client, db_session, monkeypatch):
     from types import SimpleNamespace
 
@@ -325,6 +374,32 @@ def test_retry_generation_requires_health(api_client, db_session, monkeypatch):
     detail = res.json()["detail"]
     assert "не настроен" in detail
     assert "Локальный рендер:" in detail
+
+
+def test_retry_generation_rejects_missing_reference(api_client, db_session, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.db.models import GenerationJob, PipelineStatus
+
+    job = GenerationJob(
+        prompt="z",
+        backend="slideshow",
+        status=PipelineStatus.failed,
+        input_mode="image_to_video",
+        reference_json='[{"role":"start_image","filename":"no-such-ref.png"}]',
+        attempts=1,
+    )
+    db_session.add(job)
+    db_session.commit()
+    monkeypatch.setattr(
+        "app.api.routes.factory.get_backend",
+        lambda *_args, **_kwargs: SimpleNamespace(healthcheck=lambda: True, health_detail=lambda: ""),
+    )
+    res = api_client.post(f"/api/generations/{job.id}/retry")
+    assert res.status_code == 409
+    assert "no-such-ref.png" in res.json()["detail"]
+    db_session.refresh(job)
+    assert job.status == PipelineStatus.failed
 
 
 def test_generations_list_offer_local_only_with_marker(api_client, db_session, monkeypatch):
@@ -405,6 +480,17 @@ def test_create_composition_rejects_removed_asset(api_client, db_session, app_en
     assert "удалён" in res.json()["detail"]
 
 
+def test_cancel_composition_dismisses_failed(api_client, db_session):
+    from app.db.models import Composition, PipelineStatus
+
+    job = Composition(status=PipelineStatus.failed)
+    db_session.add(job)
+    db_session.commit()
+    res = api_client.post(f"/api/compositions/{job.id}/cancel")
+    assert res.status_code == 200
+    assert res.json()["status"] == "cancelled"
+
+
 def test_cancel_composition_queued_only(api_client, db_session):
     from app.db.models import Composition, PipelineStatus
 
@@ -422,15 +508,51 @@ def test_cancel_composition_queued_only(api_client, db_session):
     assert bad.status_code == 409
 
 
-def test_retry_composition_revives_failed(api_client, db_session):
-    from app.db.models import Composition, PipelineStatus
+def test_retry_composition_revives_failed(api_client, db_session, app_env):
+    from app.config import settings
+    from app.db.models import AssetKind, AssetSource, Composition, CompositionClip, MediaAsset, PipelineStatus
 
+    (settings.media_dir / "a.mp4").write_bytes(b"x")
+    (settings.media_dir / "b.mp4").write_bytes(b"x")
+    first = MediaAsset(filename="a.mp4", kind=AssetKind.video, source=AssetSource.generated)
+    second = MediaAsset(filename="b.mp4", kind=AssetKind.video, source=AssetSource.generated)
+    db_session.add_all([first, second])
+    db_session.commit()
     job = Composition(status=PipelineStatus.failed, attempts=1)
     db_session.add(job)
+    db_session.commit()
+    db_session.add_all(
+        [
+            CompositionClip(composition_id=job.id, asset_id=first.id, position=0),
+            CompositionClip(composition_id=job.id, asset_id=second.id, position=1),
+        ]
+    )
     db_session.commit()
     res = api_client.post(f"/api/compositions/{job.id}/retry")
     assert res.status_code == 200
     assert res.json()["status"] == "queued"
+
+
+def test_retry_composition_rejects_missing_files(api_client, db_session):
+    from app.db.models import AssetKind, AssetSource, Composition, CompositionClip, MediaAsset, PipelineStatus
+
+    first = MediaAsset(filename="gone-a.mp4", kind=AssetKind.video, source=AssetSource.generated)
+    second = MediaAsset(filename="gone-b.mp4", kind=AssetKind.video, source=AssetSource.generated)
+    db_session.add_all([first, second])
+    db_session.commit()
+    job = Composition(status=PipelineStatus.failed, attempts=1)
+    db_session.add(job)
+    db_session.commit()
+    db_session.add_all(
+        [
+            CompositionClip(composition_id=job.id, asset_id=first.id, position=0),
+            CompositionClip(composition_id=job.id, asset_id=second.id, position=1),
+        ]
+    )
+    db_session.commit()
+    res = api_client.post(f"/api/compositions/{job.id}/retry")
+    assert res.status_code == 409
+    assert "отсутствует" in res.json()["detail"]
 
 
 def test_create_generation_auto_rejected_when_none_healthy(api_client, monkeypatch):

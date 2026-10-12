@@ -117,6 +117,7 @@ def run_generation_job(
 
     job.attempts += 1
 
+
     def note(progress: Progress) -> None:
         """Record where the render has got to, if it has moved.
 
@@ -218,7 +219,7 @@ def _over_budget(
     job.status = PipelineStatus.queued
     job.scheduled_at = next_day(now)
     job.stage = ""
-    job.last_error = f"held until tomorrow — {reason}"
+    job.last_error = f"отложено до завтра — {reason}"
     session.add(job)
 
     # One line a day, not one per deferred render: a plan of twenty shots
@@ -261,6 +262,35 @@ def _join_when_the_post_is_whole(session: Session, job: GenerationJob) -> None:
         .scalars()
         .all()
     )
+
+    blocked = {
+        PipelineStatus.failed,
+        PipelineStatus.dead,
+        PipelineStatus.cancelled,
+    }
+    broken = [shot for shot in shots if shot.status in blocked]
+    if broken:
+        marker = f"post_group={job.post_group}"
+        already = session.execute(
+            select(Event.id).where(
+                Event.kind == "post_join_blocked",
+                Event.message.contains(marker),
+            )
+        ).first()
+        if already is None:
+            shot = broken[0]
+            session.add(
+                Event(
+                    level=EventLevel.warn,
+                    kind="post_join_blocked",
+                    account_id=job.account_id,
+                    message=(
+                        f"{marker} склейка остановлена: кадр {shot.shot_index} — {shot.status.value}"
+                    ),
+                )
+            )
+            session.commit()
+        return
 
     if any(
         shot.status is not PipelineStatus.done or shot.asset_id is None for shot in shots

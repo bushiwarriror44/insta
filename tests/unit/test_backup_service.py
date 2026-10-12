@@ -20,7 +20,7 @@ from app.services.backup import (
 
 def test_database_path_rejects_non_sqlite():
     settings = Settings(_env_file=None, database_url="postgresql://x")
-    with pytest.raises(BackupError, match="only SQLite"):
+    with pytest.raises(BackupError, match="только для SQLite"):
         database_path(settings)
 
 

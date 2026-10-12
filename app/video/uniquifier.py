@@ -42,7 +42,7 @@ def ffprobe_bin() -> str:
     if bundled:
         return bundled
     raise RuntimeError(
-        "ffprobe not found on PATH. Install ffmpeg system package or add ffprobe alongside ffmpeg."
+        "ffprobe не найден в PATH. Установите пакет ffmpeg или добавьте ffprobe рядом с ffmpeg."
     )
 
 

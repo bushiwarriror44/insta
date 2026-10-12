@@ -108,7 +108,7 @@ def _login_media_client(
 ):
     proxy_url = (proxy_url or "").strip()
     if not proxy_url:
-        raise HardPublishError(f"proxy required for Instagram account '{username}'")
+        raise HardPublishError(f"для Instagram-аккаунта «{username}» нужен прокси")
 
     handler = make_handler(
         username,
@@ -128,7 +128,7 @@ def _login_media_client(
             login_identifier=None,
         )
     except HardCheckpoint as exc:
-        raise HardPublishError(f"hard checkpoint: {exc}") from exc
+        raise HardPublishError(f"жёсткий checkpoint: {exc}") from exc
     except AuthenticationError as exc:
         msg = str(exc).lower()
         if "rate" in msg or "wait" in msg:
@@ -236,7 +236,7 @@ def publish_reel(
     log = logger.bind(username=username)
     video_file = Path(video_path)
     if not video_file.exists():
-        raise HardPublishError(f"video not found: {video_file}")
+        raise HardPublishError(f"видео не найдено: {video_file}")
 
     _emit(on_log, "info", "login", "Авторизация клиента Instagram")
     client = _login_media_client(
@@ -275,7 +275,7 @@ def publish_reel(
     except ChallengeRequired as exc:
         log.error("publish.challenge_required")
         _emit(on_log, "error", "upload", f"Требуется подтверждение: {exc}")
-        raise HardPublishError(f"challenge required during publish: {exc}") from exc
+        raise HardPublishError(f"при публикации нужен challenge: {exc}") from exc
     except PleaseWaitFewMinutes as exc:
         log.warning("publish.rate_limited")
         _emit(on_log, "warn", "upload", f"Лимит запросов: {exc}")
@@ -333,7 +333,7 @@ def publish_feed_photo(
     log = logger.bind(username=username, post_type="feed_photo")
     image_file = Path(image_path)
     if not image_file.exists():
-        raise HardPublishError(f"image not found: {image_file}")
+        raise HardPublishError(f"изображение не найдено: {image_file}")
     _emit(on_log, "info", "login", "Авторизация клиента Instagram")
     client = _login_media_client(
         username=username,
@@ -354,7 +354,7 @@ def publish_feed_photo(
         raise ActionCooldownError(str(exc)) from exc
     except ChallengeRequired as exc:
         _emit(on_log, "error", "upload", str(exc))
-        raise HardPublishError(f"challenge required during publish: {exc}") from exc
+        raise HardPublishError(f"при публикации нужен challenge: {exc}") from exc
     except PleaseWaitFewMinutes as exc:
         _emit(on_log, "warn", "upload", str(exc))
         raise TemporaryPublishError(str(exc)) from exc
@@ -391,7 +391,7 @@ def publish_feed_video(
     log = logger.bind(username=username, post_type="feed_video")
     video_file = Path(video_path)
     if not video_file.exists():
-        raise HardPublishError(f"video not found: {video_file}")
+        raise HardPublishError(f"видео не найдено: {video_file}")
     _emit(on_log, "info", "login", "Авторизация клиента Instagram")
     client = _login_media_client(
         username=username,
@@ -412,7 +412,7 @@ def publish_feed_video(
         raise ActionCooldownError(str(exc)) from exc
     except ChallengeRequired as exc:
         _emit(on_log, "error", "upload", str(exc))
-        raise HardPublishError(f"challenge required during publish: {exc}") from exc
+        raise HardPublishError(f"при публикации нужен challenge: {exc}") from exc
     except PleaseWaitFewMinutes as exc:
         _emit(on_log, "warn", "upload", str(exc))
         raise TemporaryPublishError(str(exc)) from exc

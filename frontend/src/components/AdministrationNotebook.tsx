@@ -107,7 +107,7 @@ export function AdministrationNotebook() {
         value={draft}
         disabled={!loaded}
         spellCheck={false}
-        placeholder="Salad organization / project / group, хост, что не забыть…"
+        placeholder="Организация / проект / группа Salad, хост, что не забыть…"
         aria-label="Текст блокнота"
         onChange={(event) => {
           setDraft(event.target.value);

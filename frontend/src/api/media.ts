@@ -13,7 +13,7 @@ export async function fetchMediaObjectUrl(
     signal,
   });
   if (!res.ok) {
-    throw new Error(`Failed to load media: HTTP ${res.status}`);
+    throw new Error(`Не удалось загрузить медиа: HTTP ${res.status}`);
   }
   const blob = await res.blob();
   return URL.createObjectURL(blob);

@@ -26,10 +26,12 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.accounts.operator_text import operator_error
 from app.accounts.session_manager import (
     ensure_fingerprint_and_proxy,
     maybe_rotate_session_uuids,
 )
+from app.accounts.status import status_label
 from app.behavior.idle_warmup import maybe_run_idle_warmup
 from app.alerts.telegram import (
     notify_blocked,
@@ -69,14 +71,19 @@ from app.publisher.reels_publisher import (
 )
 from app.publisher.tiktok_publisher import publish_tiktok
 from app.publisher.youtube_publisher import publish_youtube_short
-from app.db.models import Platform
+from app.db.models import Composition, GenerationJob, PipelineStatus, PlanJob, Platform
+from app.scheduler.queue import reclaim_stale_running
 from app.services.composing import claim_due_composition, run_composition
 from app.services.generation import claim_due_generation_job, run_generation_job
 from app.services.planning import claim_due_plan_job, run_plan_job
 from app.publications.stats import sync_recent_publication_stats
 from app.scheduler.heartbeat import beat
-from app.scheduler.planner import can_post_today, increment_daily_stat
-from app.risk.profiles import classify_account_risk, quarantine_retry_delay
+from app.scheduler.planner import (
+    CROSS_ACCOUNT_SPREAD_MINUTES,
+    can_post_today,
+    increment_daily_stat,
+)
+from app.risk.profiles import classify_account_risk, profile_min_gap_for_account, quarantine_retry_delay
 from app.video.caption_pool import render_caption
 from app.video.uniquifier import random_params, uniquify
 from zoneinfo import ZoneInfo
@@ -106,9 +113,11 @@ def _install_signals() -> None:
 def _claim_due_job(db: Session, now: datetime) -> Optional[PostJob]:
     """Pick the next eligible job.
 
-    Skips jobs whose account is operator-paused or still on an anti-detection
-    cooldown. Those rows stay ``queued`` until pause is lifted or the cooldown
-    window expires.
+    Skips jobs whose account is paused, challenge, blocked, or still inside an
+    anti-detection cooldown. Expired-cooldown accounts stay eligible so
+    ``_process_job`` can restore them to active. Challenge/blocked rows stay
+    ``queued`` until the operator clears the account — they must not burn
+    attempts on hourly claim/requeue cycles.
     """
     base_filters = (
         (PostJob.status == PostJobStatus.queued),
@@ -117,12 +126,18 @@ def _claim_due_job(db: Session, now: datetime) -> Optional[PostJob]:
     cooldown_filter = (
         (Account.cooldown_until.is_(None)) | (Account.cooldown_until <= now)
     )
-    paused_filter = Account.status != AccountStatus.paused
+    # Only active accounts, or cooldown whose window has already expired
+    # (process restores status to active). Challenge/blocked must not be
+    # claimed — that burned attempts every hour while the account was stuck.
+    status_filter = (
+        (Account.status == AccountStatus.active)
+        | (Account.status == AccountStatus.cooldown)
+    )
 
     stmt = (
         select(PostJob)
         .join(Account, Account.id == PostJob.account_id)
-        .where(*base_filters, cooldown_filter, paused_filter)
+        .where(*base_filters, cooldown_filter, status_filter)
         .order_by(PostJob.scheduled_for.asc())
         .limit(1)
         .with_for_update(skip_locked=True)
@@ -134,7 +149,7 @@ def _claim_due_job(db: Session, now: datetime) -> Optional[PostJob]:
         stmt_plain = (
             select(PostJob)
             .join(Account, Account.id == PostJob.account_id)
-            .where(*base_filters, cooldown_filter, paused_filter)
+            .where(*base_filters, cooldown_filter, status_filter)
             .order_by(PostJob.scheduled_for.asc())
             .limit(1)
         )
@@ -146,6 +161,28 @@ def _claim_due_job(db: Session, now: datetime) -> Optional[PostJob]:
     db.commit()
     db.refresh(job)
     return job
+
+
+def _another_account_just_posted(db: Session, account_id: int) -> bool:
+    """True when some other account posted or is posting inside the spread window."""
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(minutes=CROSS_ACCOUNT_SPREAD_MINUTES)
+    recent = db.scalar(
+        select(PostJob.id).where(
+            PostJob.account_id != account_id,
+            PostJob.status == PostJobStatus.done,
+            PostJob.finished_at >= since,
+        )
+    )
+    if recent is not None:
+        return True
+    inflight = db.scalar(
+        select(PostJob.id).where(
+            PostJob.account_id != account_id,
+            PostJob.status == PostJobStatus.running,
+        )
+    )
+    return inflight is not None
 
 
 def _account_tz(account: Account) -> ZoneInfo:
@@ -240,7 +277,8 @@ def _on_challenge_factory(account_id: int):
 
 def _process_job(db: Session, job: PostJob) -> None:
     log = logger.bind(job_id=job.id, account_id=job.account_id)
-    job.attempts += 1
+    # Soft deferrals (hours / cap / gap / spread / inactive) must not burn
+    # ``attempts`` — only a real publish attempt counts toward dead-letter.
 
     diag = DiagnosticCollector(
         db,
@@ -253,21 +291,21 @@ def _process_job(db: Session, job: PostJob) -> None:
     def _done(status: str, summary: str) -> None:
         diag.finish(status, summary)  # type: ignore[arg-type]
 
-    diag.info("start", f"Задача #{job.id}, попытка {job.attempts}")
+    diag.info("start", f"Задача #{job.id}, попыток уже {job.attempts}")
 
     account = db.get(Account, job.account_id)
     if account is None:
         job.status = PostJobStatus.dead
-        job.last_error = "account missing"
+        job.last_error = "аккаунт не найден"
         db.commit()
         diag.error("account", "Запись аккаунта отсутствует")
-        _done("fail", "account missing")
+        _done("fail", "аккаунт не найден")
         return
 
     log = log.bind(username=account.username)
     risk_profile = classify_account_risk(account)
     log = log.bind(risk_profile=risk_profile.name)
-    diag.info("account", f"@{account.username} статус={account.status.value}")
+    diag.info("account", f"@{account.username} статус={status_label(account.status.value)}")
 
     # Soft-block cooldown expired → restore active so claimable jobs are not cancelled.
     if account.status == AccountStatus.cooldown:
@@ -280,14 +318,17 @@ def _process_job(db: Session, job: PostJob) -> None:
             account.cooldown_until = None
             db.commit()
             log.info("worker.cooldown_expired_restored")
-            diag.info("account", "Cooldown истёк — статус active")
+            diag.info("account", "Пауза IG истекла — статус активен")
 
     if account.status != AccountStatus.active:
         job.status = PostJobStatus.queued
-        job.last_error = f"account status: {account.status.value}"
+        job.last_error = f"статус аккаунта: {status_label(account.status.value)}"
+        job.scheduled_for = _clamp_to_active_window(
+            account, datetime.now(timezone.utc) + timedelta(hours=1)
+        )
         db.commit()
         log.warning("worker.account_not_active", status=account.status.value)
-        diag.warn("account", f"Аккаунт неактивен: {account.status.value}")
+        diag.warn("account", f"Аккаунт неактивен: {status_label(account.status.value)}")
         _done("warn", job.last_error)
         return
 
@@ -299,25 +340,60 @@ def _process_job(db: Session, job: PostJob) -> None:
         db.commit()
         log.info("worker.outside_active_hours_reschedule")
         diag.info("hours", "Вне часов активности — перенос в окно")
-        _done("warn", "outside active hours")
+        _done("warn", "вне часов активности")
         return
 
     if not can_post_today(db, account):
         job.status = PostJobStatus.queued
-        job.scheduled_for = _clamp_to_active_window(
-            account, datetime.now(timezone.utc) + timedelta(hours=2)
+        local_now = datetime.now(timezone.utc).astimezone(_account_tz(account))
+        start_h = max(0, min(23, account.active_hour_start))
+        next_open = (local_now + timedelta(days=1)).replace(
+            hour=start_h, minute=0, second=0, microsecond=0
         )
+        job.scheduled_for = next_open.astimezone(timezone.utc)
         db.commit()
         log.info("worker.daily_cap_reached_reschedule")
-        diag.info("cap", "Дневной лимит публикаций — перенос на +2 ч")
-        _done("warn", "daily cap reached")
+        diag.info("cap", "Дневной лимит публикаций — перенос на следующее окно")
+        _done("warn", "дневной лимит публикаций")
         return
+
+    last_publish = account.last_publish_at
+    gap_hours = profile_min_gap_for_account(account)
+    if last_publish is not None and gap_hours > 0:
+        if last_publish.tzinfo is None:
+            last_publish = last_publish.replace(tzinfo=timezone.utc)
+        earliest = last_publish + timedelta(hours=float(gap_hours))
+        if earliest > datetime.now(timezone.utc):
+            job.status = PostJobStatus.queued
+            job.scheduled_for = _clamp_to_active_window(account, earliest)
+            job.last_error = "интервал между публикациями"
+            db.commit()
+            log.info("worker.min_gap_reschedule")
+            diag.info("gap", "Между публикациями ещё не прошёл интервал — перенос")
+            _done("warn", "интервал между публикациями")
+            return
+
+    if _another_account_just_posted(db, account.id):
+        job.status = PostJobStatus.queued
+        job.scheduled_for = _clamp_to_active_window(
+            account,
+            datetime.now(timezone.utc) + timedelta(minutes=CROSS_ACCOUNT_SPREAD_MINUTES),
+        )
+        job.last_error = "разнесение между аккаунтами"
+        db.commit()
+        log.info("worker.cross_account_spread")
+        diag.info("spread", "Другой аккаунт только что публиковал — перенос на 2 мин")
+        _done("warn", "разнесение между аккаунтами")
+        return
+
+    job.attempts += 1
+    diag.info("attempt", f"Реальная попытка публикации #{job.attempts}")
 
     proxy = _account_proxy(db, account)
     if proxy is None:
         diag.error("proxy", "Прокси не назначен")
-        _done("fail", "no proxy assigned")
-        _fail_hard(db, job, account, "no proxy assigned")
+        _done("fail", "прокси не назначен")
+        _fail_hard(db, job, account, "прокси не назначен")
         return
 
     diag.info("proxy", f"Проверка прокси {proxy.label}")
@@ -329,8 +405,8 @@ def _process_job(db: Session, job: PostJob) -> None:
         db.commit()
         notify_proxy_down(proxy.label, str(exc))
         diag.error("proxy", str(exc))
-        _done("fail", f"proxy unhealthy: {exc}")
-        _fail_temporary(db, job, account, f"proxy unhealthy: {exc}")
+        _done("fail", f"прокси недоступен: {exc}")
+        _fail_temporary(db, job, account, f"прокси недоступен: {exc}")
         return
     else:
         # Best-effort persistence of geo info between full health-check runs.
@@ -357,7 +433,7 @@ def _process_job(db: Session, job: PostJob) -> None:
                     account_id=account.id,
                     level=EventLevel.warn,
                     kind="proxy.unstable",
-                    message=f"Proxy {proxy.label} risk score={risk:.2f}",
+                    message=f"Прокси {proxy.label} риск={risk:.2f}",
                 )
             )
             diag.warn("proxy", f"Риск прокси={risk:.2f}")
@@ -389,8 +465,8 @@ def _process_job(db: Session, job: PostJob) -> None:
     src = Path(job.source_video_path)
     if not src.exists():
         diag.error("media", f"Исходный файл отсутствует: {src}")
-        _done("fail", f"source missing: {src}")
-        _fail_hard(db, job, account, f"source missing: {src}")
+        _done("fail", f"исходный файл отсутствует: {src}")
+        _fail_hard(db, job, account, f"исходный файл отсутствует: {src}")
         return
 
     post_type = _job_post_type(job)
@@ -412,8 +488,8 @@ def _process_job(db: Session, job: PostJob) -> None:
         except Exception as exc:
             log.exception("worker.uniquify_failed")
             diag.error("uniquify", str(exc))
-            _done("fail", f"uniquify failed: {exc}")
-            _fail_temporary(db, job, account, f"uniquify failed: {exc}")
+            _done("fail", f"uniquify не удался: {exc}")
+            _fail_temporary(db, job, account, f"uniquify не удался: {exc}")
             return
     else:
         out_path = src
@@ -443,11 +519,7 @@ def _process_job(db: Session, job: PostJob) -> None:
             email_password=account.email_password,
             on_log=on_log,
         )
-        if post_type == PostType.feed_photo.value:
-            result: PublishResult = publish_feed_photo(image_path=out_path, **common)
-        elif post_type == PostType.feed_video.value:
-            result = publish_feed_video(video_path=out_path, **common)
-        elif post_type == PostType.youtube_short.value or _account_platform(account) == Platform.youtube:
+        if platform == Platform.youtube:
             result = publish_youtube_short(
                 username=account.username,
                 video_path=out_path,
@@ -459,7 +531,7 @@ def _process_job(db: Session, job: PostJob) -> None:
                 fingerprint=fingerprint,
                 on_log=on_log,
             )
-        elif post_type == PostType.tiktok.value or _account_platform(account) == Platform.tiktok:
+        elif platform == Platform.tiktok:
             result = publish_tiktok(
                 username=account.username,
                 video_path=out_path,
@@ -470,6 +542,10 @@ def _process_job(db: Session, job: PostJob) -> None:
                 fingerprint=fingerprint,
                 on_log=on_log,
             )
+        elif post_type == PostType.feed_photo.value:
+            result = publish_feed_photo(image_path=out_path, **common)
+        elif post_type == PostType.feed_video.value:
+            result = publish_feed_video(video_path=out_path, **common)
         else:
             result = publish_reel(
                 video_path=out_path,
@@ -488,61 +564,64 @@ def _process_job(db: Session, job: PostJob) -> None:
             cooldown_hours=cooldown_hours,
             cooldown_until=cooldown_until.isoformat(),
         )
-        diag.warn("publish", f"Пауза действий {cooldown_hours} ч: {exc}")
+        shown = operator_error(exc)
+        diag.warn("publish", f"Пауза действий {cooldown_hours} ч: {shown}")
         db.add(
             Event(
                 account_id=account.id,
                 level=EventLevel.warn,
                 kind="account_cooldown",
                 message=(
-                    f"action cooldown {cooldown_hours}h after FeedbackRequired: {exc}"
+                    f"пауза действий {cooldown_hours}ч после запроса обратной связи: {shown}"
                 ),
             )
         )
         _record_post_log(
-            db, job, account, success=False, error=str(exc),
+            db, job, account, success=False, error=shown,
             final_video=out_path, final_caption=caption,
         )
         increment_daily_stat(db, account, success=False)
         # Re-queue the job after cooldown so it isn't lost.
         job.status = PostJobStatus.queued
-        job.last_error = f"cooldown: {exc}"
+        job.last_error = f"пауза: {shown}"
         job.next_attempt_at = cooldown_until + timedelta(minutes=random.randint(5, 25))
         job.scheduled_for = job.next_attempt_at
         db.commit()
-        _done("warn", f"cooldown: {exc}")
+        _done("warn", f"пауза: {shown}")
         return
     except HardPublishError as exc:
+        shown_hard = operator_error(exc)
         log.error("worker.hard_publish_error", error=str(exc))
-        diag.error("publish", str(exc))
+        diag.error("publish", shown_hard)
         account.status = AccountStatus.blocked
-        notify_blocked(account.username, account.id, str(exc))
-        _record_post_log(db, job, account, success=False, error=str(exc), final_video=out_path, final_caption=caption)
+        notify_blocked(account.username, account.id, shown_hard)
+        _record_post_log(db, job, account, success=False, error=shown_hard, final_video=out_path, final_caption=caption)
         increment_daily_stat(db, account, success=False)
         job.status = PostJobStatus.dead
-        job.last_error = str(exc)
+        job.last_error = shown_hard
         job.finished_at = datetime.now(timezone.utc)
         db.commit()
-        _done("fail", str(exc))
+        _done("fail", shown_hard)
         return
     except TemporaryPublishError as exc:
+        shown_temp = operator_error(exc)
         log.warning("worker.temp_publish_error", error=str(exc), attempt=job.attempts)
-        diag.warn("publish", str(exc))
-        notify_publish_failure(account.username, account.id, str(exc), job.attempts)
-        _record_post_log(db, job, account, success=False, error=str(exc), final_video=out_path, final_caption=caption)
+        diag.warn("publish", shown_temp)
+        notify_publish_failure(account.username, account.id, shown_temp, job.attempts)
+        _record_post_log(db, job, account, success=False, error=shown_temp, final_video=out_path, final_caption=caption)
         increment_daily_stat(db, account, success=False)
         if _should_quarantine(account, str(exc), job.attempts):
-            _enter_quarantine(db, job, account, reason=str(exc))
-            _done("warn", f"quarantine: {exc}")
+            _enter_quarantine(db, job, account, reason=shown_temp)
+            _done("warn", f"карантин: {shown_temp}")
             return
-        _fail_temporary(db, job, account, str(exc))
-        _done("warn", str(exc))
+        _fail_temporary(db, job, account, shown_temp)
+        _done("warn", shown_temp)
         return
     except Exception as exc:  # pragma: no cover - defensive
         log.exception("worker.unexpected")
         diag.error("publish", f"неожиданная ошибка: {exc}")
-        _fail_temporary(db, job, account, f"unexpected: {exc}")
-        _done("fail", f"unexpected: {exc}")
+        _fail_temporary(db, job, account, f"неожиданная ошибка: {exc}")
+        _done("fail", f"неожиданная ошибка: {exc}")
         return
 
     _record_post_log(
@@ -564,7 +643,7 @@ def _process_job(db: Session, job: PostJob) -> None:
     db.commit()
     log.info("worker.job_done", media_id=result.media_id)
     diag.info("done", f"Опубликовано media_id={result.media_id}")
-    _done("ok", f"Published media_id={result.media_id}")
+    _done("ok", f"Опубликовано media_id={result.media_id}")
 
 
 def _fail_temporary(db: Session, job: PostJob, account: Account, message: str) -> None:
@@ -577,7 +656,9 @@ def _fail_temporary(db: Session, job: PostJob, account: Account, message: str) -
                 account_id=account.id,
                 level=EventLevel.error,
                 kind="job_dead",
-                message=f"job {job.id} dead-lettered after {job.attempts} attempts: {message}",
+                message=(
+                    f"задача {job.id} в мёртвых после {job.attempts} попыток: {message}"
+                ),
             )
         )
         db.commit()
@@ -593,11 +674,10 @@ def _fail_temporary(db: Session, job: PostJob, account: Account, message: str) -
 def _should_quarantine(account: Account, message: str, attempts: int) -> bool:
     msg = message.lower()
     auth_hints = ("login", "challenge", "checkpoint", "suspicious", "feedback", "too many")
-    if any(h in msg for h in auth_hints) and attempts >= 2:
-        return True
-    if account.status in (AccountStatus.challenge, AccountStatus.cooldown):
-        return True
-    return False
+    auth_hit = any(h in msg for h in auth_hints) and attempts >= 2
+    status_hit = account.status in (AccountStatus.challenge, AccountStatus.cooldown)
+    enter = auth_hit or status_hit
+    return enter
 
 
 def _enter_quarantine(db: Session, job: PostJob, account: Account, *, reason: str) -> None:
@@ -605,7 +685,7 @@ def _enter_quarantine(db: Session, job: PostJob, account: Account, *, reason: st
     account.status = AccountStatus.cooldown
     account.cooldown_until = until
     job.status = PostJobStatus.queued
-    job.last_error = f"quarantine: {reason}"
+    job.last_error = f"карантин: {reason}"
     job.next_attempt_at = until
     job.scheduled_for = until
     db.add(
@@ -613,7 +693,9 @@ def _enter_quarantine(db: Session, job: PostJob, account: Account, *, reason: st
             account_id=account.id,
             level=EventLevel.warn,
             kind="risk.quarantine",
-            message=f"Account moved to quarantine until {until.isoformat()} ({reason})",
+            message=(
+                f"Аккаунт в карантине до {until.isoformat()} ({reason})"
+            ),
         )
     )
     db.commit()
@@ -628,7 +710,7 @@ def _fail_hard(db: Session, job: PostJob, account: Account, message: str) -> Non
             account_id=account.id,
             level=EventLevel.error,
             kind="job_hard_fail",
-            message=f"job {job.id} hard-failed: {message}",
+            message=f"задача {job.id} жёсткий сбой: {message}",
         )
     )
     db.commit()
@@ -684,6 +766,27 @@ def run() -> None:
         try:
             with SessionLocal() as db:
                 beat(db, period_seconds=float(settings.worker_poll_interval_sec), note="idle")
+                stale_after = now - timedelta(
+                    seconds=max(float(settings.generation_timeout_seconds) * 2, 1800)
+                )
+                post_after = now - timedelta(minutes=30)
+                for model in (GenerationJob, Composition, PlanJob):
+                    reclaim_stale_running(
+                        db,
+                        model,
+                        running=PipelineStatus.running,
+                        queued=PipelineStatus.queued,
+                        older_than=stale_after,
+                        now=now,
+                    )
+                reclaim_stale_running(
+                    db,
+                    PostJob,
+                    running=PostJobStatus.running,
+                    queued=PostJobStatus.queued,
+                    older_than=post_after,
+                    now=now,
+                )
                 plan_job = claim_due_plan_job(db, now=now)
                 if plan_job is not None:
                     run_plan_job(db, plan_job)

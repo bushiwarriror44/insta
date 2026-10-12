@@ -115,7 +115,7 @@ def fade_start(total: float, fade: float) -> float:
 def build_command(request: ComposeRequest, total: float | None = None) -> list[str]:
     """The ffmpeg invocation, as a list so nothing is shell-interpreted."""
     if not request.clips:
-        raise ComposeError("a composition needs at least one clip")
+        raise ComposeError("для склейки нужен хотя бы один клип")
 
     command = ["ffmpeg", "-y", "-loglevel", "error"]
     for clip in request.clips:
@@ -165,12 +165,12 @@ def build_command(request: ComposeRequest, total: float | None = None) -> list[s
 def compose(request: ComposeRequest) -> Path:
     """Render the composition. Raises `ComposeError` on failure."""
     if shutil.which("ffmpeg") is None:
-        raise ComposeError("ffmpeg is not installed")
+        raise ComposeError("ffmpeg не установлен")
     for clip in request.clips:
         if not clip.is_file():
-            raise ComposeError(f"missing clip: {clip.name}")
+            raise ComposeError(f"клип не найден: {clip.name}")
     if request.audio is not None and not request.audio.is_file():
-        raise ComposeError(f"missing audio: {request.audio.name}")
+        raise ComposeError(f"аудио не найдено: {request.audio.name}")
 
     request.output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -184,17 +184,17 @@ def compose(request: ComposeRequest) -> Path:
     except subprocess.TimeoutExpired as exc:
         request.output.unlink(missing_ok=True)
         raise ComposeError(
-            f"ffmpeg gave up after {TIMEOUT_SECONDS}s", retryable=True
+            f"ffmpeg не завершился за {TIMEOUT_SECONDS}с", retryable=True
         ) from exc
 
     if finished.returncode != 0:
         request.output.unlink(missing_ok=True)
         # ffmpeg's last line is the one that says what went wrong.
         detail = (finished.stderr or "").strip().splitlines()
-        raise ComposeError(detail[-1] if detail else "ffmpeg failed")
+        raise ComposeError(detail[-1] if detail else "ошибка ffmpeg")
 
     if not request.output.is_file() or request.output.stat().st_size == 0:
         request.output.unlink(missing_ok=True)
-        raise ComposeError("ffmpeg produced nothing")
+        raise ComposeError("ffmpeg не создал файл")
 
     return request.output

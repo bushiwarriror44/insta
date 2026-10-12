@@ -487,7 +487,7 @@ def test_first_login_challenge_during_sessionid_poll(monkeypatch, app_env):
     )
     assert ok.ok is False
     assert ok.challenge is True
-    assert ok.error == "challenge required"
+    assert ok.error == "нужен challenge"
 
 
 def test_first_login_requires_proxy_before_browser(monkeypatch, app_env):

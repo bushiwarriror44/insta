@@ -58,6 +58,146 @@ def test_schedule_assets_creates_post_job(db_session, make_account):
     assert db_session.get(PostJob, jobs[0].id) is not None
 
 
+def test_schedule_assets_fallback_respects_min_gap(db_session, make_account):
+    from datetime import datetime, timedelta, timezone
+
+    from freezegun import freeze_time
+
+    from app.config import settings
+    from app.db.models import AssetKind, AssetSource, MediaAsset, PostJobStatus
+
+    with freeze_time("2026-03-15 12:00:00", tz_offset=0):
+        account = make_account(
+            min_gap_hours=12,
+            daily_post_cap=3,
+            active_hour_start=0,
+            active_hour_end=23,
+        )
+        clip = settings.media_dir / "later.mp4"
+        clip.write_bytes(b"fake")
+        asset = MediaAsset(filename="later.mp4", kind=AssetKind.video, source=AssetSource.upload)
+        now = datetime(2026, 3, 15, 12, 0, tzinfo=timezone.utc)
+        blocker = PostJob(
+            account_id=account.id,
+            source_video_path=str(clip),
+            post_type=PostType.reel,
+            scheduled_for=now + timedelta(hours=1),
+            status=PostJobStatus.queued,
+        )
+        db_session.add_all([asset, blocker])
+        db_session.commit()
+        jobs = schedule_assets(db_session, account, [asset], days_ahead=1)
+        fresh = [job for job in jobs if job.id != blocker.id]
+        assert len(fresh) == 1
+        when = fresh[0].scheduled_for
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        assert when >= now + timedelta(hours=13)
+
+
+def test_schedule_assets_fallback_stays_inside_active_hours(db_session, make_account):
+    from datetime import datetime, timezone
+
+    from freezegun import freeze_time
+
+    from app.config import settings
+    from app.db.models import AssetKind, AssetSource, MediaAsset
+
+    with freeze_time("2026-03-15 15:00:00", tz_offset=0):
+        account = make_account(active_hour_start=10, active_hour_end=12, min_gap_hours=4, daily_post_cap=1)
+        clip = settings.media_dir / "hours.mp4"
+        clip.write_bytes(b"fake")
+        asset = MediaAsset(filename="hours.mp4", kind=AssetKind.video, source=AssetSource.upload)
+        db_session.add(asset)
+        db_session.commit()
+        jobs = schedule_assets(db_session, account, [asset], days_ahead=1)
+        when = jobs[0].scheduled_for
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        assert when == datetime(2026, 3, 16, 10, 0, tzinfo=timezone.utc)
+
+
+def test_schedule_assets_fallback_respects_daily_cap(db_session, make_account):
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+
+    from freezegun import freeze_time
+
+    from app.config import settings
+    from app.db.models import AssetKind, AssetSource, MediaAsset
+
+    with freeze_time("2026-03-15 16:00:00", tz_offset=0):
+        account = make_account(
+            daily_post_cap=1,
+            min_gap_hours=1,
+            active_hour_start=0,
+            active_hour_end=23,
+            timezone="UTC",
+        )
+        account.created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        db_session.commit()
+        assets = []
+        for name in ("cap-a.mp4", "cap-b.mp4", "cap-c.mp4"):
+            (settings.media_dir / name).write_bytes(b"fake")
+            asset = MediaAsset(filename=name, kind=AssetKind.video, source=AssetSource.upload)
+            db_session.add(asset)
+            assets.append(asset)
+        db_session.commit()
+        jobs = schedule_assets(db_session, account, assets, days_ahead=1)
+        tz = ZoneInfo("UTC")
+        today = datetime(2026, 3, 15, tzinfo=timezone.utc).astimezone(tz).date()
+        same_day = 0
+        for job in jobs:
+            when = job.scheduled_for
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+            if when.astimezone(tz).date() == today:
+                same_day += 1
+        assert same_day == 1
+        assert len(jobs) == 3
+
+
+def test_second_schedule_does_not_exceed_daily_cap(db_session, make_account):
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+
+    from freezegun import freeze_time
+
+    from app.config import settings
+    from app.db.models import AssetKind, AssetSource, MediaAsset
+
+    with freeze_time("2026-03-15 16:00:00", tz_offset=0):
+        account = make_account(
+            daily_post_cap=1,
+            min_gap_hours=1,
+            active_hour_start=0,
+            active_hour_end=23,
+            timezone="UTC",
+        )
+        account.created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        db_session.commit()
+        assets = []
+        for name in ("again-a.mp4", "again-b.mp4"):
+            (settings.media_dir / name).write_bytes(b"fake")
+            asset = MediaAsset(filename=name, kind=AssetKind.video, source=AssetSource.upload)
+            db_session.add(asset)
+            assets.append(asset)
+        db_session.commit()
+        first = schedule_assets(db_session, account, [assets[0]], days_ahead=1)
+        second = schedule_assets(db_session, account, [assets[1]], days_ahead=1)
+        tz = ZoneInfo("UTC")
+        today = datetime(2026, 3, 15, tzinfo=timezone.utc).date()
+        same_day = 0
+        for job in first + second:
+            when = job.scheduled_for
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+            if when.astimezone(tz).date() == today:
+                same_day += 1
+        assert same_day == 1
+        assert len(first) + len(second) == 2
+
+
 def test_schedule_assets_week_spreads_across_days(db_session, make_account, monkeypatch):
     from datetime import timezone
 
@@ -94,12 +234,49 @@ def test_schedule_assets_week_spreads_across_days(db_session, make_account, monk
     assert len(days) == 3
 
 
+def test_schedule_assets_separates_two_accounts(db_session, make_account, monkeypatch):
+    from datetime import datetime, timezone
+
+    from freezegun import freeze_time
+
+    from app.config import settings
+    from app.db.models import AssetKind, AssetSource, MediaAsset
+    from app.scheduler.planner import CROSS_ACCOUNT_SPREAD_MINUTES
+
+    slot = datetime(2026, 10, 12, 18, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(
+        "app.services.scheduling.plan_slots_for_day",
+        lambda *args, **kwargs: [slot],
+    )
+    accounts = [
+        make_account(username="spread-a", timezone="UTC", active_hour_start=0, active_hour_end=23),
+        make_account(username="spread-b", timezone="UTC", active_hour_start=0, active_hour_end=23),
+    ]
+    assets = []
+    for name in ("spread-a.mp4", "spread-b.mp4"):
+        path = settings.media_dir / name
+        path.write_bytes(b"fake")
+        asset = MediaAsset(filename=name, kind=AssetKind.video, source=AssetSource.upload, label=name)
+        db_session.add(asset)
+        assets.append(asset)
+    db_session.commit()
+    for asset in assets:
+        db_session.refresh(asset)
+
+    with freeze_time("2026-10-10 12:00:00", tz_offset=0):
+        first = schedule_assets(db_session, accounts[0], [assets[0]], days_ahead=1)
+        second = schedule_assets(db_session, accounts[1], [assets[1]], days_ahead=1)
+
+    delta = abs((first[0].scheduled_for - second[0].scheduled_for).total_seconds())
+    assert delta > CROSS_ACCOUNT_SPREAD_MINUTES * 60
+
+
 def test_youtube_publish_requires_session(tmp_path, monkeypatch):
     video = tmp_path / "a.mp4"
     video.write_bytes(b"x")
     monkeypatch.setattr(
         "app.publisher.youtube_publisher.playwright_state_path",
-        lambda username: tmp_path / "missing.json",
+        lambda username, platform=None: tmp_path / "missing.json",
     )
     with pytest.raises(TemporaryPublishError):
         publish_youtube_short(
@@ -115,7 +292,7 @@ def test_tiktok_publish_requires_session(tmp_path, monkeypatch):
     video.write_bytes(b"x")
     monkeypatch.setattr(
         "app.publisher.tiktok_publisher.playwright_state_path",
-        lambda username: tmp_path / "missing.json",
+        lambda username, platform=None: tmp_path / "missing.json",
     )
     with pytest.raises(TemporaryPublishError):
         publish_tiktok(
@@ -143,7 +320,8 @@ def test_youtube_cookies_import_without_sessionid(app_env):
     assert result.session_id == ""
     from app.accounts.playwright_session import playwright_state_path
 
-    assert playwright_state_path("ytuser").exists()
+    assert playwright_state_path("ytuser", "youtube").exists()
+    assert not playwright_state_path("ytuser").exists()
 
 
 class StubAgent:

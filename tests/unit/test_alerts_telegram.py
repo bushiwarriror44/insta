@@ -1,6 +1,8 @@
 """Tests for app.alerts.telegram."""
 from __future__ import annotations
 
+import json
+
 import httpx
 import respx
 from sqlalchemy import select
@@ -33,10 +35,10 @@ def test_send_posts_to_telegram(app_env, db_session, monkeypatch):
     tg.send("hi there", level=EventLevel.info, kind="alert")
     assert route.called
     call = route.calls[0]
-    body = call.request.read().decode("utf-8")
-    assert "CHATID" in body
-    assert "hi there" in body
-    assert "INFO" in body
+    payload = json.loads(call.request.read().decode("utf-8"))
+    assert payload["chat_id"] == "CHATID"
+    assert "hi there" in payload["text"]
+    assert "ИНФО" in payload["text"]
 
     rows = db_session.scalars(select(Event).where(Event.kind == "alert")).all()
     assert len(rows) == 1

@@ -1,5 +1,6 @@
 import { BarChart3, Clapperboard, Layers, Library, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import { api, formatApiError } from "../api/client";
 import { Card } from "../components/Card";
@@ -70,6 +71,14 @@ async function fetchLibraryMedia(): Promise<VideoOut[]> {
 
 export function Publishing() {
   const { push } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabFromUrl = (() => {
+    const tab = searchParams.get("tab");
+    return tab === "image" || tab === "video" ? tab : "";
+  })();
+  const usernameFromUrl = searchParams.get("username") || "";
+  const mediaFromUrl = searchParams.get("media") || "";
+
   const [accounts, setAccounts] = useState<AccountOut[]>([]);
   const [media, setMedia] = useState<VideoOut[]>([]);
   const [publications, setPublications] = useState<PublicationOut[]>([]);
@@ -77,10 +86,12 @@ export function Publishing() {
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [refreshingId, setRefreshingId] = useState<number | null>(null);
-  const [username, setUsername] = useState("");
+  const [username, setUsernameState] = useState(usernameFromUrl);
   const [postType, setPostType] = useState<PostType>("reel");
-  const [selectedFilename, setSelectedFilename] = useState<string | null>(null);
-  const [libraryTab, setLibraryTab] = useState<"video" | "image">("video");
+  const [selectedFilename, setSelectedFilename] = useState<string | null>(mediaFromUrl || null);
+  const [libraryTab, setLibraryTabState] = useState<"video" | "image">(
+    tabFromUrl === "image" ? "image" : "video"
+  );
   const [search, setSearch] = useState("");
   const [whenLocal, setWhenLocal] = useState("");
   const [caption, setCaption] = useState("");
@@ -92,6 +103,48 @@ export function Publishing() {
   const [generatePrompt, setGeneratePrompt] = useState("");
   const [generateRef, setGenerateRef] = useState("");
   const [joinIds, setJoinIds] = useState("");
+  const urlHydrated = useRef(false);
+
+  const patchUrl = useCallback(
+    (patch: { tab?: "video" | "image"; username?: string; media?: string | null }) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (patch.tab !== undefined) {
+            if (patch.tab === "video") next.delete("tab");
+            else next.set("tab", patch.tab);
+          }
+          if (patch.username !== undefined) {
+            if (patch.username) next.set("username", patch.username);
+            else next.delete("username");
+          }
+          if (patch.media !== undefined) {
+            if (patch.media) next.set("media", patch.media);
+            else next.delete("media");
+          }
+          return next;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
+
+  const setLibraryTab = useCallback(
+    (tab: "video" | "image") => {
+      setLibraryTabState(tab);
+      patchUrl({ tab });
+    },
+    [patchUrl]
+  );
+
+  const setUsername = useCallback(
+    (next: string) => {
+      setUsernameState(next);
+      patchUrl({ username: next });
+    },
+    [patchUrl]
+  );
 
   const selectedItem = useMemo(
     () => media.find((m) => m.filename === selectedFilename) ?? null,
@@ -103,6 +156,18 @@ export function Publishing() {
     [accounts]
   );
 
+  useEffect(() => {
+    if (tabFromUrl && tabFromUrl !== libraryTab) {
+      setLibraryTabState(tabFromUrl);
+    }
+  }, [tabFromUrl, libraryTab]);
+
+  useEffect(() => {
+    if (usernameFromUrl && usernameFromUrl !== username) {
+      setUsernameState(usernameFromUrl);
+    }
+  }, [usernameFromUrl, username]);
+
   const reload = useCallback(async () => {
     const [a, m, p, generated] = await Promise.all([
       api.accounts.list(),
@@ -113,8 +178,8 @@ export function Publishing() {
     setAccounts(a);
     setMedia(mergeLibrary(m, generated));
     setPublications(p);
-    setUsername((current) => current || defaultUsername || a[0]?.username || "");
-  }, [defaultUsername]);
+    setUsernameState((current) => current || usernameFromUrl || defaultUsername || a[0]?.username || "");
+  }, [defaultUsername, usernameFromUrl]);
 
   useAssistantMutate(reload);
 
@@ -135,14 +200,34 @@ export function Publishing() {
   }, [push, reload]);
 
   useEffect(() => {
-    if (!selectedFilename && media.length > 0) {
-      const firstVideo = media.find((m) => m.media_type === "video");
-      const pick = firstVideo ?? media[0];
-      setSelectedFilename(pick.filename);
-      setLibraryTab(pick.media_type);
-      setPostType(defaultPostTypeForItem(pick));
+    if (media.length === 0) return;
+    const existing =
+      selectedFilename != null
+        ? media.find((m) => m.filename === selectedFilename)
+        : undefined;
+    if (existing) {
+      if (!urlHydrated.current) {
+        urlHydrated.current = true;
+        setLibraryTabState(existing.media_type);
+        setPostType(defaultPostTypeForItem(existing));
+        if (!mediaFromUrl || !tabFromUrl) {
+          patchUrl({
+            media: existing.filename,
+            tab: existing.media_type,
+          });
+        }
+      }
+      return;
     }
-  }, [media, selectedFilename]);
+    const fromUrl = mediaFromUrl ? media.find((m) => m.filename === mediaFromUrl) : null;
+    const firstVideo = media.find((m) => m.media_type === "video");
+    const pick = fromUrl ?? firstVideo ?? media[0];
+    urlHydrated.current = true;
+    setSelectedFilename(pick.filename);
+    setLibraryTabState(pick.media_type);
+    setPostType(defaultPostTypeForItem(pick));
+    patchUrl({ media: pick.filename, tab: pick.media_type });
+  }, [media, selectedFilename, mediaFromUrl, tabFromUrl, patchUrl]);
 
   useEffect(() => {
     const known = new Set(media.map((m) => m.filename));
@@ -159,8 +244,9 @@ export function Publishing() {
 
   function selectItem(item: VideoOut) {
     setSelectedFilename(item.filename);
-    setLibraryTab(item.media_type);
+    setLibraryTabState(item.media_type);
     setPostType(defaultPostTypeForItem(item));
+    patchUrl({ media: item.filename, tab: item.media_type });
   }
 
   function toggleChecked(filename: string) {
@@ -306,7 +392,7 @@ export function Publishing() {
         : whenLocal
           ? new Date(whenLocal).toISOString()
           : null;
-      await api.jobs.enqueue({
+      const created = await api.jobs.enqueue({
         username: account,
         media_filename: mediaFilename,
         post_type: type,
@@ -322,13 +408,13 @@ export function Publishing() {
       });
       push(whenIso ? "Публикация запланирована" : "Публикация добавлена в очередь", "success", {
         label: "Открыть",
-        href: "/activity",
+        href: created?.id ? `/activity?job=${created.id}` : "/activity",
       });
       setCaption("");
       setWhenLocal("");
       await reload();
     } catch (err) {
-      push((err as Error).message, "error");
+      push(formatApiError(err), "error");
     } finally {
       setSaving(false);
     }
@@ -419,7 +505,7 @@ export function Publishing() {
                 const ref = generateRef.trim();
                 const item = media.find((m) => m.filename === ref);
                 const role = item?.media_type === "video" ? "motion_video" : "start_image";
-                await api.factory.createGeneration({
+                const created = await api.factory.createGeneration({
                   prompt: generatePrompt.trim(),
                   backend: ref && item?.media_type === "image" ? "auto" : "auto",
                   reference_filename: ref || undefined,
@@ -427,7 +513,10 @@ export function Publishing() {
                 });
                 setGeneratePrompt("");
                 setGenerateRef("");
-                push("Рендер в очереди", "success", { label: "Открыть", href: "/renders" });
+                push("Рендер в очереди", "success", {
+                  label: "Открыть",
+                  href: created?.id ? `/renders?gen=${created.id}` : "/renders",
+                });
               } catch (err) {
                 push(formatApiError(err), "error");
               }
@@ -445,9 +534,12 @@ export function Publishing() {
               const clip_ids = joinIds.split(",").map((s) => Number(s.trim())).filter(Boolean);
               if (!clip_ids.length) return;
               try {
-                await api.factory.createComposition({ clip_ids });
+                const created = await api.factory.createComposition({ clip_ids });
                 setJoinIds("");
-                push("Склейка в очереди", "success", { label: "Открыть", href: "/renders" });
+                push("Склейка в очереди", "success", {
+                  label: "Открыть",
+                  href: created?.id ? `/renders?join=${created.id}` : "/renders",
+                });
               } catch (err) {
                 push(formatApiError(err), "error");
               }

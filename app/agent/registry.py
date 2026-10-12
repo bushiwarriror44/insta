@@ -22,7 +22,7 @@ def get_agent(
     try:
         backend = _BACKENDS[name]
     except KeyError:
-        raise NotImplementedError(f"no content agent named {name!r}") from None
+        raise NotImplementedError(f"нет контент-агента с именем {name!r}") from None
     return backend(settings)
 
 

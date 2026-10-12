@@ -122,9 +122,9 @@ beforeEach(() => {
   apiMock.factory.assets.mockResolvedValue([]);
 });
 
-function renderPublishing() {
+function renderPublishing(initialEntry = "/publishing") {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <ToastProvider>
         <Publishing />
       </ToastProvider>
@@ -383,8 +383,15 @@ describe("Publishing page", () => {
     expect((await screen.findAllByText("fal-sunset.mp4")).length).toBeGreaterThan(0);
   });
 
+  it("reads library tab and media from the URL", async () => {
+    renderPublishing("/publishing?tab=image&media=photo.jpg&username=alice");
+    expect((await screen.findAllByText("photo.jpg")).length).toBeGreaterThan(0);
+    expect(byLabel(/аккаунт/i)).toHaveValue("alice");
+    expect(screen.getByRole("button", { name: /вкладка фото/i })).toHaveClass("bg-slate-800");
+  });
+
   it("schedules a publication and links the toast to activity", async () => {
-    apiMock.jobs.enqueue.mockResolvedValue({});
+    apiMock.jobs.enqueue.mockResolvedValue({ id: 77 });
     renderPublishing();
     await screen.findAllByText("clip.mp4");
     fireEvent.change(byLabel(/запланировать на/i), {
@@ -401,12 +408,12 @@ describe("Publishing page", () => {
       )
     );
     const open = await screen.findByRole("link", { name: /открыть/i });
-    expect(open).toHaveAttribute("href", "/activity");
+    expect(open).toHaveAttribute("href", "/activity?job=77");
     expect(screen.getByText(/публикация запланирована/i)).toBeInTheDocument();
   });
 
   it("queues a render and links the toast to renders", async () => {
-    apiMock.factory.createGeneration.mockResolvedValue({});
+    apiMock.factory.createGeneration.mockResolvedValue({ id: 9, status: "queued" });
     renderPublishing();
     await screen.findAllByText("clip.mp4");
     fireEvent.change(screen.getByPlaceholderText(/промпт для рендера/i), {
@@ -420,6 +427,6 @@ describe("Publishing page", () => {
       })
     );
     const open = await screen.findByRole("link", { name: /открыть/i });
-    expect(open).toHaveAttribute("href", "/renders");
+    expect(open).toHaveAttribute("href", "/renders?gen=9");
   });
 });

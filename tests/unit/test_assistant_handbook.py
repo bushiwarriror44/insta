@@ -71,7 +71,7 @@ def test_handbook_file_states_local_ollama_and_that_proxies_are_not_for_chat():
     assert "### Оплата" in text
     assert "0.05" in text
     assert "не касса" in text
-    assert "Stop" in text
+    assert "останови" in text.lower()
     assert "USDC" in text
     assert "Карточка «Оплата»" in text
     assert "GPU Salad" in text

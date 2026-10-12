@@ -62,7 +62,7 @@ export function isSessionExpired(auth: Pick<InstagramAuthStepOut, "error" | "err
 }
 
 export const SESSION_EXPIRED_MOBILE_HINT =
-  "Mobile API отклонил web-cookie из Dolphin. Автопостинг возможен через пароль аккаунта (очередь сама войдёт без мёртвого sessionid) или — рекомендуется — один раз нажмите «Подготовить к автопостингу», чтобы создать стабильную mobile-сессию (нужны пароль и при 2FA — TOTP). Cookies-only проверка и экспорт в Dolphin не требуют mobile API.";
+  "Мобильный API отклонил web-cookie из Dolphin. Автопостинг возможен через пароль аккаунта (очередь сама войдёт без мёртвого sessionid) или — рекомендуется — один раз нажмите «Подготовить к автопостингу», чтобы создать стабильную мобильную сессию (нужны пароль и при 2FA — TOTP). Проверка только cookies и экспорт в Dolphin не требуют мобильный API.";
 
 export function SessionSetupModal({ account, open, onClose, onCompleted }: Props) {
   const { push } = useToast();
@@ -293,7 +293,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
         <div className="rounded-xl border border-amber-500/40 bg-amber-950/30 p-3 text-sm text-amber-100">
           {isIg
             ? "Для автопостинга нужна Instagram-сессия."
-            : `Для автопостинга нужны cookies ${studioLabel} в Playwright state.json.`}{" "}
+            : `Для автопостинга нужны cookies ${studioLabel} в файле состояния Playwright.`}{" "}
           Прокси аккаунта (
           <span className="font-mono text-xs">{account?.proxy_label ?? "—"}</span>) должен совпадать с тем,
           через который вы входите.
@@ -362,7 +362,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
                 </div>
                 <p className="text-xs text-slate-400">
                   {isIg
-                    ? "Сервер выполнит вход через Playwright. TOTP seed — для 2FA Instagram."
+                    ? "Сервер выполнит вход через Playwright. Секрет TOTP — для 2FA Instagram."
                     : "Headless Studio; при Google/TikTok 2FA откроется интерактивный браузер (VNC)."}
                 </p>
               </button>
@@ -398,7 +398,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
                 <>
                   <li>Убедитесь, что прокси назначен и Instagram доступен.</li>
                   <li>Нажмите «Создать сессию» — сервер выполнит вход через Playwright Chromium.</li>
-                  <li>Если на аккаунте включена 2FA, укажите TOTP seed в настройках аккаунта.</li>
+                  <li>Если на аккаунте включена 2FA, укажите секрет TOTP в настройках аккаунта.</li>
                   <li>После успеха sessionid сохранится в БД (без mobile-проверки).</li>
                 </>
               ) : (

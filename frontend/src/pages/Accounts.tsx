@@ -70,7 +70,7 @@ function isInstagram(account: AccountOut | null | undefined): boolean {
 function sessionSourceLabel(source: AccountOut["session_source"]): string {
   if (source === "database") return "sessionid в БД";
   if (source === "session_file") return "Файл cookies";
-  if (source === "playwright") return "Playwright state";
+  if (source === "playwright") return "Состояние Playwright";
   return "Нет сессии";
 }
 
@@ -157,10 +157,18 @@ export function Accounts() {
   const [accountQuery, setAccountQuery] = useState("");
   const downloadStarted = useRef<string | null>(null);
   const loadingRef = useRef(true);
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const askedId = Number(searchParams.get("id") || 0);
   const askedUser = searchParams.get("username");
   const askedQ = searchParams.get("q");
+  const statusFromUrl = (() => {
+    const raw = searchParams.get("status") || "";
+    return ["active", "paused", "challenge", "cooldown", "blocked"].includes(raw) ? raw : "";
+  })();
+  const proxyFromUrl = (() => {
+    const raw = searchParams.get("proxy") || "";
+    return raw === "bad" || raw === "ok" ? raw : "";
+  })();
   const download = searchParams.get("download");
   const downloadFormat = searchParams.get("format") === "txt" ? "txt" : "json";
 
@@ -175,14 +183,61 @@ export function Accounts() {
     else if (askedUser) setAccountQuery(askedUser);
   }, [askedQ, askedUser]);
 
+  const [statusFilter, setStatusFilterState] = useState(statusFromUrl);
+  useEffect(() => {
+    setStatusFilterState(statusFromUrl);
+  }, [statusFromUrl]);
+  const setStatusFilter = useCallback(
+    (next: string) => {
+      setStatusFilterState(next);
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev);
+          if (next) params.set("status", next);
+          else params.delete("status");
+          return params;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
+  const [proxyFilter, setProxyFilterState] = useState(proxyFromUrl);
+  useEffect(() => {
+    setProxyFilterState(proxyFromUrl);
+  }, [proxyFromUrl]);
+  const setProxyFilter = useCallback(
+    (next: string) => {
+      setProxyFilterState(next);
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev);
+          if (next) params.set("proxy", next);
+          else params.delete("proxy");
+          return params;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
   const shownAccounts = useMemo(() => {
     const needle = accountQuery.trim().toLowerCase();
-    if (!needle) return accounts;
     return accounts.filter((a) => {
+      if (statusFilter && a.status !== statusFilter) return false;
+      if (!needle) return true;
       const hay = `${a.username} ${a.platform || ""} ${a.status} ${a.proxy_label ?? ""}`.toLowerCase();
       return hay.includes(needle);
     });
-  }, [accountQuery, accounts]);
+  }, [accountQuery, accounts, statusFilter]);
+  const shownProxies = useMemo(() => {
+    if (!proxyFilter) return proxies;
+    return proxies.filter((p) => (proxyFilter === "ok" ? p.is_healthy : !p.is_healthy));
+  }, [proxies, proxyFilter]);
+  useEffect(() => {
+    if (!proxyFilter) return;
+    document.getElementById("proxies-card")?.scrollIntoView?.({ block: "start" });
+  }, [proxyFilter, proxies.length, shownProxies.length]);
 
   useAssistantMutate(async (detail) => {
     await reload();
@@ -217,9 +272,9 @@ export function Accounts() {
       : 0;
     const scrollAccount = flashAccountIds[0] || askedId || byName;
     if (scrollAccount) {
-      document.getElementById(`account-${scrollAccount}`)?.scrollIntoView({ block: "center" });
+      document.getElementById(`account-${scrollAccount}`)?.scrollIntoView?.({ block: "center" });
     } else if (flashProxyIds[0]) {
-      document.getElementById(`proxy-${flashProxyIds[0]}`)?.scrollIntoView({ block: "center" });
+      document.getElementById(`proxy-${flashProxyIds[0]}`)?.scrollIntoView?.({ block: "center" });
     }
   }, [accounts, flashAccountIds, flashProxyIds, askedId, askedUser]);
 
@@ -376,7 +431,7 @@ export function Accounts() {
         <PageHeader
           icon={Users}
           title="Аккаунты"
-          description="Управление аккаунтами Instagram и их прокси."
+          description="Аккаунты Instagram, YouTube и TikTok и их прокси."
         />
         <div className="flex items-center gap-2">
           <button className="btn-ghost" onClick={() => setOpenProxy(true)}>
@@ -391,27 +446,60 @@ export function Accounts() {
       </div>
 
       <Card
+        id="proxies-card"
         title="Прокси"
-        description={`${proxies.length} настроено`}
+        description={
+          proxyFilter
+            ? `${shownProxies.length} из ${proxies.length}`
+            : `${proxies.length} настроено`
+        }
         actions={
-          <button
-            className="btn-ghost text-xs"
-            onClick={async () => {
-              try {
-                await reload();
-                push("Обновлено", "info");
-              } catch (err) {
-                push((err as Error).message, "error");
-              }
-            }}
-          >
-            <RefreshCw size={14} />
-            Обновить
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {(
+              [
+                ["", "Все"],
+                ["ok", "Исправные"],
+                ["bad", "Недоступные"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value || "all"}
+                type="button"
+                aria-pressed={proxyFilter === value}
+                aria-label={`Фильтр прокси: ${label}`}
+                className={
+                  proxyFilter === value
+                    ? "rounded-full bg-brand-600/20 px-2 py-0.5 text-xs text-brand-200 ring-1 ring-brand-500/40"
+                    : "rounded-full px-2 py-0.5 text-xs text-slate-400 ring-1 ring-slate-700 hover:bg-slate-800/60"
+                }
+                onClick={() => setProxyFilter(value)}
+              >
+                {label}
+              </button>
+            ))}
+            <button
+              className="btn-ghost text-xs"
+              onClick={async () => {
+                try {
+                  await reload();
+                  push("Обновлено", "info");
+                } catch (err) {
+                  push((err as Error).message, "error");
+                }
+              }}
+            >
+              <RefreshCw size={14} />
+              Обновить
+            </button>
+          </div>
         }
       >
         {proxies.length === 0 ? (
           <EmptyState>Прокси пока нет.</EmptyState>
+        ) : shownProxies.length === 0 ? (
+          <EmptyState>
+            {proxyFilter === "bad" ? "Недоступных прокси нет." : "Нет прокси с этим фильтром."}
+          </EmptyState>
         ) : (
           <table className="table-base">
             <colgroup>
@@ -431,7 +519,7 @@ export function Accounts() {
               </tr>
             </thead>
             <tbody>
-              {proxies.map((p) => (
+              {shownProxies.map((p) => (
                 <tr
                   id={`proxy-${p.id}`}
                   key={p.id}
@@ -543,7 +631,32 @@ export function Accounts() {
         title="Аккаунты"
         description={`${accounts.length} настроено`}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {(
+              [
+                ["", "Все"],
+                ["active", "Активные"],
+                ["paused", "Пауза"],
+                ["challenge", "Проверка"],
+                ["cooldown", "Карантин"],
+                ["blocked", "Блок"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value || "all"}
+                type="button"
+                aria-pressed={statusFilter === value}
+                aria-label={`Фильтр статуса: ${label}`}
+                className={
+                  statusFilter === value
+                    ? "rounded-full bg-brand-600/20 px-2 py-0.5 text-xs text-brand-200 ring-1 ring-brand-500/40"
+                    : "rounded-full px-2 py-0.5 text-xs text-slate-400 ring-1 ring-slate-700 hover:bg-slate-800/60"
+                }
+                onClick={() => setStatusFilter(value)}
+              >
+                {label}
+              </button>
+            ))}
             <input
               className="input max-w-[12rem] py-1.5 text-xs"
               data-page-search
@@ -571,7 +684,9 @@ export function Accounts() {
         {accounts.length === 0 ? (
           <EmptyState>Аккаунтов пока нет.</EmptyState>
         ) : shownAccounts.length === 0 ? (
-          <EmptyState>Никого не нашлось.</EmptyState>
+          <EmptyState>
+            {statusFilter ? "Нет аккаунтов с этим статусом." : "Никого не нашлось."}
+          </EmptyState>
         ) : (
           <table className="table-base">
             <colgroup>
@@ -610,7 +725,7 @@ export function Accounts() {
                         {a.has_totp ? (
                           <span
                             className="ml-1 text-[10px] uppercase tracking-wide text-emerald-400"
-                            title="Настроен TOTP seed"
+                            title="Настроен секрет TOTP"
                           >
                             2FA
                           </span>
@@ -808,7 +923,7 @@ export function Accounts() {
                           >
                             <Pause size={14} />
                           </RowIconButton>
-                        ) : (
+                        ) : a.status === "paused" || a.status === "cooldown" ? (
                           <RowIconButton
                             label="Возобновить"
                             onClick={async () => {
@@ -825,7 +940,7 @@ export function Accounts() {
                           >
                             <Play size={14} />
                           </RowIconButton>
-                        )}
+                        ) : null}
                       </div>
                     </td>
                   </tr>
@@ -1135,7 +1250,7 @@ function AddAccountModal({
           />
         </div>
         <div>
-          <label className="label">Backup-коды 2FA (необязательно)</label>
+          <label className="label">Резервные коды 2FA (необязательно)</label>
           <textarea
             className="input min-h-[56px] font-mono text-xs"
             value={form.backup_codes ?? ""}
@@ -1248,7 +1363,7 @@ function AddAccountModal({
             </p>
           </div>
           <div>
-            <label className="label">TOTP seed (необязательно)</label>
+            <label className="label">Секрет TOTP (необязательно)</label>
             <input
               className="input"
               value={form.totp_seed ?? ""}
@@ -1264,7 +1379,7 @@ function AddAccountModal({
                 title={
                   (form.totp_seed ?? "").trim()
                     ? "Скопировать Base32-секрет в буфер обмена"
-                    : "Сначала введите TOTP seed в поле выше"
+                    : "Сначала введите секрет TOTP в поле выше"
                 }
                 onClick={async () => {
                   const seed = (form.totp_seed ?? "").trim();
@@ -1304,7 +1419,7 @@ function AddAccountModal({
             />
           </div>
           <div>
-            <label className="label">Пароль email / app password</label>
+            <label className="label">Пароль почты / пароль приложения</label>
             <input
               className="input"
               type="password"
@@ -1614,7 +1729,7 @@ function ConnectionModal({
                 : "Cookies Studio на диске"
               : mobileOk
                 ? "Готов к автопостингу"
-                : "Подключение OK"
+                : "Подключение в порядке"
             : isInstagram(account)
               ? "Не готов к автопостингу"
               : "Проверка не пройдена",
@@ -1622,7 +1737,7 @@ function ConnectionModal({
             ? result.instagram_auth.error
             : cookiesOnlyOk
               ? isInstagram(account)
-                ? "Mobile API не проверялась — для автопостинга нажмите «Проверить mobile API»"
+                ? "Мобильный API не проверялся — для автопостинга нажмите «Проверить мобильный API»"
                 : "Живость сессии на сервере не проверялась"
               : null,
           checkedAt: result.checked_at,
@@ -1664,7 +1779,7 @@ function ConnectionModal({
             }
           >
             <ShieldOff size={16} className={running && lastCheckMode === "mobile" ? "animate-pulse" : ""} />
-            {running && lastCheckMode === "mobile" ? "Mobile…" : "Проверить mobile API"}
+            {running && lastCheckMode === "mobile" ? "Мобильный…" : "Проверить мобильный API"}
           </button>
           ) : null}
           <button
@@ -1708,7 +1823,7 @@ function ConnectionModal({
           </div>
           <p className="text-xs text-slate-500">
             {isInstagram(account)
-              ? "«Запустить проверку» смотрит прокси и наличие cookies (без mobile API). «Проверить mobile API» нужно только для автопостинга Instagram и может сжечь web-cookie."
+              ? "«Запустить проверку» смотрит прокси и наличие cookies (без мобильного API). «Проверить мобильный API» нужно только для автопостинга Instagram и может сжечь web-cookie."
               : "«Запустить проверку» смотрит прокси и наличие Playwright cookies Studio на диске. Живость сессии на сервере не проверяется."}
           </p>
         </div>
@@ -1785,13 +1900,13 @@ function ConnectionModal({
               isInstagram(account)
                 ? result?.instagram_auth.ok
                   ? lastCheckMode === "cookies"
-                    ? "4. Instagram auth (cookies)"
-                    : "4. Instagram auth OK"
+                    ? "4. Вход Instagram (cookies)"
+                    : "4. Вход Instagram — ок"
                   : result
                     ? lastCheckMode === "mobile"
-                      ? "4. Instagram auth недействительна"
-                      : "4. Instagram auth"
-                    : "4. Instagram auth"
+                      ? "4. Вход Instagram недействителен"
+                      : "4. Вход Instagram"
+                    : "4. Вход Instagram"
                 : result?.instagram_auth.ok
                   ? "4. Cookies Studio на диске"
                   : result
@@ -2015,7 +2130,10 @@ function SessionModal({
       return;
     }
     if (!ig) {
-      push("Выберите JSON cookies YouTube/TikTok или Playwright state.json", "error");
+      push(
+        "Выберите JSON cookies YouTube/TikTok или файл состояния Playwright",
+        "error"
+      );
       return;
     }
     // Decode %3A → : (Dolphin / browser often export URL-encoded sessionid).
@@ -2024,7 +2142,7 @@ function SessionModal({
       push(
         ig
           ? "Вставьте sessionid (31+ символов) или выберите JSON/TXT cookies из Dolphin"
-          : "Выберите JSON cookies YouTube/TikTok или Playwright state.json",
+          : "Выберите JSON cookies YouTube/TikTok или файл состояния Playwright",
         "error"
       );
       return;
@@ -2096,7 +2214,7 @@ function SessionModal({
     setFpImportBusy(true);
     try {
       await api.accounts.importDeviceFingerprint(account.username, fingerprintFile);
-      push("Device fingerprint сохранён", "success");
+      push("Отпечаток устройства сохранён", "success");
       setFingerprintFile(null);
       await onSaved();
     } catch (err) {
@@ -2121,10 +2239,10 @@ function SessionModal({
         push(
           kind === "playwright"
             ? ig
-              ? "Playwright state.json ещё не создан — сначала выполните автовход"
-              : "Playwright state.json не найден — импортируйте cookies или сохраните сессию в браузере"
+              ? "Файл состояния Playwright ещё не создан — сначала выполните автовход"
+              : "Файл состояния Playwright не найден — импортируйте cookies или сохраните сессию в браузере"
             : kind === "fingerprint"
-              ? "Device fingerprint не найден для этого аккаунта"
+              ? "Отпечаток устройства не найден для этого аккаунта"
               : "Сессия не найдена — импортируйте cookies или войдите в аккаунт",
           "error"
         );
@@ -2303,7 +2421,7 @@ function SessionModal({
           <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 space-y-3">
             <div className="text-sm text-slate-400">Импорт из файла</div>
             <p className="text-xs text-slate-500">
-              JSON cookies Dolphin (.json / .txt) или Playwright state.json.
+              JSON cookies Dolphin (.json / .txt) или файл состояния Playwright.
               {ig
                 ? " Лишние cookies (Google, реклама) отфильтруются — нужен sessionid Instagram."
                 : " Останутся cookies YouTube/Google или TikTok."}{" "}
@@ -2322,15 +2440,15 @@ function SessionModal({
           </div>
           {ig ? (
           <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 space-y-3">
-            <div className="text-sm text-slate-400">Импорт device fingerprint</div>
+            <div className="text-sm text-slate-400">Импорт отпечатка устройства</div>
             <p className="text-xs text-slate-500">
               JSON с диска (`device_имя.json`). Импортируйте только тот же отпечаток, с которым
-              жила сессия — чужой fingerprint на живой сессии повышает риск детекта.
+              жила сессия — чужой отпечаток на живой сессии повышает риск детекта.
             </p>
             <input
               type="file"
               accept=".json,.txt,application/json,text/plain"
-              aria-label="Импорт fingerprint из файла"
+              aria-label="Импорт отпечатка из файла"
               className="block w-full text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:bg-slate-800 file:text-slate-200"
               onChange={(e) => setFingerprintFile(e.target.files?.[0] ?? null)}
             />
@@ -2343,7 +2461,7 @@ function SessionModal({
               disabled={!fingerprintFile || fpImportBusy || !account}
               onClick={() => void submitFingerprintImport()}
             >
-              {fpImportBusy ? "Импорт…" : "Импортировать fingerprint"}
+              {fpImportBusy ? "Импорт…" : "Импортировать отпечаток"}
             </button>
           </div>
           ) : null}
@@ -2357,7 +2475,8 @@ function SessionModal({
             <div className="text-sm text-slate-400">Загрузка сессии…</div>
           ) : ig && exportError ? (
             <div className="text-sm text-slate-400 rounded-xl border border-slate-800 p-3">
-              {exportError.includes("404") || exportError.toLowerCase().includes("not found")
+              {exportError.includes("404") ||
+              /not found|не найден/i.test(exportError)
                 ? "Сессия не найдена — импортируйте sessionid или сначала войдите в аккаунт."
                 : exportError}
             </div>
@@ -2384,8 +2503,8 @@ function SessionModal({
             <div className="text-sm text-slate-300">Для Dolphin / миграции</div>
             <p className="text-xs text-slate-500">
               {ig
-                ? "Скачайте cookies, Playwright state или device fingerprint."
-                : "Скачайте cookies площадки или Playwright state.json (сессия Studio)."}
+                ? "Скачайте cookies, файл состояния Playwright или отпечаток устройства."
+                : "Скачайте cookies площадки или файл состояния Playwright (сессия Studio)."}
             </p>
             <div className="flex flex-col gap-2">
               <button
@@ -2411,7 +2530,7 @@ function SessionModal({
                 />
                 {downloadBusy === "playwright"
                   ? "Скачивание…"
-                  : "Скачать Playwright state.json"}
+                  : "Скачать файл состояния Playwright"}
               </button>
               {ig ? (
               <button
@@ -2428,7 +2547,7 @@ function SessionModal({
                 />
                 {downloadBusy === "fingerprint"
                   ? "Скачивание…"
-                  : "Скачать device fingerprint"}
+                  : "Скачать отпечаток устройства"}
               </button>
               ) : null}
             </div>

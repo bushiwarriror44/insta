@@ -59,7 +59,7 @@ def _account_session_fields(username: str, db_session_id: str | None, platform: 
     if platform in ("youtube", "tiktok"):
         from app.accounts.cookie_formats import studio_session_ready
 
-        path = playwright_state_path(username)
+        path = playwright_state_path(username, platform)
         file_exists = path.exists()
         updated_at = None
         if file_exists:
@@ -174,7 +174,7 @@ def list_accounts(db: Session = Depends(get_db)) -> List[AccountOut]:
 def create_account(payload: AccountIn, db: Session = Depends(get_db)) -> AccountOut:
     proxy = db.scalar(select(Proxy).where(Proxy.label == payload.proxy_label))
     if proxy is None:
-        raise HTTPException(status_code=400, detail=f"Proxy '{payload.proxy_label}' not found")
+        raise HTTPException(status_code=400, detail=f"Прокси «{payload.proxy_label}» не найден")
 
     platform = Platform(payload.platform)
     existing = db.scalar(
@@ -261,7 +261,15 @@ def create_account(payload: AccountIn, db: Session = Depends(get_db)) -> Account
                 account.backup_codes = serialize_backup_codes(codes)
     if payload.imap_host is not None:
         account.imap_host = payload.imap_host.strip() or None
-    if account.status == AccountStatus.blocked:
+    credentials_replaced = any(
+        (
+            bool((payload.password or "").strip()),
+            bool((payload.session_id or "").strip()) if payload.session_id is not None else False,
+            bool((payload.vendor_line or "").strip()),
+            bool((payload.account_line or "").strip()),
+        )
+    )
+    if account.status == AccountStatus.blocked and credentials_replaced:
         account.status = AccountStatus.active
 
     db.commit()
@@ -285,11 +293,11 @@ def update_account_proxy(
 ) -> AccountOut:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
-        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+        raise HTTPException(status_code=404, detail=f"Аккаунт «{username}» не найден")
 
     proxy = db.scalar(select(Proxy).where(Proxy.label == payload.proxy_label))
     if proxy is None:
-        raise HTTPException(status_code=400, detail=f"Proxy '{payload.proxy_label}' not found")
+        raise HTTPException(status_code=400, detail=f"Прокси «{payload.proxy_label}» не найден")
 
     account.proxy_id = proxy.id
     account.timezone = timezone_from_proxy(proxy.timezone, proxy.country)
@@ -314,7 +322,7 @@ def update_account_notes(
 ) -> AccountOut:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
-        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+        raise HTTPException(status_code=404, detail=f"Аккаунт «{username}» не найден")
 
     account.notes = payload.notes.strip() if payload.notes else None
     db.commit()
@@ -328,17 +336,17 @@ def get_account_totp(username: str, db: Session = Depends(get_db)) -> AccountTot
     """Return the stored TOTP seed and the current 6-digit code (admin only)."""
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
-        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+        raise HTTPException(status_code=404, detail=f"Аккаунт «{username}» не найден")
 
     seed = (account.totp_seed or "").strip()
     if not seed:
-        raise HTTPException(status_code=404, detail="TOTP seed не задан для этого аккаунта")
+        raise HTTPException(status_code=404, detail="Секрет TOTP не задан для этого аккаунта")
 
     cleaned = "".join(seed.split()).upper()
     try:
         import pyotp
     except ImportError as exc:  # pragma: no cover
-        raise HTTPException(status_code=503, detail="pyotp не установлен") from exc
+        raise HTTPException(status_code=503, detail="Библиотека pyotp не установлена") from exc
 
     try:
         totp = pyotp.TOTP(cleaned)
@@ -350,7 +358,7 @@ def get_account_totp(username: str, db: Session = Depends(get_db)) -> AccountTot
     except Exception as exc:  # noqa: BLE001 - bad seed
         raise HTTPException(
             status_code=400,
-            detail=f"Некорректный TOTP seed: {exc}",
+            detail=f"Некорректный секрет TOTP: {exc}",
         ) from exc
 
     return AccountTotpOut(totp_seed=cleaned, code=code, seconds_remaining=remaining)
@@ -364,7 +372,7 @@ def update_account_session(
 ) -> AccountOut:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
-        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+        raise HTTPException(status_code=404, detail=f"Аккаунт «{username}» не найден")
 
     if _account_platform_value(account) != "instagram":
         raise HTTPException(
@@ -391,13 +399,13 @@ def update_account_session(
 def get_account_session(username: str, db: Session = Depends(get_db)) -> AccountSessionOut:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
-        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+        raise HTTPException(status_code=404, detail=f"Аккаунт «{username}» не найден")
 
     exported = export_sessionid(username, db_session_id=account.session_id)
     if exported is None:
         raise HTTPException(
             status_code=404,
-            detail="No session found — import a sessionid or log in first",
+            detail="Сессия не найдена — импортируйте sessionid или войдите в аккаунт",
         )
     return AccountSessionOut(
         session_id=exported.session_id,
@@ -414,7 +422,7 @@ def export_account_cookies(
 ) -> FileResponse:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
-        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+        raise HTTPException(status_code=404, detail=f"Аккаунт «{username}» не найден")
     as_txt = (format or "json").strip().lower() == "txt"
     try:
         export_path = write_dolphin_cookies_export(
@@ -437,7 +445,7 @@ def export_login_debug_screenshot(username: str, db: Session = Depends(get_db)) 
     """Return the latest Playwright login failure screenshot for diagnostics."""
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
-        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+        raise HTTPException(status_code=404, detail=f"Аккаунт «{username}» не найден")
     path = login_debug_screenshot_path(username)
     if not path.exists():
         raise HTTPException(
@@ -459,12 +467,13 @@ def export_playwright_state(
 ) -> FileResponse:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
-        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
-    path = playwright_state_path(username)
+        raise HTTPException(status_code=404, detail=f"Аккаунт «{username}» не найден")
+    platform = getattr(account.platform, "value", account.platform) or "instagram"
+    path = playwright_state_path(username, str(platform))
     if not path.exists():
         raise HTTPException(
             status_code=404,
-            detail="Playwright state.json не найден — импортируйте cookies или сохраните сессию в браузере",
+            detail="Файл состояния Playwright не найден — импортируйте cookies или сохраните сессию в браузере",
         )
     as_txt = (format or "json").strip().lower() == "txt"
     return FileResponse(
@@ -482,14 +491,14 @@ def export_device_fingerprint(
 ) -> FileResponse:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
-        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+        raise HTTPException(status_code=404, detail=f"Аккаунт «{username}» не найден")
     path = device_path(username)
     if not path.exists():
         fp = load_fingerprint(username)
         if fp is None:
             raise HTTPException(
                 status_code=404,
-                detail="Device fingerprint не найден для этого аккаунта",
+                detail="Отпечаток устройства не найден для этого аккаунта",
             )
     as_txt = (format or "json").strip().lower() == "txt"
     return FileResponse(
@@ -507,7 +516,7 @@ async def import_device_fingerprint(
 ) -> DeviceFingerprintImportOut:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
-        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+        raise HTTPException(status_code=404, detail=f"Аккаунт «{username}» не найден")
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="Файл пуст")
@@ -516,11 +525,16 @@ async def import_device_fingerprint(
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=400, detail="Некорректный JSON") from exc
     if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail="ожидается JSON-объект fingerprint")
+        raise HTTPException(
+            status_code=400,
+            detail="Ожидается JSON-объект отпечатка устройства",
+        )
     try:
         fp = DeviceFingerprint.from_dict(data)
     except (KeyError, TypeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=f"некорректный fingerprint: {exc}") from exc
+        raise HTTPException(
+            status_code=400, detail=f"некорректный отпечаток устройства: {exc}"
+        ) from exc
     save_fingerprint(username, fp)
     return DeviceFingerprintImportOut(username=username, saved=True)
 
@@ -533,7 +547,7 @@ async def import_account_cookies(
 ) -> CookiesImportOut:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
-        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+        raise HTTPException(status_code=404, detail=f"Аккаунт «{username}» не найден")
 
     raw = await file.read()
     if not raw:
@@ -565,7 +579,7 @@ async def import_account_cookies(
 def _set_status(db: Session, username: str, new_status: AccountStatus) -> AccountOut:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
-        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+        raise HTTPException(status_code=404, detail=f"Аккаунт «{username}» не найден")
     account.status = new_status
     db.commit()
     db.refresh(account)
@@ -579,11 +593,15 @@ def pause_account(username: str, db: Session = Depends(get_db)) -> AccountOut:
 
 @router.post("/{username}/resume", response_model=AccountOut)
 def resume_account(username: str, db: Session = Depends(get_db)) -> AccountOut:
+    from app.accounts.status import NotResumable, apply_resume
+
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
-        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
-    account.cooldown_until = None
-    account.status = AccountStatus.active
+        raise HTTPException(status_code=404, detail=f"Аккаунт «{username}» не найден")
+    try:
+        apply_resume(account)
+    except NotResumable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     db.commit()
     db.refresh(account)
     return _serialize(account, db=db)
@@ -597,7 +615,7 @@ def test_account_connection(
 ) -> AccountConnectionTestOut:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
-        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+        raise HTTPException(status_code=404, detail=f"Аккаунт «{username}» не найден")
     return run_account_connection_test(account, db, probe_mobile=probe_mobile)
 
 
@@ -609,13 +627,13 @@ def account_first_login(
 ) -> FirstLoginOut:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
-        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+        raise HTTPException(status_code=404, detail=f"Аккаунт «{username}» не найден")
     from app.behavior.warmup_playwright import playwright_browsers_available
 
     if not playwright_browsers_available():
         raise HTTPException(
             status_code=503,
-            detail="Chromium не установлен — выполните install-playwright на сервере",
+            detail="Браузер Chromium не установлен — на сервере выполните install-playwright",
         )
     platform = _account_platform_value(account)
     if platform in ("youtube", "tiktok"):
@@ -631,10 +649,10 @@ def account_mint_mobile_session(
 ) -> MintMobileSessionOut:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
-        raise HTTPException(status_code=404, detail=f"Account '{username}' not found")
+        raise HTTPException(status_code=404, detail=f"Аккаунт «{username}» не найден")
     if _account_platform_value(account) != "instagram":
         raise HTTPException(
             status_code=400,
-            detail="mint_mobile_session только для Instagram",
+            detail="создание мобильной сессии доступно только для Instagram",
         )
     return mint_mobile_session(account, db)

@@ -166,7 +166,7 @@ def build_client(
     """Create an instagrapi Client with the persistent fingerprint applied."""
     proxy_url = (proxy_url or "").strip()
     if not proxy_url:
-        raise ProxyRequiredError(f"proxy_url is required for Instagram account '{username}'")
+        raise ProxyRequiredError(f"для Instagram-аккаунта «{username}» нужен прокси")
 
     client = Client(request_timeout=request_timeout)
 
@@ -267,7 +267,7 @@ def _try_login_by_sessionid(
                 actual=actual,
             )
             raise AuthenticationError(
-                f"session_id belongs to @{actual}, not @{expected_username}"
+                f"session_id принадлежит @{actual}, а не @{expected_username}"
             )
         return True
     except ChallengeRequired:
@@ -343,7 +343,7 @@ def login_or_resume(
         _do_login(code)
     except BadPassword as exc:
         log.error("auth.bad_password")
-        raise AuthenticationError("bad password") from exc
+        raise AuthenticationError("неверный пароль") from exc
     except TwoFactorRequired as exc:
         # Server demanded a code but our explicit one was missing/invalid.
         # Last-chance: derive from totp_seed and retry once.
@@ -353,10 +353,12 @@ def login_or_resume(
                 _do_login(retry_code)
             except Exception as inner:  # noqa: BLE001
                 log.error("auth.2fa_retry_failed", error=str(inner))
-                raise AuthenticationError("2FA code rejected") from inner
+                raise AuthenticationError("код 2FA отклонён") from inner
         else:
             log.error("auth.2fa_required_no_code")
-            raise AuthenticationError("2FA code required: pass verification_code or totp_seed") from exc
+            raise AuthenticationError(
+                "нужен код 2FA: введите код или задайте секрет TOTP в настройках аккаунта"
+            ) from exc
     except ChallengeRequired as exc:
         log.warning("auth.challenge_required")
         # instagrapi will invoke challenge_code_handler under the hood.
@@ -365,7 +367,9 @@ def login_or_resume(
         raise HardCheckpoint(str(exc)) from exc
     except PleaseWaitFewMinutes as exc:
         log.warning("auth.rate_limited")
-        raise AuthenticationError("rate-limited by Instagram, retry later") from exc
+        raise AuthenticationError(
+            "Instagram временно ограничил вход — повторите позже"
+        ) from exc
     except ClientError as exc:
         log.error("auth.client_error", error=str(exc))
         raise AuthenticationError(str(exc)) from exc
@@ -401,7 +405,7 @@ def login_and_export_sessionid(
     )
     exported = export_sessionid(username)
     if exported is None or len(exported.session_id) < MIN_SESSIONID_LEN:
-        raise AuthenticationError("API login completed but sessionid is missing")
+        raise AuthenticationError("вход через API прошёл, но sessionid отсутствует")
     return exported.session_id
 
 
@@ -489,7 +493,7 @@ def probe_session_auth(
                 error_code="challenge_required",
             )
         except AuthenticationError as exc:
-            _d("error", "session_probe", f"sessionid auth error: {exc}; {_elapsed()}")
+            _d("error", "session_probe", f"ошибка входа по sessionid: {exc}; {_elapsed()}")
             return ProbeSessionResult(ok=False, method="sessionid", error=str(exc))
         except ChallengeRequired as exc:
             _d("warn", "session_probe", f"challenge_required: {exc}; {_elapsed()}")
@@ -501,7 +505,7 @@ def probe_session_auth(
                 error_code="challenge_required",
             )
         except PleaseWaitFewMinutes as exc:
-            _d("error", "session_probe", f"rate-limited: {exc}; {_elapsed()}")
+            _d("error", "session_probe", f"ограничение частоты: {exc}; {_elapsed()}")
             return ProbeSessionResult(ok=False, method="sessionid", error=str(exc))
         # Match login_or_resume: invalid DB sessionid → try mobile dump before failing.
 
@@ -583,7 +587,7 @@ def probe_session_auth(
             error_code="challenge_required",
         )
     except PleaseWaitFewMinutes as exc:
-        _d("error", "session_probe", f"rate-limited на file: {exc}; {_elapsed()}")
+        _d("error", "session_probe", f"ограничение частоты на файле: {exc}; {_elapsed()}")
         return ProbeSessionResult(ok=False, method="session_file", error=str(exc))
 
 

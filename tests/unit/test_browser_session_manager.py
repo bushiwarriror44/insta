@@ -80,7 +80,7 @@ async def test_open_instagram_reels_target(monkeypatch):
         page.url = "https://www.instagram.com/reels/"
         return None, 200
 
-    monkeypatch.setattr(sm, "playwright_state_path", lambda _u: __import__("pathlib").Path("/tmp/none"))
+    monkeypatch.setattr(sm, "playwright_state_path", lambda _u, _p=None: __import__("pathlib").Path("/tmp/none"))
     monkeypatch.setattr(sm, "storage_state_has_session", lambda _u: True)
     monkeypatch.setattr(sm, "_open_instagram_browser", fake_open)
     monkeypatch.setattr(sm, "_human_wait", AsyncMock())
@@ -117,7 +117,7 @@ async def test_open_instagram_honors_explicit_autofill_without_global_flag(monke
     )
     mgr._sessions["alice"] = session
 
-    monkeypatch.setattr(sm, "playwright_state_path", lambda _u: __import__("pathlib").Path("/tmp/none"))
+    monkeypatch.setattr(sm, "playwright_state_path", lambda _u, _p=None: __import__("pathlib").Path("/tmp/none"))
     monkeypatch.setattr(sm, "storage_state_has_session", lambda _u: False)
     monkeypatch.setattr(sm, "_open_instagram_browser", AsyncMock(return_value=(None, 200)))
     monkeypatch.setattr(sm, "_human_wait", AsyncMock())
@@ -190,7 +190,7 @@ async def test_start_session_auto_opens_instagram_by_default(monkeypatch):
     playwright_manager.start = AsyncMock(return_value=pw)
 
     monkeypatch.setattr(sm, "load_fingerprint", lambda _u: None)
-    monkeypatch.setattr(sm, "playwright_state_path", lambda _u: __import__("pathlib").Path("/tmp/none"))
+    monkeypatch.setattr(sm, "playwright_state_path", lambda _u, _p=None: __import__("pathlib").Path("/tmp/none"))
     monkeypatch.setattr(sm, "storage_state_has_session", lambda _u: False)
     monkeypatch.setattr(sm, "_apply_stealth_context", AsyncMock())
     monkeypatch.setattr(sm, "_human_wait", AsyncMock())
@@ -269,7 +269,47 @@ async def test_start_session_disabled(monkeypatch):
     account = MagicMock(username="alice")
     proxy = MagicMock(url="http://u:p@1.2.3.4:8080", timezone="UTC", country="US")
 
-    with pytest.raises(RuntimeError, match="disabled"):
+    with pytest.raises(RuntimeError, match="отключён"):
+        await mgr.start_session(account, proxy)
+
+
+@pytest.mark.asyncio
+async def test_start_session_respects_max_sessions(monkeypatch):
+    from app.browser.session_manager import BrowserSessionState, BrowserSessionStatus
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "browser_vnc_enabled", True)
+    monkeypatch.setattr(settings, "browser_max_sessions", 1)
+    monkeypatch.setattr(
+        "app.browser.session_manager.vnc_stack_available", lambda: True
+    )
+    monkeypatch.setattr(
+        "app.browser.session_manager.playwright_browsers_available", lambda: True
+    )
+
+    mgr = BrowserSessionManager()
+    busy = BrowserSessionState(
+        username="bob",
+        display=101,
+        ws_port=5901,
+        vnc_path="/api/accounts/bob/browser/vnc/ws",
+        vnc_stack=MagicMock(),
+        login_surface="mobile",
+    )
+    busy.status = BrowserSessionStatus.running
+    mgr._sessions["bob"] = busy
+
+    account = MagicMock(username="alice", platform="instagram", login_surface="mobile")
+    proxy = MagicMock(
+        url="http://u:p@1.2.3.4:8080",
+        timezone="UTC",
+        country="US",
+        label="p1",
+        last_known_ip=None,
+        last_geo_country=None,
+    )
+
+    with pytest.raises(RuntimeError, match="лимит"):
         await mgr.start_session(account, proxy)
 
 
@@ -279,7 +319,7 @@ async def test_submit_code_requires_active_session():
     account = MagicMock(username="alice")
     db = MagicMock()
 
-    with pytest.raises(RuntimeError, match="No active browser"):
+    with pytest.raises(RuntimeError, match="нет активной браузерной сессии"):
         await mgr.submit_code(db, account, "123456")
 
 
@@ -372,7 +412,7 @@ async def test_save_session_youtube_without_instagram_sessionid(tmp_path, monkey
     account = SimpleNamespace(username="ytuser", platform="youtube")
     out = await mgr.save_session(MagicMock(), account)
     assert out["playwright_state_saved"] is True
-    assert playwright_state_path("ytuser").exists()
+    assert playwright_state_path("ytuser", "youtube").exists()
 
 
 @pytest.mark.asyncio
@@ -564,7 +604,7 @@ async def test_start_session_survives_goto_failure(monkeypatch):
         return playwright_manager
 
     monkeypatch.setattr(sm, "load_fingerprint", lambda _u: None)
-    monkeypatch.setattr(sm, "playwright_state_path", lambda _u: __import__("pathlib").Path("/tmp/none"))
+    monkeypatch.setattr(sm, "playwright_state_path", lambda _u, _p=None: __import__("pathlib").Path("/tmp/none"))
     monkeypatch.setattr(sm, "storage_state_has_session", lambda _u: False)
     monkeypatch.setattr(sm, "_apply_stealth_context", AsyncMock())
     monkeypatch.setattr(sm, "_human_wait", AsyncMock())
@@ -678,7 +718,7 @@ async def test_start_session_autofill_uses_fast_path(monkeypatch):
     playwright_manager.start = AsyncMock(return_value=pw)
 
     monkeypatch.setattr(sm, "load_fingerprint", lambda _u: None)
-    monkeypatch.setattr(sm, "playwright_state_path", lambda _u: __import__("pathlib").Path("/tmp/none"))
+    monkeypatch.setattr(sm, "playwright_state_path", lambda _u, _p=None: __import__("pathlib").Path("/tmp/none"))
     monkeypatch.setattr(sm, "storage_state_has_session", lambda _u: False)
     monkeypatch.setattr(sm, "_apply_stealth_context", AsyncMock())
     monkeypatch.setattr(sm, "_human_wait", AsyncMock())
@@ -762,7 +802,7 @@ async def test_start_session_skips_instagram_goto_by_default(monkeypatch):
     playwright_manager.start = AsyncMock(return_value=pw)
 
     monkeypatch.setattr(sm, "load_fingerprint", lambda _u: None)
-    monkeypatch.setattr(sm, "playwright_state_path", lambda _u: __import__("pathlib").Path("/tmp/none"))
+    monkeypatch.setattr(sm, "playwright_state_path", lambda _u, _p=None: __import__("pathlib").Path("/tmp/none"))
     monkeypatch.setattr(sm, "storage_state_has_session", lambda _u: False)
     monkeypatch.setattr(sm, "_apply_stealth_context", AsyncMock())
 

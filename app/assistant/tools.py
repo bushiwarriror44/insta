@@ -343,7 +343,7 @@ def account_details(db: Session, account_id: int, *, as_owner: bool = True) -> d
     studio_ready = (
         studio_session_ready(account.username, platform) if platform in STUDIO_PLATFORMS else None
     )
-    pw_path = playwright_state_path(account.username)
+    pw_path = playwright_state_path(account.username, platform if platform in STUDIO_PLATFORMS else None)
     last_run = db.scalars(
         select(DiagnosticRun)
         .where(
@@ -887,11 +887,11 @@ def _posting_snapshot(db: Session, *, queue_idle: bool, foreign_alive: bool) -> 
     if awaiting_review:
         hints.append("ждут approve_job (hold_for_review)")
     if failed_dead:
-        hints.append("failed/dead публикации — job_logs по id")
+        hints.append("упавшие/dead публикации — job_logs по id")
     if accounts_not_active:
         hints.append("аккаунт не active — account_logs / test_connection")
     if proxies_unhealthy:
-        hints.append("прокси unhealthy — test_proxy; не списывать любую ошибку на прокси")
+        hints.append("прокси нездоров — test_proxy; не списывать любую ошибку на прокси")
 
     out: dict[str, Any] = {
         "hints": hints,
@@ -1035,7 +1035,7 @@ def _login_snapshot(db: Session) -> dict[str, Any]:
     if missing_studio:
         hints.append("нет state.json Studio — login_account или ensure_account_session")
     if failed_runs:
-        hints.append("failed diagnostic runs — account_logs по id")
+        hints.append("провальные diagnostic runs — account_logs по id")
     if no_proxy:
         hints.append("нет proxy_id — attach_proxy / ask_operator")
     if blocked_login or any(r.get("status") == "warn" for r in last_login_runs):
@@ -1110,11 +1110,13 @@ def _proxies_snapshot(db: Session) -> dict[str, Any]:
 
     hints: list[str] = []
     if unhealthy:
-        hints.append("прокси unhealthy — test_proxy; не списывать любую ошибку на прокси")
+        hints.append("прокси нездоров — test_proxy; не списывать любую ошибку на прокси")
     if never_checked:
-        hints.append("прокси never_checked — test_proxy")
+        hints.append("прокси ещё не проверялся — test_proxy")
     if geo_mismatch:
-        hints.append("geo_mismatch advertised vs last_geo_country — цитировать страны, TZ не выдумывать")
+        hints.append(
+            "несовпадение geo advertised vs last_geo_country — цитировать страны, TZ не выдумывать"
+        )
 
     out: dict[str, Any] = {"hints": hints}
     out.update(_clip_list(unhealthy, "unhealthy"))
@@ -1410,7 +1412,7 @@ def screenshot_page(
         raise ToolError(str(exc)) from None
     return Opened(
         path=path,
-        what=f"the {word} page",
+        what=f"страница «{word}»",
         screenshot_url=panel_browser.signed_url(filename, settings),
     )
 
@@ -1530,7 +1532,18 @@ def enqueue_publish(
     caption_text = caption if caption is not None else caption_template
     if caption_text is None:
         caption_text = title
-    scheduled = _parse_when(when) or datetime.now(timezone.utc)
+    from app.services.scheduling import first_legal_slot, placement_problem
+
+    parsed = _parse_when(when)
+    explicit_when = parsed is not None
+    scheduled = parsed or datetime.now(timezone.utc)
+    if scheduled.tzinfo is None:
+        scheduled = scheduled.replace(tzinfo=timezone.utc)
+    problem = placement_problem(db, account, scheduled)
+    if problem:
+        if explicit_when:
+            raise ToolError(problem)
+        scheduled = first_legal_slot(db, account, scheduled)
     job = PostJob(
         account_id=account.id,
         source_video_path=str(path),
@@ -1572,6 +1585,12 @@ def reschedule_job(db: Session, job_id: int, *, when: Any) -> dict[str, Any]:
             "questions": ["на какую дату/время (ISO, например 2026-09-12T18:00:00)?"],
             "why": "чтобы перенести слот",
         }
+    from app.services.scheduling import placement_problem
+
+    account = db.get(Account, job.account_id)
+    problem = placement_problem(db, account, scheduled, ignore_job_id=job.id) if account else None
+    if problem:
+        raise ToolError(problem)
     job.scheduled_for = scheduled
     db.commit()
     db.refresh(job)
@@ -1590,9 +1609,13 @@ def pause_account(db: Session, account_id: int) -> dict[str, Any]:
 
 
 def resume_account(db: Session, account_id: int) -> dict[str, Any]:
+    from app.accounts.status import NotResumable, apply_resume
+
     account = _account(db, account_id)
-    account.cooldown_until = None
-    account.status = AccountStatus.active
+    try:
+        apply_resume(account)
+    except NotResumable as exc:
+        raise ToolError(str(exc)) from exc
     db.commit()
     return {"id": account.id, "username": account.username, "status": "active"}
 
@@ -1640,13 +1663,15 @@ def cancel_job(db: Session, job_id: int, *, confirm: Any = False) -> dict[str, A
 
 
 def retry_job(db: Session, job_id: int) -> dict[str, Any]:
-    from app.services.retry import NotRetriable, revive
+    from app.services.retry import NotRetriable, ensure_post_source, legalize_post_schedule, revive
 
     job = db.get(PostJob, job_id)
     if job is None:
         raise ToolError(f"публикации {job_id} нет")
     try:
+        ensure_post_source(job.source_video_path)
         revive(job)
+        legalize_post_schedule(db, job)
     except NotRetriable as exc:
         raise ToolError(str(exc)) from exc
     db.commit()
@@ -1856,7 +1881,8 @@ def export_playwright_state(
 
     account = _account(db, account_id)
     fmt = _file_format(format)
-    path = playwright_state_path(account.username)
+    platform = _account_platform(account)
+    path = playwright_state_path(account.username, platform)
     if not path.exists():
         raise ToolError(
             "Playwright state.json не найден — импортируйте cookies или сохраните сессию в браузере"
@@ -2506,9 +2532,13 @@ def cancel_render(db: Session, job_id: int, *, confirm: Any = False) -> dict[str
     if not _confirmed(confirm):
         return _need_confirm(
             f"Отменить рендер {job.id}?",
-            "отмена только для задач в очереди",
+            "отмена для задач в очереди, с ошибкой или мёртвых",
         )
-    if job.status is not PipelineStatus.queued:
+    if job.status not in (
+        PipelineStatus.queued,
+        PipelineStatus.failed,
+        PipelineStatus.dead,
+    ):
         raise ToolError(f"задачу в состоянии «{job.status.value}» отменить нельзя")
     job.status = PipelineStatus.cancelled
     db.commit()
@@ -2528,6 +2558,13 @@ def retry_render(db: Session, job_id: int, *, backend: str | None = None) -> dic
         if name not in available_backends():
             raise ToolError(f"неизвестный бэкенд {name!r}")
         job.backend = name
+    from app.generation.base import GenerationError
+    from app.services.generation_inputs import ensure_job_references
+
+    try:
+        ensure_job_references(db, job)
+    except GenerationError as exc:
+        raise ToolError(str(exc)) from exc
     engine = get_backend(job.backend)
     if not engine.healthcheck():
         detail = engine.health_detail()
@@ -2565,9 +2602,10 @@ def create_render(
     reference_role: str | None = None,
 ) -> dict[str, Any]:
     from app.config import get_settings
-    from app.generation.base import INPUT_MODE_SLIDESHOW
+    from app.generation.base import INPUT_MODE_SLIDESHOW, GenerationError
+    from app.generation.hints import enrich_generation_error
     from app.generation.registry import available_backends, get_backend
-    from app.services.generation_inputs import apply_job_reference_fields
+    from app.services.generation_inputs import apply_job_reference_fields, ensure_job_references
 
     text = (prompt or "").strip()
     if not text:
@@ -2608,8 +2646,10 @@ def create_render(
     )
     if job.input_mode == INPUT_MODE_SLIDESHOW:
         job.backend = "slideshow"
-    from app.generation.hints import enrich_generation_error
-
+    try:
+        ensure_job_references(db, job, settings)
+    except GenerationError as exc:
+        raise ToolError(str(exc)) from exc
     engine = get_backend(job.backend)
     if not engine.healthcheck():
         detail = engine.health_detail()
@@ -2718,9 +2758,13 @@ def cancel_composition(db: Session, job_id: int, *, confirm: Any = False) -> dic
     if not _confirmed(confirm):
         return _need_confirm(
             f"Отменить склейку {job.id}?",
-            "отмена только для задач в очереди",
+            "отмена для задач в очереди, с ошибкой или мёртвых",
         )
-    if job.status is not PipelineStatus.queued:
+    if job.status not in (
+        PipelineStatus.queued,
+        PipelineStatus.failed,
+        PipelineStatus.dead,
+    ):
         raise ToolError(f"задачу в состоянии «{job.status.value}» отменить нельзя")
     job.status = PipelineStatus.cancelled
     db.commit()
@@ -2728,11 +2772,17 @@ def cancel_composition(db: Session, job_id: int, *, confirm: Any = False) -> dic
 
 
 def retry_composition(db: Session, job_id: int) -> dict[str, Any]:
+    from app.services.composing import ensure_composition_media
+    from app.services.media import MediaError
     from app.services.retry import NotRetriable, revive
 
     job = db.get(Composition, job_id)
     if job is None:
         raise ToolError(f"склейки {job_id} нет")
+    try:
+        ensure_composition_media(db, job)
+    except MediaError as exc:
+        raise ToolError(str(exc)) from exc
     try:
         revive(job)
     except NotRetriable as exc:
@@ -2769,7 +2819,7 @@ def refresh_stats(db: Session, publication_id: int) -> dict[str, Any]:
     except ValueError as exc:
         raise ToolError(str(exc)) from exc
     except Exception as exc:
-        raise ToolError(f"Stats refresh failed: {exc}") from exc
+        raise ToolError(f"не удалось обновить статистику: {exc}") from exc
     return {
         "id": row.id,
         "job_id": row.job_id,
@@ -3587,7 +3637,10 @@ def _upsert_account(
         account.login_identifier = login_identifier.strip() or None
     if backup_codes is not None:
         account.backup_codes = backup_codes.strip() or None
-    if account.status == AccountStatus.blocked:
+    credentials_replaced = bool(
+        (password or "").strip() or (session_id or "").strip() or raw_vendor or raw_line
+    )
+    if account.status == AccountStatus.blocked and credentials_replaced:
         account.status = AccountStatus.active
     db.commit()
     db.refresh(account)

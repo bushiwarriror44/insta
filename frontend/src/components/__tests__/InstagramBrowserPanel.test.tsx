@@ -100,7 +100,7 @@ describe("InstagramBrowserPanel", () => {
     expect(await screen.findByText(/Автопереход на Instagram/i)).toBeInTheDocument();
     expect(screen.getByText(/instagram.com\/accounts\/login/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Копировать лог/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Reels$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Рилс$/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Лента$/i })).toBeInTheDocument();
     expect(screen.getByText(/Быстрый переход в Instagram/i)).toBeInTheDocument();
   });
@@ -223,7 +223,7 @@ describe("InstagramBrowserPanel", () => {
 
   it("shows TOTP seed missing hint when awaiting code and seed absent", async () => {
     const { ApiError } = await import("../../api/client");
-    apiMock.getTotp.mockRejectedValue(new ApiError(404, "TOTP seed не задан для этого аккаунта"));
+    apiMock.getTotp.mockRejectedValue(new ApiError(404, "Секрет TOTP не задан для этого аккаунта"));
     apiMock.browserStatus.mockResolvedValue({
       username: "alice",
       status: "awaiting_code",
@@ -243,7 +243,7 @@ describe("InstagramBrowserPanel", () => {
     );
 
     expect(
-      await screen.findByText(/TOTP seed не задан — добавьте в настройках аккаунта/i)
+      await screen.findByText(/Секрет TOTP не задан — добавьте в настройках аккаунта/i)
     ).toBeInTheDocument();
   });
 });

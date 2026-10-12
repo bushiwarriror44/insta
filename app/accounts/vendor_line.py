@@ -10,7 +10,7 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 def _split_fields(raw: str) -> list[str]:
     text = (raw or "").strip()
     if not text:
-        raise ValueError("vendor line is empty")
+        raise ValueError("строка продавца пуста")
     if "\t" in text:
         parts = [p.strip() for p in text.split("\t") if p.strip()]
     elif ";" in text:
@@ -18,7 +18,9 @@ def _split_fields(raw: str) -> list[str]:
     else:
         parts = [p for p in re.split(r"\s{2,}|\s+", text) if p.strip()]
     if len(parts) < 4:
-        raise ValueError("expected username, password, email, email_password (tab or spaces)")
+        raise ValueError(
+            "ожидаются username, password, email, email_password (таб или пробелы)"
+        )
     return parts
 
 
@@ -40,11 +42,11 @@ def parse_vendor_line(line: str) -> dict[str, Any]:
     parts = _split_fields(line)
     username, password, email, email_password = parts[0], parts[1], parts[2], parts[3]
     if not username or not password:
-        raise ValueError("username and password are required")
+        raise ValueError("нужны username и password")
     if not _EMAIL_RE.match(email):
-        raise ValueError("third field must be an email address")
+        raise ValueError("третье поле должно быть email-адресом")
     if not email_password:
-        raise ValueError("email_password is required")
+        raise ValueError("нужен email_password")
     return {
         "username": username,
         "password": password,

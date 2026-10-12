@@ -19,6 +19,80 @@ from app.services.generation_inputs import apply_job_reference_fields
 from tests.unit.test_chain import FakeEngine
 
 
+def test_reclaim_stale_running_generation_returns_old_job(db_session):
+    from datetime import timedelta
+
+    from app.scheduler.queue import reclaim_stale_running
+
+    now = datetime.now(timezone.utc)
+    fresh = GenerationJob(
+        prompt="fresh",
+        backend="slideshow",
+        status=PipelineStatus.running,
+        started_at=now,
+        scheduled_at=now,
+    )
+    stale = GenerationJob(
+        prompt="stale",
+        backend="slideshow",
+        status=PipelineStatus.running,
+        started_at=now - timedelta(hours=3),
+        scheduled_at=now - timedelta(hours=3),
+    )
+    db_session.add_all([fresh, stale])
+    db_session.commit()
+    restored = reclaim_stale_running(
+        db_session,
+        GenerationJob,
+        running=PipelineStatus.running,
+        queued=PipelineStatus.queued,
+        older_than=now - timedelta(seconds=1800),
+        now=now,
+    )
+    db_session.refresh(fresh)
+    db_session.refresh(stale)
+    assert restored == 1
+    assert fresh.status is PipelineStatus.running
+    assert stale.status is PipelineStatus.queued
+
+
+def test_failed_shot_records_blocked_join_once(db_session):
+    from sqlalchemy import func, select
+
+    from app.db.models import AssetKind, AssetSource, Event, MediaAsset
+    from app.services.generation import _join_when_the_post_is_whole
+
+    asset = MediaAsset(filename="join.mp4", kind=AssetKind.video, source=AssetSource.generated)
+    db_session.add(asset)
+    db_session.commit()
+    group = "join-blocked"
+    done = GenerationJob(
+        prompt="a",
+        backend="slideshow",
+        status=PipelineStatus.done,
+        post_group=group,
+        shot_index=0,
+        asset_id=asset.id,
+    )
+    failed = GenerationJob(
+        prompt="b",
+        backend="slideshow",
+        status=PipelineStatus.failed,
+        post_group=group,
+        shot_index=1,
+    )
+    db_session.add_all([done, failed])
+    db_session.commit()
+    _join_when_the_post_is_whole(db_session, done)
+    _join_when_the_post_is_whole(db_session, done)
+    count = db_session.scalar(
+        select(func.count()).select_from(Event).where(Event.kind == "post_join_blocked")
+    )
+    assert count == 1
+from app.services.generation_inputs import apply_job_reference_fields
+from tests.unit.test_chain import FakeEngine
+
+
 class TextOnlyEngine(VideoBackend):
     name = "text_only_stub"
     model_licence = "test"
@@ -148,7 +222,7 @@ def test_run_generation_budget_defers_without_attempt(db_session, app_env, monke
     db_session.refresh(job)
     assert job.status is PipelineStatus.queued
     assert job.attempts == 0
-    assert "held until tomorrow" in (job.last_error or "")
+    assert "отложено до завтра" in (job.last_error or "")
     assert job.scheduled_at is not None
     scheduled = job.scheduled_at
     if scheduled.tzinfo is None:

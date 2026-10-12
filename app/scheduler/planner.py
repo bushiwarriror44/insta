@@ -173,12 +173,28 @@ def schedule_jobs(
     now_utc = datetime.now(timezone.utc)
     created: list[PostJob] = []
     src_idx = 0
+    cap = profile_cap_for_account(account)
+    tz = _account_tz(account)
+    booked: dict[str, int] = {}
+    skipped_for_cap = 0
+    # Local import: scheduling imports plan_slots_for_day from this module.
+    from app.services.scheduling import _scheduled_on_local_day
 
     for day_offset in range(days_ahead):
         day = now_utc + timedelta(days=day_offset)
         slots = plan_slots_for_day(account, day, rng=rng)
         for slot in slots:
             if slot <= now_utc:
+                continue
+            if slot.tzinfo is None:
+                slot = slot.replace(tzinfo=timezone.utc)
+            day_key = slot.astimezone(tz).date().isoformat()
+            used = booked.get(day_key)
+            if used is None:
+                used = _scheduled_on_local_day(db, account, slot)
+            if used >= cap:
+                booked[day_key] = used
+                skipped_for_cap += 1
                 continue
             if _too_close_to_existing(db, account.id, slot, profile_min_gap_for_account(account)):
                 continue
@@ -195,6 +211,8 @@ def schedule_jobs(
             )
             db.add(job)
             created.append(job)
+            booked[day_key] = used + 1
+
 
     if created:
         db.commit()

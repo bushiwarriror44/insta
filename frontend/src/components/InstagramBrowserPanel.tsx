@@ -30,13 +30,13 @@ type BrowserNavTarget =
 
 const QUICK_NAV: { target: BrowserNavTarget; label: string }[] = [
   { target: "home", label: "Лента" },
-  { target: "reels", label: "Reels" },
-  { target: "explore", label: "Explore" },
-  { target: "direct", label: "Direct" },
+  { target: "reels", label: "Рилс" },
+  { target: "explore", label: "Обзор" },
+  { target: "direct", label: "Директ" },
   { target: "activity", label: "Активность" },
   { target: "profile", label: "Профиль" },
   { target: "edit_profile", label: "Ред. профиль" },
-  { target: "login", label: "Login" },
+  { target: "login", label: "Вход" },
 ];
 
 interface Props {
@@ -217,7 +217,6 @@ export function InstagramBrowserPanel({
         session.page_url?.startsWith("chrome://") ||
         session.page_url?.startsWith("chrome-error://")
     );
-
   async function startBrowser() {
     if (!hasProxy) {
       push("Сначала назначьте прокси", "error");
@@ -246,13 +245,13 @@ export function InstagramBrowserPanel({
       applySession(data);
       const labels: Record<string, string> = {
         home: "Переход на ленту",
-        reels: "Переход на Reels",
-        explore: "Переход на Explore",
-        direct: "Переход в Direct",
+        reels: "Переход в Рилс",
+        explore: "Переход в Обзор",
+        direct: "Переход в Директ",
         activity: "Переход в Активность",
         profile: "Переход в профиль",
         edit_profile: "Переход в редактирование профиля",
-        login: opts?.autofill ? "Login + автозаполнение" : "Переход на Login",
+        login: opts?.autofill ? "Вход + автозаполнение" : "Переход на вход",
         auto: "Открытие Instagram",
       };
       push(labels[opts?.target ?? "auto"] ?? "Запрос на открытие Instagram отправлен", "success");
@@ -432,12 +431,12 @@ export function InstagramBrowserPanel({
             </>
           ) : session?.warning ? (
             <>
-              Автопереход не удался — повторите «Открыть Instagram» / «Login» или введите адрес в
+              Автопереход не удался — повторите «Открыть Instagram» / «Вход» или введите адрес в
               VNC. {session.warning}
             </>
           ) : (
             <>
-              Страница пустая — нажмите «Открыть Instagram» или «Login», либо введите адрес в VNC.
+              Страница пустая — нажмите «Открыть Instagram» или «Вход», либо введите адрес в VNC.
             </>
           )}
         </div>
@@ -447,7 +446,7 @@ export function InstagramBrowserPanel({
         <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-3 text-sm text-slate-300 space-y-2">
           <p className="text-xs uppercase tracking-wide text-slate-500">Аккаунт</p>
           <p>
-            <span className="text-slate-400">Username:</span>{" "}
+            <span className="text-slate-400">Имя:</span>{" "}
             <span className="text-slate-100 font-mono">@{session.account_username}</span>
           </p>
           <p>
@@ -710,7 +709,7 @@ export function InstagramBrowserPanel({
             </div>
           ) : session?.awaiting_code && !totpAvailable ? (
             <p className="text-xs text-amber-300">
-              TOTP seed не задан — добавьте в настройках аккаунта
+              Секрет TOTP не задан — добавьте в настройках аккаунта
             </p>
           ) : null}
           <p className="text-xs text-slate-500">
@@ -721,7 +720,7 @@ export function InstagramBrowserPanel({
         <div className="rounded-lg border border-slate-700 bg-black/40 overflow-hidden min-h-[360px]">
           {live && vncUrl ? (
             <p className="px-3 py-2 text-xs text-slate-500 border-b border-slate-800">
-              Если noVNC пишет «Failed to connect» — на VPS в{" "}
+              Если noVNC не подключается — на VPS в{" "}
               <span className="font-mono">/etc/nginx/sites-available/insta</span> нужны заголовки
               WebSocket Upgrade (см.{" "}
               <span className="font-mono">deploy/host-nginx.conf.example</span>), затем{" "}
@@ -730,7 +729,7 @@ export function InstagramBrowserPanel({
           ) : null}
           {vncUrl ? (
             <iframe
-              title={`Instagram browser ${username}`}
+              title={`Браузер Instagram ${username}`}
               src={vncUrl}
               className="w-full h-[600px] bg-black"
               allow="clipboard-read; clipboard-write"

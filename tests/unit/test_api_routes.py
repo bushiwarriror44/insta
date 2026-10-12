@@ -86,6 +86,7 @@ def test_dashboard_open_mode_returns_summary(api_client):
         "jobs_awaiting_review",
         "jobs_failed_24h",
         "open_questions",
+        "questions_account_id",
     ):
         assert key in body
 
@@ -439,6 +440,60 @@ def test_accounts_resume_clears_cooldown_until(api_client, app_env):
     body = res.json()
     assert body["status"] == "active"
     assert body["cooldown_until"] is None
+
+
+def test_accounts_resume_refuses_challenge(api_client, app_env):
+    from sqlalchemy import select
+
+    from app.db import Account, AccountStatus
+
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-ch", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/accounts",
+        json={
+            "username": "challenge_user",
+            "password": "secret",
+            "proxy_label": "px-ch",
+            "timezone": "UTC",
+        },
+    )
+    with app_env.SessionLocal() as db:
+        account = db.scalar(select(Account).where(Account.username == "challenge_user"))
+        account.status = AccountStatus.challenge
+        db.commit()
+
+    res = api_client.post("/api/accounts/challenge_user/resume")
+    assert res.status_code == 409
+    with app_env.SessionLocal() as db:
+        account = db.scalar(select(Account).where(Account.username == "challenge_user"))
+        assert account.status == AccountStatus.challenge
+
+
+def test_upsert_notes_do_not_clear_blocked(db_session, make_proxy):
+    from app.assistant.tools import _upsert_account
+    from app.db.models import Account, AccountStatus, Platform
+
+    proxy = make_proxy(label="px-bl2", url="http://u:p@h:9")
+    account = Account(
+        username="blocked_user2",
+        password="old",
+        platform=Platform.instagram,
+        status=AccountStatus.blocked,
+        proxy_id=proxy.id,
+    )
+    db_session.add(account)
+    db_session.commit()
+    _upsert_account(
+        db_session,
+        username="blocked_user2",
+        proxy_label="px-bl2",
+        notes="just a note",
+    )
+    db_session.refresh(account)
+    assert account.status == AccountStatus.blocked
 
 
 def test_accounts_update_proxy_reassigns_account_and_counts(api_client):
@@ -1064,7 +1119,7 @@ def test_accounts_create_rejects_invalid_active_hours(api_client):
         },
     )
     assert res.status_code == 422
-    assert "active_hour_end must be greater than active_hour_start" in res.text
+    assert "active_hour_end должен быть больше active_hour_start" in res.text
 
 
 def test_accounts_create_rejects_unknown_caption_profile(api_client):
@@ -1082,7 +1137,7 @@ def test_accounts_create_rejects_unknown_caption_profile(api_client):
         },
     )
     assert res.status_code == 422
-    assert "caption_profile must be one of" in res.text
+    assert "caption_profile должен быть одним из" in res.text
 
 
 def test_video_upload_list_and_enqueue(api_client, app_env):
@@ -1137,6 +1192,47 @@ def test_video_upload_list_and_enqueue(api_client, app_env):
     assert res.json()["status"] == "cancelled"
 
 
+def test_list_jobs_status_errors_includes_failed_and_dead(api_client, db_session, make_account, tmp_path):
+    from datetime import datetime, timezone
+
+    from app.db.models import PostJob, PostJobStatus
+
+    account = make_account(username="errfilter")
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"x")
+    now = datetime.now(timezone.utc)
+    dead = PostJob(
+        account_id=account.id,
+        source_video_path=str(src),
+        post_type="reel",
+        scheduled_for=now,
+        status=PostJobStatus.dead,
+        finished_at=now,
+    )
+    failed = PostJob(
+        account_id=account.id,
+        source_video_path=str(src),
+        post_type="reel",
+        scheduled_for=now,
+        status=PostJobStatus.failed,
+        finished_at=now,
+    )
+    queued = PostJob(
+        account_id=account.id,
+        source_video_path=str(src),
+        post_type="reel",
+        scheduled_for=now,
+        status=PostJobStatus.queued,
+    )
+    db_session.add_all([dead, failed, queued])
+    db_session.commit()
+
+    res = api_client.get("/api/jobs", params={"status": "errors", "limit": 100})
+    assert res.status_code == 200
+    statuses = {row["status"] for row in res.json() if row["account_username"] == "errfilter"}
+    assert statuses == {"failed", "dead"}
+
+
 def test_enqueue_job_hold_for_review_awaits(api_client, app_env, make_account):
     make_account(username="held", hold_for_review=True)
     filename = "held.mp4"
@@ -1159,6 +1255,54 @@ def test_enqueue_job_without_hold_is_queued(api_client, app_env, make_account):
     )
     assert res.status_code == 201, res.text
     assert res.json()["status"] == "queued"
+
+
+def test_enqueue_snaps_implicit_now_outside_hours(api_client, app_env, make_account):
+    now_h = datetime.now(timezone.utc).hour
+    start_h, end_h = (18, 20) if now_h < 12 else (6, 8)
+    make_account(
+        username="snaphours",
+        timezone="UTC",
+        daily_post_cap=3,
+        min_gap_hours=0,
+        active_hour_start=start_h,
+        active_hour_end=end_h,
+    )
+    filename = "snap.mp4"
+    (app_env.video_source_dir / filename).write_bytes(b"\x00" * 64)
+    res = api_client.post(
+        "/api/jobs",
+        json={"username": "snaphours", "media_filename": filename, "post_type": "reel"},
+    )
+    assert res.status_code == 201, res.text
+    scheduled = datetime.fromisoformat(res.json()["scheduled_for"])
+    if scheduled.tzinfo is None:
+        scheduled = scheduled.replace(tzinfo=timezone.utc)
+    assert start_h <= scheduled.hour < end_h
+
+
+def test_enqueue_rejects_explicit_illegal_when(api_client, app_env, make_account):
+    make_account(
+        username="hardwhen",
+        timezone="UTC",
+        daily_post_cap=3,
+        min_gap_hours=0,
+        active_hour_start=10,
+        active_hour_end=12,
+    )
+    filename = "hard.mp4"
+    (app_env.video_source_dir / filename).write_bytes(b"\x00" * 64)
+    res = api_client.post(
+        "/api/jobs",
+        json={
+            "username": "hardwhen",
+            "media_filename": filename,
+            "post_type": "reel",
+            "when": "2026-03-15T23:00:00+00:00",
+        },
+    )
+    assert res.status_code == 409
+    assert "час" in res.json()["detail"].lower() or "активност" in res.json()["detail"].lower()
 
 
 def test_enqueue_job_rejects_path_traversal(api_client, app_env, make_account):
@@ -1204,13 +1348,15 @@ def test_jobs_approve_queued_returns_409(api_client, app_env, make_account):
     assert res.status_code == 409
 
 
-def test_jobs_retry_failed_to_queued(api_client, db_session, make_account):
+def test_jobs_retry_failed_to_queued(api_client, db_session, make_account, tmp_path):
     from app.db.models import PostJob, PostJobStatus
 
+    video = tmp_path / "x.mp4"
+    video.write_bytes(b"x")
     account = make_account(username="retryjob")
     job = PostJob(
         account_id=account.id,
-        source_video_path="/tmp/x.mp4",
+        source_video_path=str(video),
         status=PostJobStatus.failed,
         attempts=2,
         scheduled_for=datetime.now(timezone.utc),
@@ -1220,6 +1366,56 @@ def test_jobs_retry_failed_to_queued(api_client, db_session, make_account):
     res = api_client.post(f"/api/jobs/{job.id}/retry")
     assert res.status_code == 200
     assert res.json()["status"] == "queued"
+
+
+def test_jobs_retry_moves_off_night_slot(api_client, db_session, make_account, tmp_path):
+    from app.db.models import PostJob, PostJobStatus
+
+    video = tmp_path / "night.mp4"
+    video.write_bytes(b"x")
+    account = make_account(
+        username="retrynight",
+        timezone="UTC",
+        daily_post_cap=1,
+        min_gap_hours=1.0,
+        active_hour_start=10,
+        active_hour_end=22,
+    )
+    night = datetime(2026, 12, 1, 23, 15, tzinfo=timezone.utc)
+    job = PostJob(
+        account_id=account.id,
+        source_video_path=str(video),
+        status=PostJobStatus.failed,
+        attempts=1,
+        scheduled_for=night,
+    )
+    db_session.add(job)
+    db_session.commit()
+    res = api_client.post(f"/api/jobs/{job.id}/retry")
+    assert res.status_code == 200
+    scheduled = datetime.fromisoformat(res.json()["scheduled_for"])
+    if scheduled.tzinfo is None:
+        scheduled = scheduled.replace(tzinfo=timezone.utc)
+    assert scheduled.hour != 23
+    assert 10 <= scheduled.hour < 22
+
+
+def test_jobs_retry_missing_source_returns_409(api_client, db_session, make_account):
+    from app.db.models import PostJob, PostJobStatus
+
+    account = make_account(username="retrymissing")
+    job = PostJob(
+        account_id=account.id,
+        source_video_path="/tmp/insta-missing-source.mp4",
+        status=PostJobStatus.failed,
+        attempts=1,
+        scheduled_for=datetime.now(timezone.utc),
+    )
+    db_session.add(job)
+    db_session.commit()
+    res = api_client.post(f"/api/jobs/{job.id}/retry")
+    assert res.status_code == 409
+    assert "отсутствует" in res.json()["detail"]
 
 
 def test_jobs_reschedule_patch(api_client, app_env, make_account):
@@ -1235,6 +1431,120 @@ def test_jobs_reschedule_patch(api_client, app_env, make_account):
     res = api_client.patch(f"/api/jobs/{job_id}", json={"when": new_when})
     assert res.status_code == 200
     assert res.json()["scheduled_for"] is not None
+
+
+def test_cancel_and_reschedule_rejected_messages_are_russian(
+    api_client, db_session, make_account, tmp_path
+):
+    from app.db.models import PostJob, PostJobStatus
+
+    account = make_account(username="ru-msgs")
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"x")
+    job = PostJob(
+        account_id=account.id,
+        source_video_path=str(src),
+        post_type="reel",
+        scheduled_for=datetime.now(timezone.utc),
+        status=PostJobStatus.cancelled,
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    cancel = api_client.post(f"/api/jobs/{job.id}/cancel")
+    assert cancel.status_code == 400
+    assert "отменить нельзя" in cancel.json()["detail"]
+    assert "Cannot cancel" not in cancel.json()["detail"]
+
+    move = api_client.patch(
+        f"/api/jobs/{job.id}",
+        json={"when": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()},
+    )
+    assert move.status_code == 409
+    assert "перенести нельзя" in move.json()["detail"]
+    assert "Cannot move" not in move.json()["detail"]
+
+
+def test_reschedule_rejects_cap_gap_and_hours(api_client, db_session, make_account):
+    from app.db.models import PostJob, PostJobStatus
+
+    account = make_account(
+        username="slotguard",
+        daily_post_cap=1,
+        min_gap_hours=1.0,
+        timezone="UTC",
+        active_hour_start=10,
+        active_hour_end=22,
+    )
+    day = (datetime.now(timezone.utc) + timedelta(days=3)).replace(
+        minute=0, second=0, microsecond=0
+    )
+    existing = PostJob(
+        account_id=account.id,
+        source_video_path="taken.mp4",
+        scheduled_for=day.replace(hour=10),
+        status=PostJobStatus.done,
+    )
+    mover = PostJob(
+        account_id=account.id,
+        source_video_path="mover.mp4",
+        scheduled_for=day + timedelta(days=2),
+        status=PostJobStatus.queued,
+    )
+    db_session.add_all([existing, mover])
+    db_session.commit()
+
+    capped = api_client.patch(
+        f"/api/jobs/{mover.id}",
+        json={"when": day.replace(hour=18).isoformat()},
+    )
+    assert capped.status_code == 409
+    assert "лимит" in capped.json()["detail"]
+
+    account.daily_post_cap = 4
+    db_session.commit()
+    close = api_client.patch(
+        f"/api/jobs/{mover.id}",
+        json={"when": day.replace(hour=12).isoformat()},
+    )
+    assert close.status_code == 409
+    assert "близко" in close.json()["detail"]
+
+    night = api_client.patch(
+        f"/api/jobs/{mover.id}",
+        json={"when": day.replace(hour=23).isoformat()},
+    )
+    assert night.status_code == 409
+    assert "часов" in night.json()["detail"]
+
+
+def test_reschedule_rejects_other_account_slot(api_client, db_session, make_account):
+    from app.db.models import PostJob, PostJobStatus
+
+    first = make_account(username="spread-host", timezone="UTC", active_hour_start=0, active_hour_end=23)
+    second = make_account(username="spread-guest", timezone="UTC", active_hour_start=0, active_hour_end=23)
+    slot = (datetime.now(timezone.utc) + timedelta(days=2)).replace(
+        hour=16, minute=0, second=0, microsecond=0
+    )
+    db_session.add(
+        PostJob(
+            account_id=first.id,
+            source_video_path="host.mp4",
+            scheduled_for=slot,
+            status=PostJobStatus.queued,
+        )
+    )
+    mover = PostJob(
+        account_id=second.id,
+        source_video_path="guest.mp4",
+        scheduled_for=slot + timedelta(days=2),
+        status=PostJobStatus.queued,
+    )
+    db_session.add(mover)
+    db_session.commit()
+    res = api_client.patch(f"/api/jobs/{mover.id}", json={"when": slot.isoformat()})
+    assert res.status_code == 409
+    assert "другого аккаунта" in res.json()["detail"]
 
 
 def test_dashboard_quarantine_counts_cooldown_not_paused(api_client, make_account):

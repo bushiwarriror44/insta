@@ -1,7 +1,7 @@
 import type { GpuOut } from "../api/types";
 
 export const START_CONFIRM =
-  "После Stop образ снова качается на узел. С Running идут GPU-часы. Запустить группу?";
+  "После остановки образ снова качается на узел. Пока группа работает — идут GPU-часы. Запустить группу?";
 export const STOP_CONFIRM =
   "Часы остановятся, чат и local-видео лягут. Остановить группу Salad?";
 
@@ -11,17 +11,17 @@ export function statusLabel(gpu: GpuOut): string {
   }
   switch (gpu.status) {
     case "running":
-      return "Running — идут GPU-часы";
+      return "Работает — идут GPU-часы";
     case "deploying":
       return "Качается образ на узел";
     case "pending":
       return "Ждёт узел";
     case "stopped":
-      return "Stopped — не тарится";
+      return "Остановлена — не тарится";
     case "failed":
-      return "Failed";
+      return "Сбой";
     case "succeeded":
-      return "Succeeded";
+      return "Завершена";
     default:
       return gpu.status ? gpu.status : "Статус неизвестен";
   }

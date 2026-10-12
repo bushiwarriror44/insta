@@ -301,7 +301,7 @@ def test_rotate_proxy_unknown_target_fails(cli_app, make_account):
     assert result.exit_code == 1
 
 
-def test_provide_code_writes_file_and_resets_status(cli_app, db_session, make_account, app_env):
+def test_provide_code_writes_file_and_keeps_challenge(cli_app, db_session, make_account, app_env):
     make_account(username="kate", status=AccountStatus.challenge)
     result = runner.invoke(cli_app, ["provide-code", "kate", "112233"])
     assert result.exit_code == 0
@@ -310,7 +310,7 @@ def test_provide_code_writes_file_and_resets_status(cli_app, db_session, make_ac
     assert code_file.read_text(encoding="utf-8") == "112233"
     db_session.expire_all()
     acc = db_session.scalar(select(Account).where(Account.username == "kate"))
-    assert acc.status == AccountStatus.active
+    assert acc.status == AccountStatus.challenge
 
 
 def test_list_accounts(cli_app, make_account):
@@ -426,7 +426,7 @@ def test_preflight_ok_when_playwright_available(cli_app, make_proxy, monkeypatch
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/ffmpeg" if name == "ffmpeg" else None)
     result = runner.invoke(cli_app, ["preflight"])
     assert result.exit_code == 0, result.stdout
-    assert "preflight ok" in result.stdout
+    assert "проверка ок" in result.stdout
 
 
 def test_preflight_fails_without_ffmpeg(cli_app, make_proxy, monkeypatch):

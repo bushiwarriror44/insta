@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { BrowserRouter } from "react-router-dom";
 
 import App from "../App";
-import { api } from "../api/client";
+import { api, formatApiError } from "../api/client";
 import { AuthProvider } from "../context/AuthContext";
 import { ToastProvider } from "../context/ToastContext";
 import { Fake500 } from "./Fake500";
@@ -33,8 +33,7 @@ export function GateRoot() {
         setGate({ status: "allowed", basename });
       } catch (err) {
         if (cancelled) return;
-        const message = err instanceof Error ? err.message : "API недоступен";
-        setGate({ status: "error", message });
+        setGate({ status: "error", message: formatApiError(err) });
       }
     })();
     return () => {

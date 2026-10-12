@@ -250,7 +250,12 @@ def test_process_job_account_not_active_requeues(worker_env, db_session, make_ac
     worker_module._process_job(db_session, job)
     db_session.refresh(job)
     assert job.status == PostJobStatus.queued
+    assert job.attempts == 0
     assert job.finished_at is None
+    scheduled = job.scheduled_for
+    if scheduled.tzinfo is None:
+        scheduled = scheduled.replace(tzinfo=timezone.utc)
+    assert scheduled > datetime.now(timezone.utc) + timedelta(minutes=30)
 
 
 def test_process_job_expired_cooldown_restores_active(
@@ -296,14 +301,65 @@ def test_process_job_daily_cap_reached_reschedules(worker_env, db_session, make_
     worker_module._process_job(db_session, job)
     db_session.refresh(job)
     assert job.status == PostJobStatus.queued
-    # SQLite strips tzinfo on read; compare naive-with-naive.
     naive_now = datetime.now(timezone.utc).replace(tzinfo=None)
     sched = job.scheduled_for
     if sched.tzinfo is not None:
         sched = sched.replace(tzinfo=None)
     assert sched > naive_now
-    assert sched.hour == 14
+    assert sched.date().isoformat() == "2026-03-16"
+    assert sched.hour == 10
     assert sched.minute == 0
+
+
+def test_process_job_respects_min_gap(worker_env, db_session, make_account):
+    account = make_account(
+        min_gap_hours=4,
+        last_publish_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+    )
+    video = _make_video(worker_env, "gap.mp4")
+    job = _make_job(db_session, account, video)
+    worker_module._process_job(db_session, job)
+    db_session.refresh(job)
+    assert job.status == PostJobStatus.queued
+    sched = job.scheduled_for
+    if sched.tzinfo is None:
+        sched = sched.replace(tzinfo=None)
+    earliest = datetime(2026, 3, 15, 15, 40)
+    assert sched >= earliest
+
+
+def test_process_job_uses_risk_profile_gap_for_new_account(worker_env, db_session, make_account):
+    account = make_account(
+        min_gap_hours=1,
+        last_publish_at=datetime(2026, 3, 15, 7, 0, tzinfo=timezone.utc),
+    )
+    video = _make_video(worker_env, "newgap.mp4")
+    job = _make_job(db_session, account, video)
+    worker_module._process_job(db_session, job)
+    db_session.refresh(job)
+    assert job.status == PostJobStatus.queued
+    assert job.last_error == "интервал между публикациями"
+
+
+def test_process_job_spreads_posts_across_accounts(worker_env, db_session, make_account):
+    first = make_account(username="spread-a")
+    second = make_account(username="spread-b")
+    done = PostJob(
+        account_id=first.id,
+        source_video_path="/tmp/spread-a.mp4",
+        post_type=PostType.reel,
+        scheduled_for=datetime.now(timezone.utc),
+        status=PostJobStatus.done,
+        finished_at=datetime.now(timezone.utc) - timedelta(seconds=20),
+    )
+    db_session.add(done)
+    db_session.commit()
+    video = _make_video(worker_env, "spread-b.mp4")
+    job = _make_job(db_session, second, video)
+    worker_module._process_job(db_session, job)
+    db_session.refresh(job)
+    assert job.status == PostJobStatus.queued
+    assert job.last_error == "разнесение между аккаунтами"
 
 
 def test_process_job_outside_active_hours_reschedules(
@@ -316,10 +372,23 @@ def test_process_job_outside_active_hours_reschedules(
     worker_module._process_job(db_session, job)
     db_session.refresh(job)
     assert job.status == PostJobStatus.queued
+    assert job.attempts == 0
     sched = job.scheduled_for
     if sched.tzinfo is not None:
         sched = sched.replace(tzinfo=None)
     assert sched == datetime(2026, 3, 15, 18, 5)
+
+
+def test_process_job_soft_deferrals_do_not_burn_attempts(
+    worker_env, db_session, make_account
+):
+    account = make_account(status=AccountStatus.paused)
+    video = _make_video(worker_env, "soft.mp4")
+    job = _make_job(db_session, account, video)
+    worker_module._process_job(db_session, job)
+    db_session.refresh(job)
+    assert job.status == PostJobStatus.queued
+    assert job.attempts == 0
 
 
 def test_process_job_no_proxy_dead_letters(worker_env, db_session, make_account):
@@ -480,6 +549,19 @@ def test_claim_due_job_skips_paused_accounts(worker_env, db_session, make_accoun
     assert worker_module._claim_due_job(db_session, datetime.now(timezone.utc)) is None
 
 
+def test_claim_due_job_skips_challenge_and_blocked(worker_env, db_session, make_account):
+    now = datetime.now(timezone.utc)
+    for status in (AccountStatus.challenge, AccountStatus.blocked):
+        account = make_account(status=status, username=f"skip_{status.value}")
+        _make_job(
+            db_session,
+            account,
+            _make_video(worker_env, f"{status.value}.mp4"),
+            when=now - timedelta(minutes=10),
+        )
+    assert worker_module._claim_due_job(db_session, now) is None
+
+
 def test_claim_due_job_skips_awaiting_review(worker_env, db_session, make_account):
     account = make_account()
     _make_job(
@@ -579,7 +661,7 @@ def test_temporary_auth_signal_enters_quarantine(
     db_session.refresh(job)
     assert account.status == AccountStatus.cooldown
     assert account.cooldown_until is not None
-    assert "quarantine" in (job.last_error or "")
+    assert "карантин" in (job.last_error or "").lower()
     event = db_session.scalar(select(Event).where(Event.kind == "risk.quarantine"))
     assert event is not None
 
@@ -644,6 +726,62 @@ def test_youtube_short_dispatches_to_playwright_publisher(
     assert job.status == PostJobStatus.done
     assert seen["username"] == "ytuser"
     assert seen["title"] == "My Short"
+
+
+def test_youtube_account_stale_reel_type_still_uses_studio(
+    worker_env, db_session, make_account, monkeypatch
+):
+    from app.db.models import Platform
+
+    account = make_account(username="ytstale", platform=Platform.youtube)
+    video = _make_video(worker_env, "stale.mp4")
+    job = _make_job(db_session, account, video, post_type=PostType.reel)
+    called = {"yt": 0, "reel": 0}
+
+    def _yt(**kwargs):
+        called["yt"] += 1
+        return PublishResult(
+            media_id="yt-2",
+            media_code=None,
+            final_video_path=kwargs["video_path"],
+            final_caption=kwargs["title"],
+        )
+
+    def _reel(**kwargs):
+        called["reel"] += 1
+        return PublishResult(media_id="R", media_code="C", final_video_path=video, final_caption="c")
+
+    monkeypatch.setattr(worker_module, "publish_youtube_short", _yt)
+    monkeypatch.setattr(worker_module, "publish_reel", _reel)
+    worker_module._process_job(db_session, job)
+    assert called == {"yt": 1, "reel": 0}
+
+
+def test_instagram_youtube_short_type_stays_on_reels(
+    worker_env, db_session, make_account, monkeypatch
+):
+    account = make_account(username="igmismatch")
+    video = _make_video(worker_env, "mismatch.mp4")
+    job = _make_job(db_session, account, video, post_type=PostType.youtube_short)
+    called = {"yt": 0, "reel": 0}
+
+    def _yt(**kwargs):
+        called["yt"] += 1
+        return PublishResult(
+            media_id="yt-3",
+            media_code=None,
+            final_video_path=kwargs["video_path"],
+            final_caption="t",
+        )
+
+    def _reel(**kwargs):
+        called["reel"] += 1
+        return PublishResult(media_id="R", media_code="C", final_video_path=video, final_caption="c")
+
+    monkeypatch.setattr(worker_module, "publish_youtube_short", _yt)
+    monkeypatch.setattr(worker_module, "publish_reel", _reel)
+    worker_module._process_job(db_session, job)
+    assert called == {"yt": 0, "reel": 1}
 
 
 def test_tiktok_dispatches_to_playwright_publisher(

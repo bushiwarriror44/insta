@@ -104,6 +104,50 @@ export function Dashboard() {
         description="Текущее состояние аккаунтов и очереди."
       />
 
+      {(data.jobs_awaiting_review ||
+        data.jobs_failed_24h ||
+        data.open_questions ||
+        data.quarantined_accounts) ? (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {data.jobs_awaiting_review ? (
+            <Link to="/activity?status=awaiting_review" className="card px-4 py-3 hover:border-slate-700">
+              <div className="text-xs uppercase tracking-wider text-slate-400">На проверке</div>
+              <div className="mt-1 text-2xl font-semibold tabular-nums">{data.jobs_awaiting_review}</div>
+            </Link>
+          ) : null}
+          {data.jobs_failed_24h ? (
+            <Link to="/activity?status=errors" className="card px-4 py-3 hover:border-slate-700">
+              <div className="text-xs uppercase tracking-wider text-slate-400">Ошибки за 24 часа</div>
+              <div className="mt-1 text-2xl font-semibold tabular-nums text-rose-300">{data.jobs_failed_24h}</div>
+            </Link>
+          ) : null}
+          {data.open_questions ? (
+            <Link
+              to={
+                data.questions_account_id
+                  ? `/agent?account=${data.questions_account_id}`
+                  : "/agent"
+              }
+              className="card px-4 py-3 hover:border-slate-700"
+            >
+              <div className="text-xs uppercase tracking-wider text-slate-400">Вопросы агента</div>
+              <div className="mt-1 text-2xl font-semibold tabular-nums">{data.open_questions}</div>
+            </Link>
+          ) : null}
+          {data.quarantined_accounts ? (
+            <Link
+              to="/accounts?status=cooldown"
+              className="card px-4 py-3 hover:border-slate-700"
+            >
+              <div className="text-xs uppercase tracking-wider text-slate-400">Карантин</div>
+              <div className="mt-1 text-2xl font-semibold tabular-nums text-orange-300">
+                {data.quarantined_accounts}
+              </div>
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           label="Активные аккаунты"
@@ -117,8 +161,21 @@ export function Dashboard() {
           label="Исправные прокси"
           value={`${data.proxies_healthy} / ${data.proxies_total}`}
           icon={Server}
-          tone={data.proxies_total === 0 ? "warn" : "info"}
-          to="/accounts"
+          tone={
+            data.proxies_total === 0 || data.proxies_healthy < data.proxies_total
+              ? "warn"
+              : "info"
+          }
+          hint={
+            data.proxies_total > 0 && data.proxies_healthy < data.proxies_total
+              ? `${data.proxies_total - data.proxies_healthy} недоступно`
+              : undefined
+          }
+          to={
+            data.proxies_total > 0 && data.proxies_healthy < data.proxies_total
+              ? "/accounts?proxy=bad"
+              : "/accounts"
+          }
         />
         <StatCard
           label="В очереди / В работе"
@@ -133,7 +190,7 @@ export function Dashboard() {
           value={data.jobs_dead_total}
           icon={data.jobs_dead_total ? AlertTriangle : CheckCircle2}
           tone={data.jobs_dead_total ? "danger" : "success"}
-          hint={`риск 24ч: ${data.risk_signals_24h} · карантин: ${data.quarantined_accounts}`}
+          hint={data.risk_signals_24h ? `риск 24ч: ${data.risk_signals_24h}` : "рисков за 24ч нет"}
           to="/activity?status=dead"
         />
       </div>

@@ -141,12 +141,12 @@ class ContentIdea(BaseModel):
         """
         kept = [shot.strip() for shot in shots if shot and shot.strip()]
         if not kept:
-            raise ValueError("a post needs at least one shot")
+            raise ValueError("у поста нужен хотя бы один shot")
         for shot in kept:
             if len(shot) < MIN_SHOT_CHARS:
-                raise ValueError(f"this is not a shot description: {shot!r}")
+                raise ValueError(f"это не описание shot: {shot!r}")
             if len(shot) > MAX_SHOT_CHARS:
-                raise ValueError("a shot description this long is a scene, not a shot")
+                raise ValueError("описание shot слишком длинное — это сцена, а не shot")
         return kept[:MAX_SHOTS]
 
     @field_validator("tags")
@@ -366,4 +366,4 @@ class AgentBackend(abc.ABC):
         if not request.brief.strip():
             raise AgentError("у канала нет брифа, по которому планировать")
         if not 1 <= request.count <= MAX_IDEAS:
-            raise AgentError(f"count must be between 1 and {MAX_IDEAS}")
+            raise AgentError(f"count должен быть от 1 до {MAX_IDEAS}")

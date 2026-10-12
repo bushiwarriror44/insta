@@ -11,8 +11,38 @@ from app.config import settings
 from app.db import Account
 
 
-def playwright_state_path(username: str) -> Path:
+_STUDIO_PLATFORMS = frozenset({"youtube", "tiktok"})
+
+
+def _legacy_playwright_state_path(username: str) -> Path:
     return settings.playwright_dir / username / "state.json"
+
+
+def _scoped_playwright_state_path(username: str, platform: str) -> Path:
+    return settings.playwright_dir / platform / username / "state.json"
+
+
+def playwright_state_path(username: str, platform: str | None = None) -> Path:
+    """Instagram stays under ``playwright_dir/username``.
+
+    YouTube/TikTok prefer ``playwright_dir/<platform>/username`` so the same
+    handle on two platforms does not overwrite one state.json. If only a
+    legacy unscoped file exists, that path is still returned for reads.
+    """
+    if platform not in _STUDIO_PLATFORMS:
+        return _legacy_playwright_state_path(username)
+    scoped = _scoped_playwright_state_path(username, platform)
+    if scoped.exists():
+        return scoped
+    legacy = _legacy_playwright_state_path(username)
+    return legacy if legacy.exists() else scoped
+
+
+def playwright_state_write_path(username: str, platform: str | None = None) -> Path:
+    """Always write studio cookies beside Instagram, never into the shared file."""
+    if platform in _STUDIO_PLATFORMS:
+        return _scoped_playwright_state_path(username, platform)
+    return _legacy_playwright_state_path(username)
 
 
 def login_debug_screenshot_path(username: str) -> Path:
@@ -24,9 +54,9 @@ def storage_state_has_session(username: str) -> bool:
     return sessionid_from_playwright_state(username) is not None
 
 
-def save_playwright_state(username: str, state: dict) -> Path:
+def save_playwright_state(username: str, state: dict, platform: str | None = None) -> Path:
     """Persist Playwright storage state JSON for *username*."""
-    path = playwright_state_path(username)
+    path = playwright_state_write_path(username, platform)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
     return path

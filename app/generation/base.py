@@ -55,11 +55,11 @@ class GenerationRequest:
 
 #: Stages a render passes through, in order. Named for what the operator
 #: is waiting on rather than for the provider's own vocabulary.
-STAGE_SUBMITTED = "submitted"
-STAGE_QUEUED = "waiting at the provider"
-STAGE_UNLOADING = "unloading chat"
-STAGE_RENDERING = "rendering"
-STAGE_DOWNLOADING = "downloading"
+STAGE_SUBMITTED = "отправлено"
+STAGE_QUEUED = "в очереди у провайдера"
+STAGE_UNLOADING = "выгрузка чата"
+STAGE_RENDERING = "рендер"
+STAGE_DOWNLOADING = "скачивание"
 
 
 @dataclass(slots=True)

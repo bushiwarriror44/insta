@@ -45,7 +45,7 @@ describe("GateRoot", () => {
     expect(await screen.findByTestId("gate-error")).toBeInTheDocument();
     expect(screen.queryByTestId("fake-500")).not.toBeInTheDocument();
     expect(screen.getByTestId("gate-retry")).toBeInTheDocument();
-    expect(screen.getByText(/Failed to fetch/i)).toBeInTheDocument();
+    expect(screen.getByText(/Сеть оборвала загрузку/i)).toBeInTheDocument();
   });
 
   it("retries gate after network error", async () => {

@@ -585,6 +585,20 @@ export const api = {
         method: "POST",
         body: body ?? { count: 5 },
       }),
+    plans: (accountId: number) =>
+      request<
+        Array<{
+          id: number;
+          status: string;
+          count: number;
+          planned: number;
+          spread_over_days: number | null;
+          last_error: string | null;
+          created_at: string | null;
+        }>
+      >(`/api/accounts/${accountId}/plans`),
+    cancelPlan: (id: number) =>
+      request<{ id: number; status: string }>(`/api/plans/${id}/cancel`, { method: "POST" }),
     preview: (accountId: number, body?: { count?: number; duration_s?: number }) =>
       request<{ planned: number }>(`/api/accounts/${accountId}/preview`, {
         method: "POST",
@@ -800,5 +814,10 @@ export const api = {
     backups: () => request<import("./types").BackupOut[]>("/api/maintenance/backups"),
     takeBackup: () =>
       request<import("./types").BackupOut>("/api/maintenance/backups", { method: "POST" }),
+    restoreBackup: (name: string) =>
+      request<{ restored: string }>("/api/maintenance/backups/restore", {
+        method: "POST",
+        body: { name },
+      }),
   },
 };

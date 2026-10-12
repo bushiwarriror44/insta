@@ -161,11 +161,14 @@ def tick(settings: Settings | None = None, *, now: datetime | None = None) -> bo
 
     db = SessionLocal()
     try:
-        busy = video_busy(settings) is not None or local_render_pending(db, settings)
+        slot_busy = video_busy(settings) is not None
+        render_busy = local_render_pending(db, settings)
+        busy = slot_busy or render_busy
     finally:
         db.close()
     observe_status(settings, state.status, now=current)
-    if not idle_due(settings, status=state.status, busy=busy, now=current):
+    due = idle_due(settings, status=state.status, busy=busy, now=current)
+    if not due:
         return False
     try:
         salad_gpu.stop_group(settings)

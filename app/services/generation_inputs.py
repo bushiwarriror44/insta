@@ -213,6 +213,11 @@ def apply_job_reference_fields(
     job.reference_json = json.dumps(specs, ensure_ascii=False) if specs else None
 
 
+def ensure_job_references(session: Session, job: GenerationJob, settings: Settings | None = None) -> None:
+    """Reject a missing library file before the job is queued."""
+    resolve_generation_inputs(session, job, settings)
+
+
 def backend_supports_request(backend, request: GenerationRequest) -> bool:
     if request.mode == INPUT_MODE_TEXT:
         return bool(getattr(backend, "supports_text", True))

@@ -111,7 +111,9 @@ def make_handler(
         code = _wait_for_code(handler_username, timeout_sec=timeout_sec)
         if not code:
             logger.error("challenge.timeout", username=handler_username)
-            raise TimeoutError(f"No challenge code provided for {handler_username} within {timeout_sec}s")
+            raise TimeoutError(
+                f"код challenge для {handler_username} не получен за {timeout_sec}с"
+            )
 
         logger.info("challenge.code_received", username=handler_username, choice=str(choice))
         return code

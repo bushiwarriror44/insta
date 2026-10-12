@@ -141,7 +141,7 @@ def test_publish_rejects_missing_proxy_before_login(app_env, fingerprint, monkey
     video = app_env.video_out_dir / "x.mp4"
     video.write_bytes(b"x")
 
-    with pytest.raises(HardPublishError, match="proxy required"):
+    with pytest.raises(HardPublishError, match="нужен прокси"):
         publish_reel(
             username="alice",
             password="pw",

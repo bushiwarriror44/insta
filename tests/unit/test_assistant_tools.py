@@ -6,6 +6,8 @@ from pathlib import Path
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.assistant.chat import run_tool
 from app.assistant.tools import ToolError, list_accounts, open_page, pause_account, plan_account
 from app.db.models import (
@@ -1592,13 +1594,15 @@ def test_chat_body_enables_think():
     assert "think" not in _chat_body(settings, [], include_think=False)
 
 
-def test_approve_retry_and_cancel_job(db_session, make_account):
+def test_approve_retry_and_cancel_job(db_session, make_account, tmp_path):
     from app.assistant.tools import approve_job, cancel_job, retry_job
 
     account = make_account()
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"x")
     job = PostJob(
         account_id=account.id,
-        source_video_path="clip.mp4",
+        source_video_path=str(clip),
         scheduled_for=datetime.now(timezone.utc),
         status=PostJobStatus.awaiting_review,
         title="held",
@@ -1750,19 +1754,41 @@ def test_run_tool_create_render_sanitizes_reference_filename(db_session, monkeyp
     from app.db.models import GenerationJob
 
     monkeypatch.setattr(settings, "fal_api_key", "k")
+    (settings.video_source_dir / "passwd.png").write_bytes(b"img")
     out, _opened = run_tool(
         db_session,
         "create_render",
         {
             "prompt": "туман",
-            "reference_filename": "../../../etc/passwd",
+            "reference_filename": "../../../etc/passwd.png",
         },
     )
     job = db_session.get(GenerationJob, out["id"])
     assert job is not None
     specs = json.loads(job.reference_json or "[]")
-    assert specs[0]["filename"] == "passwd"
+    assert specs[0]["filename"] == "passwd.png"
     assert ".." not in specs[0]["filename"]
+
+
+def test_create_render_rejects_missing_reference(db_session, monkeypatch):
+    from app.assistant.tools import ToolError, create_render
+    from app.config import settings
+    from app.db.models import GenerationJob
+    from sqlalchemy import func, select
+
+    monkeypatch.setattr(settings, "fal_api_key", "k")
+    try:
+        create_render(
+            db_session,
+            prompt="туман",
+            reference_filename="missing.png",
+            input_mode="image_to_video",
+        )
+    except ToolError as exc:
+        assert "missing.png" in str(exc)
+    else:
+        raise AssertionError("expected ToolError")
+    assert db_session.scalar(select(func.count()).select_from(GenerationJob)) == 0
 
 
 def test_create_render_hf_without_fal_queues_auto(db_session, monkeypatch):
@@ -1791,6 +1817,9 @@ def test_create_render_slideshow_forces_backend(db_session, monkeypatch):
         "app.generation.registry.get_backend",
         lambda _name: SimpleNamespace(healthcheck=lambda: True, health_detail=lambda: ""),
     )
+    from app.config import settings
+
+    (settings.video_source_dir / "still.jpg").write_bytes(b"img")
     out = create_render(
         db_session,
         prompt="ken burns",
@@ -1966,6 +1995,48 @@ def test_enqueue_publish_writes_scheduled_for(db_session, make_account, app_env)
     assert out["scheduled_for"].startswith("2026-09-12T18:00:00")
 
 
+def test_enqueue_publish_snaps_implicit_now_outside_hours(db_session, make_account, app_env):
+    from app.assistant.tools import enqueue_publish
+
+    now_h = datetime.now(timezone.utc).hour
+    start_h, end_h = (18, 20) if now_h < 12 else (6, 8)
+    account = make_account(
+        timezone="UTC",
+        daily_post_cap=3,
+        min_gap_hours=0,
+        active_hour_start=start_h,
+        active_hour_end=end_h,
+    )
+    clip = Path(app_env.video_source_dir) / "clip.mp4"
+    clip.write_bytes(b"not-really-video")
+    out = enqueue_publish(db_session, account_id=account.id, filename="clip.mp4")
+    scheduled = datetime.fromisoformat(out["scheduled_for"])
+    if scheduled.tzinfo is None:
+        scheduled = scheduled.replace(tzinfo=timezone.utc)
+    assert start_h <= scheduled.hour < end_h
+
+
+def test_enqueue_publish_rejects_explicit_night_slot(db_session, make_account, app_env):
+    from app.assistant.tools import ToolError, enqueue_publish
+
+    account = make_account(
+        timezone="UTC",
+        daily_post_cap=3,
+        min_gap_hours=0,
+        active_hour_start=10,
+        active_hour_end=12,
+    )
+    clip = Path(app_env.video_source_dir) / "clip.mp4"
+    clip.write_bytes(b"not-really-video")
+    with pytest.raises(ToolError, match="активност"):
+        enqueue_publish(
+            db_session,
+            account_id=account.id,
+            filename="clip.mp4",
+            when="2026-03-15T23:00:00+00:00",
+        )
+
+
 def test_reschedule_job_moves_slot(db_session, make_account):
     from app.assistant.tools import reschedule_job
 
@@ -1984,6 +2055,42 @@ def test_reschedule_job_moves_slot(db_session, make_account):
     db_session.refresh(job)
     assert job.scheduled_for.replace(tzinfo=timezone.utc) == when
     assert out["scheduled_for"].startswith("2026-09-12T18:00:00")
+
+
+def test_reschedule_job_rejects_full_day(db_session, make_account):
+    from app.assistant.tools import reschedule_job
+
+    account = make_account(
+        username="fullslot",
+        daily_post_cap=1,
+        min_gap_hours=1.0,
+        timezone="UTC",
+        active_hour_start=10,
+        active_hour_end=22,
+    )
+    day = datetime(2026, 10, 12, 10, 0, tzinfo=timezone.utc)
+    db_session.add(
+        PostJob(
+            account_id=account.id,
+            source_video_path="taken.mp4",
+            scheduled_for=day,
+            status=PostJobStatus.done,
+        )
+    )
+    mover = PostJob(
+        account_id=account.id,
+        source_video_path="mover.mp4",
+        scheduled_for=day + timedelta(days=2),
+        status=PostJobStatus.queued,
+    )
+    db_session.add(mover)
+    db_session.commit()
+    try:
+        reschedule_job(db_session, mover.id, when="2026-10-12T18:00:00+00:00")
+    except ToolError as exc:
+        assert "лимит" in str(exc)
+    else:
+        raise AssertionError("full day was accepted")
 
 
 def test_update_account_hold_for_review_youtube_ok(db_session, make_account):

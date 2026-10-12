@@ -200,7 +200,7 @@ export function MediaPreviewPanel({
                 className="input"
                 value={tags}
                 onChange={(e) => setTags(e.target.value)}
-                placeholder="nature, calm"
+                placeholder="природа, спокойствие"
               />
             </div>
           </>

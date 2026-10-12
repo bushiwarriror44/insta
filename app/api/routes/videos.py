@@ -49,18 +49,18 @@ def media_type_for_name(name: str) -> str:
         return "video"
     if suffix in IMAGE_EXTENSIONS:
         return "image"
-    raise ValueError(f"Unsupported extension: {suffix}")
+    raise ValueError(f"Неподдерживаемое расширение: {suffix}")
 
 
 def _resolve_source_file(filename: str) -> Path:
     safe = _safe_name(filename)
     if safe != filename:
-        raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(status_code=404, detail="Файл не найден")
     target = settings.video_source_dir / safe
     if not target.exists() or not target.is_file():
-        raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(status_code=404, detail="Файл не найден")
     if target.suffix.lower() not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(status_code=404, detail="Файл не найден")
     return target
 
 
@@ -117,11 +117,11 @@ def archive_videos(payload: MediaArchiveIn) -> FileResponse:
         seen.add(name)
         names.append(name)
     if not names:
-        raise HTTPException(status_code=400, detail="No filenames provided")
+        raise HTTPException(status_code=400, detail="Не указаны файлы для архива")
     if len(names) > ARCHIVE_MAX_FILES:
         raise HTTPException(
             status_code=400,
-            detail=f"Too many files (max {ARCHIVE_MAX_FILES})",
+            detail=f"Слишком много файлов (макс. {ARCHIVE_MAX_FILES})",
         )
 
     paths = [_resolve_source_file(name) for name in names]
@@ -130,7 +130,7 @@ def archive_videos(payload: MediaArchiveIn) -> FileResponse:
     if total > max_bytes:
         raise HTTPException(
             status_code=413,
-            detail=f"Archive exceeds {settings.upload_max_mb} MB limit",
+            detail=f"Архив превышает лимит {settings.upload_max_mb} МБ",
         )
 
     tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
@@ -172,7 +172,7 @@ def upload_video(
     filename = _safe_name(file.filename or "upload.mp4")
     suffix = Path(filename).suffix.lower()
     if suffix not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=400, detail=f"Unsupported extension: {suffix}")
+        raise HTTPException(status_code=400, detail=f"Неподдерживаемое расширение: {suffix}")
     media_type = media_type_for_name(filename)
 
     src: Path = settings.video_source_dir
@@ -196,7 +196,7 @@ def upload_video(
                     dst.unlink(missing_ok=True)
                     raise HTTPException(
                         status_code=413,
-                        detail=f"File exceeds {settings.upload_max_mb} MB limit",
+                        detail=f"Файл превышает лимит {settings.upload_max_mb} МБ",
                     )
                 fh.write(chunk)
     finally:
@@ -217,7 +217,7 @@ def upload_video(
             dst.unlink(missing_ok=True)
             raise HTTPException(
                 status_code=400,
-                detail=f"Image compression failed: {exc}",
+                detail=f"Не удалось сжать изображение: {exc}",
             ) from exc
 
     return UploadOut(

@@ -52,9 +52,20 @@ def list_jobs(
     stmt = select(PostJob).order_by(PostJob.scheduled_for.desc()).limit(limit)
     if status_filter:
         try:
-            stmt = stmt.where(PostJob.status == PostJobStatus(status_filter))
+            if status_filter == "errors":
+                statuses = [PostJobStatus.failed, PostJobStatus.dead]
+            else:
+                parts = [p.strip() for p in status_filter.split(",") if p.strip()]
+                statuses = [PostJobStatus(p) for p in parts]
+            if len(statuses) == 1:
+                stmt = stmt.where(PostJob.status == statuses[0])
+            else:
+                stmt = stmt.where(PostJob.status.in_(statuses))
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=400,
+                detail=f"неизвестный статус задачи: {status_filter}",
+            ) from exc
     if username:
         account = db.scalar(select(Account).where(Account.username == username))
         if account is None:
@@ -68,7 +79,10 @@ def list_jobs(
 def enqueue_job(payload: EnqueueIn, db: Session = Depends(get_db)) -> JobOut:
     account = db.scalar(select(Account).where(Account.username == payload.username))
     if account is None:
-        raise HTTPException(status_code=404, detail=f"Account '{payload.username}' not found")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Аккаунт «{payload.username}» не найден",
+        )
 
     filename = payload.selected_filename
     try:
@@ -81,13 +95,26 @@ def enqueue_job(payload: EnqueueIn, db: Session = Depends(get_db)) -> JobOut:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if payload.post_type == "feed_photo" and media_type != "image":
-        raise HTTPException(status_code=400, detail="feed_photo requires an image file")
+        raise HTTPException(status_code=400, detail="для feed_photo нужен файл изображения")
     if payload.post_type in ("reel", "feed_video", "youtube_short", "tiktok") and media_type != "video":
-        raise HTTPException(status_code=400, detail=f"{payload.post_type} requires a video file")
+        raise HTTPException(
+            status_code=400,
+            detail=f"для {payload.post_type} нужен видеофайл",
+        )
 
+    explicit_when = payload.when is not None
     when = payload.when or datetime.now(timezone.utc)
     if when.tzinfo is None:
         when = when.replace(tzinfo=timezone.utc)
+    from app.services.scheduling import first_legal_slot, placement_problem
+
+    problem = placement_problem(db, account, when)
+    if problem:
+        # Library "publish now" has no clock — snap to the next legal slot.
+        # An operator-picked timestamp stays a hard 409.
+        if explicit_when:
+            raise HTTPException(status_code=409, detail=problem)
+        when = first_legal_slot(db, account, when)
 
     job = PostJob(
         account_id=account.id,
@@ -111,9 +138,12 @@ def enqueue_job(payload: EnqueueIn, db: Session = Depends(get_db)) -> JobOut:
 def cancel_job(job_id: int, db: Session = Depends(get_db)) -> JobOut:
     job = db.get(PostJob, job_id)
     if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise HTTPException(status_code=404, detail="Публикация не найдена")
     if job.status not in (PostJobStatus.queued, PostJobStatus.failed, PostJobStatus.awaiting_review):
-        raise HTTPException(status_code=400, detail=f"Cannot cancel job in status '{job.status.value}'")
+        raise HTTPException(
+            status_code=400,
+            detail=f"задачу в состоянии «{job.status.value}» отменить нельзя",
+        )
     job.status = PostJobStatus.cancelled
     db.commit()
     db.refresh(job)
@@ -126,7 +156,7 @@ def approve_job(job_id: int, db: Session = Depends(get_db)) -> JobOut:
 
     job = db.get(PostJob, job_id)
     if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise HTTPException(status_code=404, detail="Публикация не найдена")
     try:
         approve(db, job)
     except NotHeld as exc:
@@ -136,13 +166,15 @@ def approve_job(job_id: int, db: Session = Depends(get_db)) -> JobOut:
 
 @router.post("/{job_id}/retry", response_model=JobOut)
 def retry_job(job_id: int, db: Session = Depends(get_db)) -> JobOut:
-    from app.services.retry import NotRetriable, revive
+    from app.services.retry import NotRetriable, ensure_post_source, legalize_post_schedule, revive
 
     job = db.get(PostJob, job_id)
     if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise HTTPException(status_code=404, detail="Публикация не найдена")
     try:
+        ensure_post_source(job.source_video_path)
         revive(job)
+        legalize_post_schedule(db, job)
     except NotRetriable as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     db.commit()
@@ -158,16 +190,27 @@ class RescheduleIn(BaseModel):
 def reschedule_job(job_id: int, payload: RescheduleIn, db: Session = Depends(get_db)) -> JobOut:
     job = db.get(PostJob, job_id)
     if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise HTTPException(status_code=404, detail="Публикация не найдена")
     if job.status not in (
         PostJobStatus.queued,
         PostJobStatus.awaiting_review,
         PostJobStatus.failed,
     ):
-        raise HTTPException(status_code=409, detail=f"Cannot move job in status '{job.status.value}'")
+        raise HTTPException(
+            status_code=409,
+            detail=f"задачу в состоянии «{job.status.value}» перенести нельзя",
+        )
     when = payload.when
     if when.tzinfo is None:
         when = when.replace(tzinfo=timezone.utc)
+    from app.services.scheduling import placement_problem
+
+    account = db.get(Account, job.account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="Аккаунт не найден")
+    problem = placement_problem(db, account, when, ignore_job_id=job.id)
+    if problem:
+        raise HTTPException(status_code=409, detail=problem)
     job.scheduled_for = when
     db.commit()
     db.refresh(job)
@@ -178,7 +221,7 @@ def reschedule_job(job_id: int, payload: RescheduleIn, db: Session = Depends(get
 def job_diagnostic_logs(job_id: int, db: Session = Depends(get_db)) -> List[DiagnosticRunOut]:
     job = db.get(PostJob, job_id)
     if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise HTTPException(status_code=404, detail="Публикация не найдена")
     account = db.get(Account, job.account_id)
     runs = db.scalars(
         select(DiagnosticRun)

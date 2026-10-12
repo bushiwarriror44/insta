@@ -1,17 +1,17 @@
-"""Operator hints appended to generation error messages."""
+"""Подсказки оператору, дописываемые к ошибкам генерации."""
 from __future__ import annotations
 
 LOCAL_RENDER_HINT_MARKER = "Локальный рендер:"
 
 _LOCAL_SWITCH = (
-    "Локальный рендер: в «Администрирование» запустите GPU Salad (Running), "
-    "в `.env` задайте `WAN_BASE_URL`, в «Рендеры» выберите бэкенд local "
-    "(или `VIDEO_BACKEND=local`)."
+    "Локальный рендер: в «Администрирование» запустите GPU Salad "
+    "(статус «Работает»), в `.env` задайте `WAN_BASE_URL`, в «Рендеры» "
+    "выберите бэкенд local (или `VIDEO_BACKEND=local`)."
 )
 
 _LOCAL_CHECK = (
-    "Локальный рендер: проверьте `WAN_BASE_URL` в `.env`, Salad Running "
-    "(карточка GPU), доступность Wan из контейнера worker."
+    "Локальный рендер: проверьте `WAN_BASE_URL` в `.env`, что Salad "
+    "в статусе «Работает» (карточка GPU), и доступность Wan из контейнера worker."
 )
 
 

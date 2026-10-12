@@ -56,11 +56,24 @@ function ActivityProbe() {
   return <div>job logs {params.get("job")}</div>;
 }
 
-function renderCalendar() {
+function LocationProbe() {
+  const [params] = useSearchParams();
+  return <div data-testid="loc">{params.toString()}</div>;
+}
+
+function renderCalendar(path = "/") {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/" element={<Calendar />} />
+        <Route
+          path="/"
+          element={
+            <>
+              <LocationProbe />
+              <Calendar />
+            </>
+          }
+        />
         <Route path="/activity" element={<ActivityProbe />} />
       </Routes>
     </MemoryRouter>
@@ -87,8 +100,19 @@ describe("Calendar page", () => {
     const initial = weekLabel();
     fireEvent.click(screen.getByRole("button", { name: /вперёд/i }));
     expect(weekLabel()).not.toBe(initial);
+    expect(screen.getByTestId("loc").textContent).toContain("week=1");
     fireEvent.click(screen.getByRole("button", { name: /сегодня/i }));
     expect(weekLabel()).toBe(initial);
+    expect(screen.getByTestId("loc").textContent).not.toContain("week=");
+  });
+
+  it("opens the week from the address", async () => {
+    renderCalendar("/?week=1");
+    await screen.findByRole("heading", { name: /календарь/i });
+    const nextWeekStart = mondayOfCurrentWeek();
+    nextWeekStart.setDate(nextWeekStart.getDate() + 7);
+    const heading = nextWeekStart.toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+    expect(screen.getByText(new RegExp(`неделя с ${heading}`, "i"))).toBeInTheDocument();
   });
 
   it("keeps the original hour when a slot is dropped on another day", async () => {
@@ -107,6 +131,16 @@ describe("Calendar page", () => {
     expect(sent.getHours()).toBe(original.getHours());
     expect(sent.getMinutes()).toBe(original.getMinutes());
     expect(dayKey(sent)).toBe(dayKey(tuesday));
+  });
+
+  it("hides cancelled jobs from the week grid", async () => {
+    vi.mocked(api.jobs.list).mockResolvedValue([
+      job,
+      { ...job, id: 10, status: "cancelled", account_username: "cancelled-bob" },
+    ]);
+    renderCalendar();
+    expect(await screen.findByText("alice")).toBeInTheDocument();
+    expect(screen.queryByText("cancelled-bob")).not.toBeInTheDocument();
   });
 
   it("opens activity logs when a slot is clicked", async () => {

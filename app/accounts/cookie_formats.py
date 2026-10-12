@@ -6,7 +6,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from app.accounts.playwright_session import playwright_state_path, save_playwright_state
+from app.accounts.playwright_session import (
+    playwright_state_path,
+    playwright_state_write_path,
+    save_playwright_state,
+)
 from app.accounts.session_cookie import (
     normalize_sessionid,
     sessionid_from_cookies_array,
@@ -142,7 +146,7 @@ def studio_session_ready(username: str, platform: str) -> bool:
     """True when Playwright state.json has YouTube/TikTok cookies (not IG sessionid)."""
     if platform not in STUDIO_PLATFORMS:
         return False
-    cookies = _load_playwright_cookies(username)
+    cookies = _load_playwright_cookies(username, platform)
     if not cookies:
         return False
     return cookies_match_platform(cookies, platform)
@@ -177,8 +181,8 @@ def instagrapi_session_to_dolphin_cookies(session_data: dict) -> list[dict]:
     return out
 
 
-def _load_playwright_cookies(username: str) -> list[dict] | None:
-    path = playwright_state_path(username)
+def _load_playwright_cookies(username: str, platform: str | None = None) -> list[dict] | None:
+    path = playwright_state_path(username, platform)
     if not path.exists():
         return None
     try:
@@ -215,7 +219,7 @@ def export_dolphin_cookies(
 ) -> tuple[list[dict], CookieExportSource]:
     """Return Dolphin-compatible cookie array and the source used."""
     kind = platform or "instagram"
-    pw = _load_playwright_cookies(username)
+    pw = _load_playwright_cookies(username, kind if kind in STUDIO_PLATFORMS else None)
     if pw:
         filtered = [
             c
@@ -289,7 +293,7 @@ def import_cookies_data(
             if isinstance(cookie, dict) and cookie.get("name") == "sessionid":
                 cookie["value"] = session_id
 
-    save_playwright_state(username, state)
+    save_playwright_state(username, state, platform)
     # Keep mobile session_*.json if present — web cookies live in Playwright state;
     # clearing the dump would break publish/probe that still use the mobile file.
     return CookiesImportResult(
@@ -311,7 +315,7 @@ def write_dolphin_cookies_export(
     cookies, _ = export_dolphin_cookies(
         username, db_session_id=db_session_id, platform=platform
     )
-    out_dir = playwright_state_path(username).parent
+    out_dir = playwright_state_write_path(username, platform).parent
     out_dir.mkdir(parents=True, exist_ok=True)
     suffix = ".txt" if as_txt else ".json"
     out_path = out_dir / f"cookies_export_{username}{suffix}"

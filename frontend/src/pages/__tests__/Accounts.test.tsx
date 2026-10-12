@@ -167,6 +167,56 @@ describe("Accounts page", () => {
     expect(screen.queryByText("@alice")).not.toBeInTheDocument();
   });
 
+  it("filters the table by the status chips", async () => {
+    apiMock.accounts.list.mockResolvedValue([
+      account,
+      { ...account, id: 11, username: "bob", status: "paused" },
+    ]);
+    renderAccounts();
+    await screen.findByText("@alice");
+    fireEvent.click(screen.getByRole("button", { name: "Фильтр статуса: Пауза" }));
+    expect(screen.getByText("@bob")).toBeInTheDocument();
+    expect(screen.queryByText("@alice")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Фильтр статуса: Пауза" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+  });
+
+  it("opens the status filter from the address", async () => {
+    apiMock.accounts.list.mockResolvedValue([
+      account,
+      { ...account, id: 11, username: "bob", status: "paused" },
+    ]);
+    renderAccounts("/accounts?status=paused");
+    await screen.findByText("@bob");
+    expect(screen.queryByText("@alice")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Фильтр статуса: Пауза" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+  });
+
+  it("filters proxies from the address and chips", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    apiMock.proxies.list.mockResolvedValue([
+      proxy,
+      { ...secondProxy, is_healthy: false },
+    ]);
+    renderAccounts("/accounts?proxy=bad");
+    const proxiesCard = await screen.findByRole("heading", { name: "Прокси" });
+    const proxiesSection = proxiesCard.closest("section")!;
+    expect(within(proxiesSection).getByText("res-us-1")).toBeInTheDocument();
+    expect(within(proxiesSection).queryByText("res-de-1")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Фильтр прокси: Недоступные" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Фильтр прокси: Исправные" }));
+    expect(await within(proxiesSection).findByText("res-de-1")).toBeInTheDocument();
+    expect(within(proxiesSection).queryByText("res-us-1")).not.toBeInTheDocument();
+  });
+
   it("toggles hold_for_review from the accounts table", async () => {
     renderAccounts();
     await screen.findByText("@alice");
@@ -430,10 +480,10 @@ describe("Accounts page", () => {
       expect(screen.getByRole("button", { name: /скачать cookies \(dolphin\)/i })).toBeInTheDocument()
     );
     expect(
-      screen.getByRole("button", { name: /скачать playwright state\.json/i })
+      screen.getByRole("button", { name: /скачать файл состояния playwright/i })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /скачать device fingerprint/i })
+      screen.getByRole("button", { name: /скачать отпечаток устройства/i })
     ).toBeInTheDocument();
   });
 
@@ -495,15 +545,15 @@ describe("Accounts page", () => {
     const file = new File(['{"user_agent":"ig"}'], "device_alice.json", {
       type: "application/json",
     });
-    const input = within(modal).getByLabelText(/импорт fingerprint из файла/i);
+    const input = within(modal).getByLabelText(/импорт отпечатка из файла/i);
     fireEvent.change(input, { target: { files: [file] } });
 
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: /импортировать fingerprint/i })
+        screen.getByRole("button", { name: /импортировать отпечаток/i })
       ).toBeEnabled()
     );
-    fireEvent.click(screen.getByRole("button", { name: /импортировать fingerprint/i }));
+    fireEvent.click(screen.getByRole("button", { name: /импортировать отпечаток/i }));
 
     await waitFor(() =>
       expect(apiMock.accounts.importDeviceFingerprint).toHaveBeenCalledWith("alice", file)
@@ -605,7 +655,7 @@ describe("Accounts page", () => {
       })
     );
     await waitFor(() =>
-      expect(within(modal).getByText(/4\. instagram auth \(cookies\)/i)).toBeInTheDocument()
+      expect(within(modal).getByText(/4\. вход instagram \(cookies\)/i)).toBeInTheDocument()
     );
     expect(within(modal).getByText(/3\. хранилище сессии/i)).toBeInTheDocument();
     expect(within(modal).getAllByText(/cookies установлены/i).length).toBeGreaterThanOrEqual(1);
@@ -650,7 +700,7 @@ describe("Accounts page", () => {
       name: /подключение · @alice/i,
     });
     const modal = heading.closest("div.card") as HTMLElement;
-    fireEvent.click(within(modal).getByRole("button", { name: /проверить mobile api/i }));
+    fireEvent.click(within(modal).getByRole("button", { name: /проверить мобильный api/i }));
 
     await waitFor(() =>
       expect(apiMock.accounts.testConnection).toHaveBeenCalledWith("alice", {
@@ -660,7 +710,7 @@ describe("Accounts page", () => {
     await waitFor(() =>
       expect(within(modal).getByText(/готов к автопостингу/i)).toBeInTheDocument()
     );
-    expect(within(modal).getByText(/4\. instagram auth ok/i)).toBeInTheDocument();
+    expect(within(modal).getByText(/4\. вход instagram — ок/i)).toBeInTheDocument();
   });
 
   it("shows connection failure after test completes", async () => {
@@ -713,18 +763,18 @@ describe("Accounts page", () => {
       name: /подключение · @alice/i,
     });
     const modal = heading.closest("div.card") as HTMLElement;
-    fireEvent.click(within(modal).getByRole("button", { name: /проверить mobile api/i }));
+    fireEvent.click(within(modal).getByRole("button", { name: /проверить мобильный api/i }));
 
     await waitFor(() =>
       expect(within(modal).getByText(/не готов к автопостингу/i)).toBeInTheDocument()
     );
-    expect(within(modal).getByText(/4\. instagram auth недействительна/i)).toBeInTheDocument();
+    expect(within(modal).getByText(/4\. вход instagram недействителен/i)).toBeInTheDocument();
     expect(
       within(modal).getAllByText(/session_id недействителен или истёк/i).length
     ).toBeGreaterThanOrEqual(1);
     expect(within(modal).getByText(/автопостинг: пароль или mobile-сессия/i)).toBeInTheDocument();
     expect(
-      within(modal).getByText(/mobile api отклонил web-cookie из dolphin/i)
+      within(modal).getByText(/мобильный api отклонил web-cookie из dolphin/i)
     ).toBeInTheDocument();
     expect(
       within(modal).getByRole("button", { name: /подготовить к автопостингу/i })
@@ -812,7 +862,7 @@ describe("Accounts page", () => {
       name: /подключение · @alice/i,
     });
     const modal = heading.closest("div.card") as HTMLElement;
-    fireEvent.click(within(modal).getByRole("button", { name: /проверить mobile api/i }));
+    fireEvent.click(within(modal).getByRole("button", { name: /проверить мобильный api/i }));
 
     await waitFor(() =>
       expect(
@@ -1026,6 +1076,18 @@ describe("Accounts page", () => {
     await waitFor(() =>
       expect(apiMock.accounts.resume).toHaveBeenCalledWith("alice")
     );
+  });
+
+  it("does not offer resume for challenge or blocked accounts", async () => {
+    apiMock.accounts.list.mockResolvedValue([
+      { ...account, id: 1, username: "alice", status: "challenge" },
+      { ...account, id: 2, username: "bob", status: "blocked" },
+    ]);
+    renderAccounts();
+    await screen.findByText("@alice");
+    const accountsTable = screen.getAllByRole("table")[1];
+    expect(within(accountsTable).queryByRole("button", { name: /возобновить/i })).not.toBeInTheDocument();
+    expect(within(accountsTable).queryByRole("button", { name: /^пауза$/i })).not.toBeInTheDocument();
   });
 
   it("can add a new proxy via the modal", async () => {
@@ -1299,11 +1361,11 @@ describe("Accounts page", () => {
     await screen.findByRole("heading", { name: /сессия · @alice/i });
     expect(screen.queryByLabelText(/cookie sessionid/i)).not.toBeInTheDocument();
     expect(screen.getByLabelText(/импорт cookies из файла/i)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/импорт fingerprint из файла/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/импорт отпечатка из файла/i)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /отмена/i }));
     fireEvent.click(screen.getByRole("button", { name: /^подключение для alice$/i }));
     await screen.findByRole("heading", { name: /подключение · @alice/i });
-    expect(screen.queryByRole("button", { name: /проверить mobile api/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /проверить мобильный api/i })).not.toBeInTheDocument();
     expect(screen.getAllByText(/cookies studio/i).length).toBeGreaterThan(0);
   });
 
@@ -1315,7 +1377,7 @@ describe("Accounts page", () => {
     await screen.findByRole("heading", { name: /сессия · @alice/i });
     expect(screen.queryByLabelText(/cookie sessionid/i)).not.toBeInTheDocument();
     expect(screen.getByLabelText(/импорт cookies из файла/i)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/импорт fingerprint из файла/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/импорт отпечатка из файла/i)).not.toBeInTheDocument();
   });
 
   it("submits caption_profile and TOTP seed when filled", async () => {
@@ -1339,7 +1401,7 @@ describe("Accounts page", () => {
     fireEvent.change(byLabel(/профиль подписей/i, modal), {
       target: { value: "fitness" },
     });
-    fireEvent.change(byLabel(/totp seed/i, modal), {
+    fireEvent.change(byLabel(/секрет totp/i, modal), {
       target: { value: "JBSWY3DPEHPK3PXP" },
     });
     fireEvent.click(screen.getByRole("button", { name: /сохранить аккаунт/i }));
@@ -1372,7 +1434,7 @@ describe("Accounts page", () => {
     });
     expect(copyBtn).toBeDisabled();
 
-    fireEvent.change(byLabel(/totp seed/i, modal), {
+    fireEvent.change(byLabel(/секрет totp/i, modal), {
       target: { value: "  JBSWY3DPEHPK3PXP  " },
     });
     expect(copyBtn).not.toBeDisabled();
@@ -1430,9 +1492,9 @@ describe("Accounts page", () => {
     fireEvent.change(byLabel(/начало активности/i, modal), { target: { value: "11" } });
     fireEvent.change(byLabel(/конец активности/i, modal), { target: { value: "23" } });
     fireEvent.change(byLabel(/профиль подписей/i, modal), { target: { value: "travel" } });
-    fireEvent.change(byLabel(/totp seed/i, modal), { target: { value: "JBSWY3DPEHPK3PXP" } });
+    fireEvent.change(byLabel(/секрет totp/i, modal), { target: { value: "JBSWY3DPEHPK3PXP" } });
     fireEvent.change(byLabel(/резервный email/i, modal), { target: { value: "a@b.test" } });
-    fireEvent.change(byLabel(/пароль email/i, modal), { target: { value: "mail-secret" } });
+    fireEvent.change(byLabel(/пароль почты/i, modal), { target: { value: "mail-secret" } });
     fireEvent.click(screen.getByRole("button", { name: /сохранить аккаунт/i }));
 
     await waitFor(() =>
@@ -1470,9 +1532,9 @@ describe("Accounts page", () => {
 
     fireEvent.change(byLabel(/имя пользователя/i, modal), { target: { value: "eva" } });
     fireEvent.change(byLabel(/^пароль$/i, modal), { target: { value: "pw-2" } });
-    fireEvent.change(byLabel(/totp seed/i, modal), { target: { value: "   " } });
+    fireEvent.change(byLabel(/секрет totp/i, modal), { target: { value: "   " } });
     fireEvent.change(byLabel(/резервный email/i, modal), { target: { value: "   " } });
-    fireEvent.change(byLabel(/пароль email/i, modal), { target: { value: "   " } });
+    fireEvent.change(byLabel(/пароль почты/i, modal), { target: { value: "   " } });
     fireEvent.click(screen.getByRole("button", { name: /сохранить аккаунт/i }));
 
     await waitFor(() =>

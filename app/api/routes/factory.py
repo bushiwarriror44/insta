@@ -168,10 +168,53 @@ def queue_week(account_id: int, payload: PlanIn, db: Session = Depends(get_db)) 
     return queue_plan(account_id, payload, db)
 
 
+@router.get("/api/accounts/{account_id}/plans")
+def list_plans(account_id: int, db: Session = Depends(get_db)) -> list[dict[str, Any]]:
+    _account(db, account_id)
+    rows = db.scalars(
+        select(PlanJob)
+        .where(PlanJob.account_id == account_id)
+        .order_by(PlanJob.created_at.desc())
+        .limit(50)
+    ).all()
+    return [
+        {
+            "id": row.id,
+            "status": row.status.value,
+            "count": row.count,
+            "planned": row.planned,
+            "spread_over_days": row.spread_over_days,
+            "last_error": row.last_error,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        for row in rows
+    ]
+
+
+@router.post("/api/plans/{job_id}/cancel")
+def cancel_plan(job_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+    job = db.get(PlanJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="План не найден")
+    if job.status not in (
+        PipelineStatus.queued,
+        PipelineStatus.failed,
+        PipelineStatus.dead,
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=f"задачу в состоянии «{job.status.value}» отменить нельзя",
+        )
+    from_status = job.status.value
+    job.status = PipelineStatus.cancelled
+    db.commit()
+    return {"id": job.id, "status": job.status.value}
+
+
 @router.patch("/api/accounts/{account_id}/brief")
 def update_brief(account_id: int, payload: BriefIn, db: Session = Depends(get_db)) -> dict[str, str]:
     account = _account(db, account_id)
-    account.brief = payload.brief
+    account.brief = (payload.brief or "").strip()
     db.commit()
     return {"brief": account.brief}
 
@@ -215,12 +258,18 @@ def add_source(account_id: int, payload: SourceIn, db: Session = Depends(get_db)
     try:
         kind = SourceKind(payload.kind)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail="kind must be url or file") from exc
+        raise HTTPException(
+            status_code=400,
+            detail="тип источника должен быть url или file",
+        ) from exc
+    value = (payload.value or "").strip()
+    if not value:
+        raise HTTPException(status_code=400, detail="значение источника не может быть пустым")
     row = ChannelSource(
         account_id=account.id,
         kind=kind,
-        value=payload.value,
-        label=payload.label,
+        value=value,
+        label=(payload.label or "").strip(),
     )
     db.add(row)
     db.commit()
@@ -286,7 +335,7 @@ def update_agent_settings(
 ) -> dict[str, Any]:
     account = _account(db, account_id)
     if payload.brief is not None:
-        account.brief = payload.brief
+        account.brief = (payload.brief or "").strip()
     if payload.hold_for_review is not None:
         account.hold_for_review = payload.hold_for_review
     if payload.daily_spend_cap_usd is not None:
@@ -349,7 +398,14 @@ def list_assets(
 ) -> list[dict[str, Any]]:
     stmt = select(MediaAsset).where(MediaAsset.file_removed_at.is_(None)).order_by(MediaAsset.created_at.desc()).limit(limit)
     if kind:
-        stmt = stmt.where(MediaAsset.kind == AssetKind(kind))
+        try:
+            kind_enum = AssetKind(kind)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"неизвестный тип медиа: {kind}",
+            ) from exc
+        stmt = stmt.where(MediaAsset.kind == kind_enum)
     if q:
         like = f"%{q}%"
         stmt = stmt.where(MediaAsset.prompt.ilike(like) | MediaAsset.label.ilike(like) | MediaAsset.filename.ilike(like))
@@ -382,8 +438,8 @@ def create_generation(payload: GenerationCreate, db: Session = Depends(get_db)) 
         raise HTTPException(status_code=400, detail=f"неизвестный бэкенд {payload.backend!r}")
     if payload.account_id is not None:
         _account(db, payload.account_id)
-    from app.generation.base import INPUT_MODE_SLIDESHOW
-    from app.services.generation_inputs import apply_job_reference_fields
+    from app.generation.base import INPUT_MODE_SLIDESHOW, GenerationError
+    from app.services.generation_inputs import apply_job_reference_fields, ensure_job_references
 
     job = GenerationJob(
         prompt=payload.prompt,
@@ -406,6 +462,10 @@ def create_generation(payload: GenerationCreate, db: Session = Depends(get_db)) 
     )
     if job.input_mode == INPUT_MODE_SLIDESHOW:
         job.backend = "slideshow"
+    try:
+        ensure_job_references(db, job, settings)
+    except GenerationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     engine = get_backend(job.backend, settings)
     if not engine.healthcheck():
         raise HTTPException(
@@ -429,8 +489,15 @@ def cancel_generation(job_id: int, db: Session = Depends(get_db)) -> dict[str, A
     job = db.get(GenerationJob, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Рендер не найден")
-    if job.status is not PipelineStatus.queued:
+    # Same dismiss policy as publish jobs: queued or already-failed rows can
+    # be cleared; running work must finish or be reclaimed by the worker.
+    if job.status not in (
+        PipelineStatus.queued,
+        PipelineStatus.failed,
+        PipelineStatus.dead,
+    ):
         raise HTTPException(status_code=409, detail=f"задачу в состоянии «{job.status.value}» отменить нельзя")
+    from_status = job.status.value
     job.status = PipelineStatus.cancelled
     db.commit()
     return {"id": job.id, "status": job.status.value}
@@ -450,6 +517,13 @@ def retry_generation(
         if name not in available_backends():
             raise HTTPException(status_code=400, detail=f"неизвестный бэкенд {name!r}")
         job.backend = name
+    from app.generation.base import GenerationError
+    from app.services.generation_inputs import ensure_job_references
+
+    try:
+        ensure_job_references(db, job, settings)
+    except GenerationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     engine = get_backend(job.backend, settings)
     if not engine.healthcheck():
         raise HTTPException(
@@ -511,7 +585,11 @@ def cancel_composition(job_id: int, db: Session = Depends(get_db)) -> dict[str, 
     job = db.get(Composition, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Склейка не найдена")
-    if job.status is not PipelineStatus.queued:
+    if job.status not in (
+        PipelineStatus.queued,
+        PipelineStatus.failed,
+        PipelineStatus.dead,
+    ):
         raise HTTPException(status_code=409, detail=f"задачу в состоянии «{job.status.value}» отменить нельзя")
     job.status = PipelineStatus.cancelled
     db.commit()
@@ -523,6 +601,13 @@ def retry_composition(job_id: int, db: Session = Depends(get_db)) -> dict[str, A
     job = db.get(Composition, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Склейка не найдена")
+    from app.services.composing import ensure_composition_media
+    from app.services.media import MediaError
+
+    try:
+        ensure_composition_media(db, job)
+    except MediaError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     try:
         revive(job)
     except NotRetriable as exc:

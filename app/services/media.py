@@ -40,8 +40,8 @@ def safe_extension(client_filename: str) -> str:
     ext = Path(client_filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise MediaError(
-            f"unsupported extension {ext or '(none)'}; "
-            f"allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
+            f"неподдерживаемое расширение {ext or '(нет)'}; "
+            f"допустимы: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
         )
     return ext
 
@@ -56,7 +56,7 @@ def resolve(media_dir: Path, filename: str) -> Path:
     media_dir = media_dir.resolve()
     candidate = (media_dir / filename).resolve()
     if candidate.parent != media_dir:
-        raise MediaError("filename escapes the media directory")
+        raise MediaError("имя файла выходит за каталог медиа")
     return candidate
 
 
@@ -125,7 +125,9 @@ def save_upload(
             while chunk := stream.read(1024 * 1024):
                 written += len(chunk)
                 if written > max_bytes:
-                    raise MediaError(f"upload exceeds {max_bytes // (1024 * 1024)} MB")
+                    raise MediaError(
+                        f"загрузка превышает {max_bytes // (1024 * 1024)} МБ"
+                    )
                 out.write(chunk)
     except Exception:
         destination.unlink(missing_ok=True)
@@ -133,7 +135,7 @@ def save_upload(
 
     if written == 0:
         destination.unlink(missing_ok=True)
-        raise MediaError("uploaded file is empty")
+        raise MediaError("загруженный файл пуст")
 
     kind = (
         AssetKind.audio
@@ -168,7 +170,9 @@ def resolve_library_media_path(path: Path, library_dir: Path) -> Path:
     try:
         resolved.relative_to(root)
     except ValueError:
-        raise MediaError("file must be under upload library (video_source_dir)") from None
+        raise MediaError(
+            "файл должен быть внутри библиотеки загрузок (video_source_dir)"
+        ) from None
     if not resolved.is_file():
-        raise MediaError("File not found")
+        raise MediaError("файл не найден")
     return resolved

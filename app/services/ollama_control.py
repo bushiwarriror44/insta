@@ -51,7 +51,7 @@ def ensure_started(*, pull: bool = True) -> OllamaStatus:
     path is already reachable and we do not spawn a second server.
     """
     if not settings.ollama_autostart:
-        return OllamaStatus(reachable=False, detail="autostart disabled")
+        return OllamaStatus(reachable=False, detail="автозапуск отключён")
 
     current = probe()
     if current.reachable:

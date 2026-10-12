@@ -116,7 +116,7 @@ def _init_db_migration_lock():
         except FileExistsError:
             time.sleep(0.1)
     if not acquired:
-        raise TimeoutError("timed out waiting for init_db migration lock")
+        raise TimeoutError("таймаут ожидания блокировки миграции init_db")
     try:
         yield
     finally:

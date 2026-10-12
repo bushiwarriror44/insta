@@ -375,7 +375,7 @@ def test_diagnostic_runs_list_after_connection_test(api_client, monkeypatch):
 def test_diagnostic_runs_invalid_kind_returns_400(api_client):
     res = api_client.get("/api/diagnostic-runs", params={"kind": "not_a_kind"})
     assert res.status_code == 400
-    assert "Invalid kind" in res.json()["detail"]
+    assert "неизвестный тип" in res.json()["detail"].lower()
 
 
 def test_probe_session_auth_none_without_credentials(app_env, fingerprint, fake_client_class):

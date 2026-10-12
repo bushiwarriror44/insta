@@ -48,13 +48,15 @@ def publish_tiktok(
     from playwright.sync_api import sync_playwright
 
     if not video_path.exists():
-        raise HardPublishError(f"video missing: {video_path}")
-    state = playwright_state_path(username)
+        raise HardPublishError(f"видео отсутствует: {video_path}")
+    state = playwright_state_path(username, "tiktok")
     if not state.exists():
-        raise TemporaryPublishError("TikTok session missing — open browser and save cookies")
+        raise TemporaryPublishError(
+            "нет сессии TikTok — откройте браузер и сохраните cookies"
+        )
 
     caption = _caption(title or video_path.stem, description, tags)
-    _emit_log(on_log, f"TikTok Studio upload {video_path.name}")
+    _emit_log(on_log, f"Загрузка в TikTok Studio: {video_path.name}")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(

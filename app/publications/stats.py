@@ -40,19 +40,20 @@ def apply_stats(post_log: PostLog, stats: MediaStats, *, now: datetime | None = 
     post_log.last_stats_at = now or datetime.now(timezone.utc)
 
 
+
 def refresh_post_log_stats(db: Session, post_log: PostLog) -> PostLog:
     """Refresh counters for one successful publication."""
     if not post_log.success:
-        raise ValueError("Cannot refresh stats for a failed publication")
+        raise ValueError("нельзя обновить статистику для неудачной публикации")
     if not post_log.media_id:
-        raise ValueError("Publication has no media_id")
+        raise ValueError("у публикации нет media_id")
 
     account = db.get(Account, post_log.account_id)
     if account is None:
-        raise ValueError("Publication account is missing")
+        raise ValueError("аккаунт публикации не найден")
     proxy = db.get(Proxy, account.proxy_id) if account.proxy_id is not None else None
     if proxy is None:
-        raise ValueError("Publication account has no proxy")
+        raise ValueError("у аккаунта публикации нет прокси")
 
     fingerprint = ensure_fingerprint_and_proxy(
         account.username,

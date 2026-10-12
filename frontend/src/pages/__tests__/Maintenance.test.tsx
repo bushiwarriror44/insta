@@ -6,12 +6,15 @@ import { ToastProvider } from "../../context/ToastContext";
 import type { RuntimeOut } from "../../api/types";
 import { Maintenance } from "../Maintenance";
 
+const useAuthMock = vi.hoisted(() => vi.fn());
+
 const apiMock = vi.hoisted(() => ({
   maintenance: {
     runtime: vi.fn(),
     backups: vi.fn(),
     setContext: vi.fn(),
     takeBackup: vi.fn(),
+    restoreBackup: vi.fn(),
   },
 }));
 
@@ -24,6 +27,10 @@ vi.mock("../../api/client", async () => {
     api: apiMock,
   };
 });
+
+vi.mock("../../context/AuthContext", () => ({
+  useAuth: useAuthMock,
+}));
 
 const offline: RuntimeOut = {
   reachable: false,
@@ -53,10 +60,14 @@ beforeEach(() => {
   apiMock.maintenance.backups.mockReset();
   apiMock.maintenance.setContext.mockReset();
   apiMock.maintenance.takeBackup.mockReset();
+  apiMock.maintenance.restoreBackup.mockReset();
   apiMock.maintenance.runtime.mockResolvedValue(offline);
   apiMock.maintenance.backups.mockResolvedValue([]);
   apiMock.maintenance.setContext.mockResolvedValue(online);
   apiMock.maintenance.takeBackup.mockResolvedValue(copy);
+  apiMock.maintenance.restoreBackup.mockResolvedValue({ restored: "/data/app.db" });
+  useAuthMock.mockReset();
+  useAuthMock.mockReturnValue({ role: "owner" });
 });
 
 function renderMaintenance() {
@@ -77,6 +88,13 @@ describe("Maintenance page", () => {
     expect(screen.getByText(/offline/i)).toBeInTheDocument();
     expect(screen.getByText(/модель: qwen3:8b/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /применить/i })).toBeDisabled();
+  });
+
+  it("hides restore for operators", async () => {
+    useAuthMock.mockReturnValue({ role: "operator" });
+    apiMock.maintenance.backups.mockResolvedValue([copy]);
+    renderMaintenance();
+    expect(await screen.findByText(/app-20260908-210000\.db/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /восстановить/i })).not.toBeInTheDocument();
   });
 
@@ -88,7 +106,7 @@ describe("Maintenance page", () => {
     await waitFor(() => expect(apiMock.maintenance.setContext).toHaveBeenCalledWith(8192));
   });
 
-  it("adds a backup row and toasts Open", async () => {
+  it("adds a backup row without noop Open link", async () => {
     renderMaintenance();
     await screen.findByText(/модель: qwen3:8b/i);
     apiMock.maintenance.takeBackup.mockImplementation(async () => {
@@ -98,6 +116,18 @@ describe("Maintenance page", () => {
     fireEvent.click(screen.getByRole("button", { name: /снять копию/i }));
     expect(await screen.findByText(/app-20260908-210000\.db/i)).toBeInTheDocument();
     expect(await screen.findByText(/копия снята/i)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /открыть/i })).toHaveAttribute("href", "/maintenance");
+    expect(screen.queryByRole("link", { name: /открыть/i })).not.toBeInTheDocument();
+  });
+
+  it("restores a backup after confirm", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    apiMock.maintenance.backups.mockResolvedValue([copy]);
+    renderMaintenance();
+    expect(await screen.findByText(/app-20260908-210000\.db/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /восстановить app-20260908-210000\.db/i }));
+    await waitFor(() =>
+      expect(apiMock.maintenance.restoreBackup).toHaveBeenCalledWith("app-20260908-210000.db")
+    );
+    expect(await screen.findByText(/база восстановлена/i)).toBeInTheDocument();
   });
 });

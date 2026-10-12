@@ -68,9 +68,9 @@ function defaults() {
   apiMock.factory.retryComposition.mockResolvedValue({ id: 4 });
 }
 
-function renderRenders() {
+function renderRenders(initialEntry = "/renders") {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <ToastProvider>
         <Renders />
       </ToastProvider>
@@ -92,7 +92,7 @@ describe("Renders page", () => {
     expect(await screen.findByText("Ridge")).toBeInTheDocument();
   });
 
-  it("queues a render without an account and links the toast to /renders", async () => {
+  it("queues a render without an account and links the toast to /renders?gen=", async () => {
     renderRenders();
     await screen.findByText("Ridge");
     fireEvent.change(screen.getByPlaceholderText("Промпт"), { target: { value: "fog over ridge" } });
@@ -105,7 +105,13 @@ describe("Renders page", () => {
       })
     );
     const open = await screen.findByRole("link", { name: /открыть/i });
-    expect(open).toHaveAttribute("href", "/renders");
+    expect(open).toHaveAttribute("href", "/renders?gen=9");
+  });
+
+  it("highlights the generation from the URL", async () => {
+    renderRenders("/renders?gen=9");
+    const title = await screen.findByText("Ridge");
+    expect(title.closest("tr")).toHaveClass("bg-brand-600/10");
   });
 
   it("queues a render with the selected account", async () => {
@@ -154,7 +160,7 @@ describe("Renders page", () => {
     );
   });
 
-  it("queues a join from clip ids and links the toast to /renders", async () => {
+  it("queues a join from clip ids and links the toast to /renders?join=", async () => {
     renderRenders();
     await screen.findByText("Ridge");
     fireEvent.change(screen.getByPlaceholderText(/id клипов/i), { target: { value: "12, 15" } });
@@ -166,7 +172,7 @@ describe("Renders page", () => {
       })
     );
     const open = await screen.findByRole("link", { name: /открыть/i });
-    expect(open).toHaveAttribute("href", "/renders");
+    expect(open).toHaveAttribute("href", "/renders?join=3");
   });
 
   it("does not join when fewer than two clip ids are given", async () => {
@@ -191,6 +197,14 @@ describe("Renders page", () => {
     const row = (await screen.findByText("Storm")).closest("tr") as HTMLElement;
     fireEvent.click(within(row).getByRole("button", { name: /повторить/i }));
     await waitFor(() => expect(apiMock.factory.retryGeneration).toHaveBeenCalledWith(11));
+  });
+
+  it("cancels a failed generation so it can be dismissed", async () => {
+    apiMock.factory.generations.mockResolvedValue([failedGen]);
+    renderRenders();
+    const row = (await screen.findByText("Storm")).closest("tr") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: /отменить/i }));
+    await waitFor(() => expect(apiMock.factory.cancelGeneration).toHaveBeenCalledWith(11));
   });
 
   it("does not open local switch modal without offer_local_switch", async () => {

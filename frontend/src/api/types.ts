@@ -424,6 +424,7 @@ export interface DashboardSummary {
   jobs_awaiting_review?: number;
   jobs_failed_24h?: number;
   open_questions?: number;
+  questions_account_id?: number | null;
   risk_signals_24h: number;
   quarantined_accounts: number;
   daily_stats: DailyStatRow[];

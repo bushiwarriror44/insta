@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ToastProvider } from "../../context/ToastContext";
@@ -68,10 +68,16 @@ beforeEach(() => {
   apiMock.factory.compositions.mockResolvedValue([]);
 });
 
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="loc">{location.search}</div>;
+}
+
 function renderActivity(path = "/activity") {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <ToastProvider>
+        <LocationProbe />
         <Activity />
       </ToastProvider>
     </MemoryRouter>
@@ -82,6 +88,42 @@ describe("Activity page", () => {
   it("opens the job log when ?job= is in the URL", async () => {
     renderActivity("/activity?job=42");
     expect(await screen.findByRole("heading", { name: /логи задачи #42/i })).toBeInTheDocument();
+  });
+
+  it("opens ?job= when the status filter hides that job", async () => {
+    apiMock.jobs.list.mockImplementation(async (params?: { status?: string }) =>
+      params?.status ? [] : [job]
+    );
+    renderActivity("/activity?job=42&status=done");
+    expect(await screen.findByRole("heading", { name: /логи задачи #42/i })).toBeInTheDocument();
+  });
+
+  it("writes the opened job into the address so a reload keeps the log", async () => {
+    renderActivity();
+    await screen.findByText("#42");
+    fireEvent.click(screen.getByRole("row", { name: /задача #42/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId("loc").textContent).toContain("job=42")
+    );
+    expect(await screen.findByRole("heading", { name: /логи задачи #42/i })).toBeInTheDocument();
+  });
+
+  it("writes the lane tab into the address", async () => {
+    renderActivity();
+    await screen.findByText("#42");
+    fireEvent.click(screen.getByRole("button", { name: /^рендеры$/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId("loc").textContent).toContain("lane=renders")
+    );
+  });
+
+  it("writes the event level into the address", async () => {
+    renderActivity();
+    await screen.findByText("#42");
+    fireEvent.change(screen.getByLabelText("Уровень события"), { target: { value: "error" } });
+    await waitFor(() =>
+      expect(screen.getByTestId("loc").textContent).toContain("level=error")
+    );
   });
 
   it("does not reopen job logs after close and refresh", async () => {
@@ -124,6 +166,32 @@ describe("Activity page", () => {
       )
     );
     expect(screen.getAllByRole("combobox")[0]).toHaveValue("dead");
+  });
+
+  it("filters failed+dead when opened with ?status=errors", async () => {
+    renderActivity("/activity?status=errors");
+    await waitFor(() =>
+      expect(apiMock.jobs.list).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "errors", limit: 100 })
+      )
+    );
+    expect(screen.getAllByRole("combobox")[0]).toHaveValue("errors");
+  });
+
+  it("writes the status chip into the address so a reload keeps it", async () => {
+    renderActivity("/activity?status=failed");
+    await screen.findByText("#42");
+    fireEvent.click(screen.getByRole("button", { name: /все статусы/i }));
+    await waitFor(() => {
+      const last = apiMock.jobs.list.mock.calls.at(-1)?.[0] as { status?: string };
+      expect(last?.status).toBeUndefined();
+    });
+    expect(screen.getByTestId("loc").textContent).toBe("");
+
+    fireEvent.click(screen.getByRole("button", { name: /^сбой$/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId("loc").textContent).toBe("?status=failed")
+    );
   });
 
   it("filters jobs by status when the dropdown changes", async () => {
@@ -283,7 +351,7 @@ describe("Activity page", () => {
     fireEvent.click(screen.getByText("#42"));
 
     expect(await screen.findByRole("option", { name: /попытка 1 — ошибка/i })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /попытка 2 — ok/i })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /попытка 2 — ОК/i })).toBeInTheDocument();
   });
 
   it("renders empty placeholder when there are no jobs", async () => {

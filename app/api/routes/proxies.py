@@ -74,7 +74,7 @@ def create_proxy(payload: ProxyIn, db: Session = Depends(get_db)) -> ProxyOut:
 def update_proxy(label: str, payload: ProxyUpdate, db: Session = Depends(get_db)) -> ProxyOut:
     existing = db.scalar(select(Proxy).where(Proxy.label == label))
     if existing is None:
-        raise HTTPException(status_code=404, detail=f"Proxy '{label}' not found")
+        raise HTTPException(status_code=404, detail=f"Прокси «{label}» не найден")
     proxy = upsert_proxy(
         db,
         label=label,
@@ -95,13 +95,13 @@ def update_proxy(label: str, payload: ProxyUpdate, db: Session = Depends(get_db)
 def delete_proxy(label: str, db: Session = Depends(get_db)) -> dict[str, bool]:
     proxy = db.scalar(select(Proxy).where(Proxy.label == label))
     if proxy is None:
-        raise HTTPException(status_code=404, detail=f"Proxy '{label}' not found")
+        raise HTTPException(status_code=404, detail=f"Прокси «{label}» не найден")
     n_accounts = db.scalar(select(func.count()).select_from(Account).where(Account.proxy_id == proxy.id)) or 0
     if n_accounts > 0:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Proxy '{label}' is used by {n_accounts} account(s); reassign or remove them first",
+        detail = (
+            f"Прокси «{label}» используется {n_accounts} акк. — сначала переназначьте их"
         )
+        raise HTTPException(status_code=409, detail=detail)
     db.delete(proxy)
     db.commit()
     return {"ok": True}
@@ -111,7 +111,7 @@ def delete_proxy(label: str, db: Session = Depends(get_db)) -> dict[str, bool]:
 def check_proxy(label: str, db: Session = Depends(get_db)) -> ProxyOut:
     proxy = db.scalar(select(Proxy).where(Proxy.label == label))
     if proxy is None:
-        raise HTTPException(status_code=404, detail=f"Proxy '{label}' not found")
+        raise HTTPException(status_code=404, detail=f"Прокси «{label}» не найден")
     _ok, snapshot, _err = health_check_record(db, proxy)
     db.refresh(proxy)
     counts = _proxy_account_counts(db)

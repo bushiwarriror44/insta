@@ -44,12 +44,12 @@ beforeEach(() => {
 });
 
 describe("SaladGpuCard", () => {
-  it("disables Start and Stop when Salad is not configured", async () => {
+  it("disables Запустить and Остановить when Salad is not configured", async () => {
     render(<SaladGpuCard />);
     expect(await screen.findByRole("heading", { name: /gpu salad/i })).toBeInTheDocument();
     expect(screen.getByText(/задайте salad_api_key/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^start$/i })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /^stop$/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^запустить$/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^остановить$/i })).toBeDisabled();
   });
 
   it("starts a stopped group after confirm about re-pull and billing", async () => {
@@ -58,8 +58,8 @@ describe("SaladGpuCard", () => {
       idle({ configured: true, status: "deploying", creating_count: 1 })
     );
     render(<SaladGpuCard />);
-    expect(await screen.findByText(/stopped — не тарится/i)).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /^start$/i }));
+    expect(await screen.findByText(/остановлена — не тарится/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^запустить$/i }));
     expect(screen.getByRole("heading", { name: /запустить видеокарту/i })).toBeInTheDocument();
     expect(screen.getByText(/образ снова качается/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /^да$/i }));
@@ -70,8 +70,8 @@ describe("SaladGpuCard", () => {
   it("does not start when confirm is cancelled", async () => {
     vi.mocked(api.gpu.status).mockResolvedValue(idle({ configured: true, status: "stopped" }));
     render(<SaladGpuCard />);
-    await screen.findByRole("button", { name: /^start$/i });
-    await userEvent.click(screen.getByRole("button", { name: /^start$/i }));
+    await screen.findByRole("button", { name: /^запустить$/i });
+    await userEvent.click(screen.getByRole("button", { name: /^запустить$/i }));
     await userEvent.click(screen.getByRole("button", { name: /^нет$/i }));
     expect(api.gpu.start).not.toHaveBeenCalled();
   });
@@ -89,14 +89,14 @@ describe("SaladGpuCard", () => {
     );
     vi.mocked(api.gpu.stop).mockResolvedValue(idle({ configured: true, status: "stopped" }));
     render(<SaladGpuCard />);
-    expect(await screen.findByText(/running — идут gpu-часы/i)).toBeInTheDocument();
-    expect(screen.getByText(/авто-stop через 20 мин простоя/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^start$/i })).toBeDisabled();
-    await userEvent.click(screen.getByRole("button", { name: /^stop$/i }));
+    expect(await screen.findByText(/работает — идут gpu-часы/i)).toBeInTheDocument();
+    expect(screen.getByText(/авто-стоп через 20 мин простоя/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^запустить$/i })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: /^остановить$/i }));
     expect(screen.getByText(/часы остановятся/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /^да$/i }));
     await waitFor(() => expect(api.gpu.stop).toHaveBeenCalled());
-    expect(await screen.findByText(/stopped — не тарится/i)).toBeInTheDocument();
+    expect(await screen.findByText(/остановлена — не тарится/i)).toBeInTheDocument();
   });
 
   it("shows статус не обновился when the poll fails", async () => {

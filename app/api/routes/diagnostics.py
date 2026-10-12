@@ -51,7 +51,10 @@ def list_diagnostic_runs(
         try:
             kind_enum = DiagnosticRunKind(kind)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid kind: {kind}") from exc
+            raise HTTPException(
+                status_code=400,
+                detail=f"неизвестный тип диагностики: {kind}",
+            ) from exc
         stmt = stmt.where(DiagnosticRun.kind == kind_enum)
     if job_id is not None:
         stmt = stmt.where(DiagnosticRun.job_id == job_id)
@@ -70,6 +73,6 @@ def list_diagnostic_runs(
 def get_diagnostic_run(run_id: int, db: Session = Depends(get_db)) -> DiagnosticRunOut:
     run = db.get(DiagnosticRun, run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail="Diagnostic run not found")
+        raise HTTPException(status_code=404, detail="Диагностический прогон не найден")
     account = db.get(Account, run.account_id)
     return _to_run_out(run, account_username=account.username if account else None)

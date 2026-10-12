@@ -147,10 +147,10 @@ async def _try_tiktok_login(page, login_id: str, password: str) -> bool:
         return False
 
 
-async def _persist_context_state(username: str, context) -> bool:
+async def _persist_context_state(username: str, context, platform: str) -> bool:
     try:
         state = await context.storage_state()
-        save_playwright_state(username, state)
+        save_playwright_state(username, state, platform)
         return True
     except Exception as exc:
         logger.error("studio.save_state_failed", username=username, error=str(exc))
@@ -174,7 +174,7 @@ async def _async_studio_login(
             on_status(title, detail)
 
     if not (proxy_url or "").strip():
-        return StudioLoginResult(ok=False, error="proxy required")
+        return StudioLoginResult(ok=False, error="нужен прокси")
 
     if studio_session_ready(username, platform):
         return StudioLoginResult(ok=True, page_url=_studio_url(platform))
@@ -182,9 +182,9 @@ async def _async_studio_login(
     try:
         from playwright.async_api import async_playwright
     except ImportError as exc:
-        return StudioLoginResult(ok=False, error=f"playwright not installed: {exc}")
+        return StudioLoginResult(ok=False, error=f"playwright не установлен: {exc}")
 
-    state_file = playwright_state_path(username)
+    state_file = playwright_state_path(username, platform)
     storage = str(state_file) if state_file.exists() else None
     proxy = _parse_proxy(proxy_url)
     login_id = (login_identifier or "").strip()
@@ -205,7 +205,7 @@ async def _async_studio_login(
             await asyncio.sleep(2.0)
 
             if studio_session_ready(username, platform):
-                await _persist_context_state(username, context)
+                await _persist_context_state(username, context, platform)
                 return StudioLoginResult(ok=True, page_url=page.url)
 
             if await _detect_studio_challenge(page, platform):
@@ -235,7 +235,7 @@ async def _async_studio_login(
                     except Exception:
                         pass
 
-            await _persist_context_state(username, context)
+            await _persist_context_state(username, context, platform)
             if studio_session_ready(username, platform):
                 return StudioLoginResult(ok=True, page_url=page.url)
 
@@ -272,7 +272,7 @@ def studio_login(
 ) -> StudioLoginResult:
     """Synchronous headless Studio login."""
     if not playwright_browsers_available():
-        return StudioLoginResult(ok=False, error="Chromium not installed")
+        return StudioLoginResult(ok=False, error="Chromium не установлен")
     headless = settings.playwright_headless if headless is None else headless
     try:
         return asyncio.run(

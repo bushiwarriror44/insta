@@ -15,24 +15,24 @@ def raise_http(response: httpx.Response, name: str, stage: str) -> None:
     if response.status_code < 400:
         return
     if response.status_code in (401, 403):
-        raise GenerationError(f"{name} rejected the credentials ({stage})")
+        raise GenerationError(f"{name}: отклонены учётные данные ({stage})")
     if response.status_code == 404:
-        raise GenerationError(f"{name} {stage} returned 404", retryable=True)
+        raise GenerationError(f"{name}: {stage} вернул 404", retryable=True)
     if response.status_code == 429:
-        raise GenerationError(f"{name} rate limited the {stage}", retryable=True)
+        raise GenerationError(f"{name}: лимит запросов на {stage}", retryable=True)
     if response.status_code >= 500:
         raise GenerationError(
-            f"{name} server error {response.status_code} ({stage})",
+            f"{name}: ошибка сервера {response.status_code} ({stage})",
             retryable=True,
         )
-    raise GenerationError(f"{name} {stage} failed: {response.status_code}")
+    raise GenerationError(f"{name}: {stage} завершился с кодом {response.status_code}")
 
 
 def write_bytes(data: bytes, destination: Path) -> Path:
     if not data:
-        raise GenerationError("provider returned an empty video", retryable=True)
+        raise GenerationError("провайдер вернул пустое видео", retryable=True)
     if len(data) > MAX_DOWNLOAD_BYTES:
-        raise GenerationError("generated video is implausibly large")
+        raise GenerationError("сгенерированное видео слишком большое")
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(data)
     return destination
@@ -54,14 +54,14 @@ def download_url(
                 for chunk in response.iter_bytes(1024 * 1024):
                     written += len(chunk)
                     if written > MAX_DOWNLOAD_BYTES:
-                        raise GenerationError("generated video is implausibly large")
+                        raise GenerationError("сгенерированное видео слишком большое")
                     out.write(chunk)
     except Exception:
         destination.unlink(missing_ok=True)
         raise
     if written == 0:
         destination.unlink(missing_ok=True)
-        raise GenerationError(f"{name} returned an empty video", retryable=True)
+        raise GenerationError(f"{name} вернул пустое видео", retryable=True)
     return destination
 
 
@@ -81,14 +81,14 @@ def save_response(
         try:
             body = response.json()
         except ValueError as exc:
-            raise GenerationError(f"{name} returned invalid JSON", retryable=True) from exc
+            raise GenerationError(f"{name} вернул некорректный JSON", retryable=True) from exc
         url = video_url_from(body)
         if not url:
-            raise GenerationError(f"{name} returned no video url", retryable=True)
+            raise GenerationError(f"{name} не вернул url видео", retryable=True)
         return download_url(client, url, destination, name=name)
     if response.content[:4] == b"\x00\x00\x00" or response.content[4:8] == b"ftyp":
         return write_bytes(response.content, destination)
-    raise GenerationError(f"{name} did not return a video", retryable=True)
+    raise GenerationError(f"{name} не вернул видео", retryable=True)
 
 
 def video_url_from(body: object) -> str:

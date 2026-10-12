@@ -99,7 +99,7 @@ def mint_mobile_session(account: Account, db: Session) -> MintMobileSessionOut:
     )
 
     def _attempt(login_identifier: str) -> str:
-        collector.info("login", f"Mobile API login как {login_identifier}")
+        collector.info("login", f"Мобильный вход как {login_identifier}")
         return login_and_export_sessionid(
             account.username,
             account.password,
@@ -128,7 +128,7 @@ def mint_mobile_session(account: Account, db: Session) -> MintMobileSessionOut:
     except AuthenticationError as exc:
         last_auth_error = exc
     except Exception as exc:  # noqa: BLE001
-        collector.error("login", f"Mobile login не удался: {exc}; {_elapsed()}")
+        collector.error("login", f"Мобильный вход не удался: {exc}; {_elapsed()}")
         collector.finish("fail", "Вход не удался")
         return MintMobileSessionOut(
             run_id=collector.run_id,
@@ -163,7 +163,7 @@ def mint_mobile_session(account: Account, db: Session) -> MintMobileSessionOut:
             except AuthenticationError as exc:
                 last_auth_error = exc
             except Exception as exc:  # noqa: BLE001
-                collector.error("login", f"Mobile login не удался: {exc}; {_elapsed()}")
+                collector.error("login", f"Мобильный вход не удался: {exc}; {_elapsed()}")
                 collector.finish("fail", "Вход не удался")
                 return MintMobileSessionOut(
                     run_id=collector.run_id,
@@ -173,8 +173,10 @@ def mint_mobile_session(account: Account, db: Session) -> MintMobileSessionOut:
                 )
 
     if session_id is None:
-        formatted = _format_auth_error(last_auth_error or AuthenticationError("auth failed"))
-        collector.error("login", f"Mobile login не удался: {formatted}; {_elapsed()}")
+        formatted = _format_auth_error(
+            last_auth_error or AuthenticationError("ошибка аутентификации")
+        )
+        collector.error("login", f"Мобильный вход не удался: {formatted}; {_elapsed()}")
         collector.finish("fail", formatted)
         return MintMobileSessionOut(
             run_id=collector.run_id,
@@ -190,7 +192,7 @@ def mint_mobile_session(account: Account, db: Session) -> MintMobileSessionOut:
 
     collector.info(
         "session",
-        f"Mobile sessionid сохранён ({sessionid_diag_label(session_id)}); {_elapsed()}",
+        f"Мобильный sessionid сохранён ({sessionid_diag_label(session_id)}); {_elapsed()}",
     )
     collector.finish("ok", "Mobile-сессия готова к автопостингу")
     return MintMobileSessionOut(

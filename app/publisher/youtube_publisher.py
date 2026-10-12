@@ -45,17 +45,19 @@ def publish_youtube_short(
     from playwright.sync_api import sync_playwright
 
     if not video_path.exists():
-        raise HardPublishError(f"video missing: {video_path}")
-    state = playwright_state_path(username)
+        raise HardPublishError(f"видео отсутствует: {video_path}")
+    state = playwright_state_path(username, "youtube")
     if not state.exists():
-        raise TemporaryPublishError("YouTube session missing — open browser and save cookies")
+        raise TemporaryPublishError(
+            "нет сессии YouTube — откройте браузер и сохраните cookies"
+        )
 
     title = (title or video_path.stem)[:100]
     desc = description
     if tags and "#shorts" not in (title + desc).lower():
         desc = f"{desc}\n#Shorts".strip() if desc else "#Shorts"
 
-    _emit_log(on_log, f"YouTube Studio upload {video_path.name}")
+    _emit_log(on_log, f"Загрузка в YouTube Studio: {video_path.name}")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(

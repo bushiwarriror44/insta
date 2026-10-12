@@ -218,6 +218,25 @@ def test_import_cookies_data_playwright_state(app_env):
     assert result.session_id == sid
 
 
+def test_same_username_studio_import_does_not_clobber_instagram(app_env):
+    ig_sid = "s" * 40
+    import_cookies_data(
+        "shared",
+        [{"name": "sessionid", "value": ig_sid, "domain": ".instagram.com"}],
+        platform="instagram",
+    )
+    import_cookies_data(
+        "shared",
+        [{"name": "SID", "value": "yt", "domain": ".youtube.com"}],
+        platform="youtube",
+    )
+    ig_state = json.loads(playwright_state_path("shared").read_text(encoding="utf-8"))
+    yt_state = json.loads(playwright_state_path("shared", "youtube").read_text(encoding="utf-8"))
+    assert any(c["name"] == "sessionid" for c in ig_state["cookies"])
+    assert any(c["domain"] == ".youtube.com" for c in yt_state["cookies"])
+    assert playwright_state_path("shared") != playwright_state_path("shared", "youtube")
+
+
 def test_import_cookies_data_missing_sessionid(app_env):
     with pytest.raises(CookieFormatError, match="sessionid"):
         import_cookies_data("bad", [{"name": "csrftoken", "value": "x"}])

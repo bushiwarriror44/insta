@@ -243,3 +243,33 @@ def test_cross_account_spread_avoids_simultaneous_posts(db_session, make_account
     for job in created:
         delta = abs((job.scheduled_for - when).total_seconds())
         assert delta >= planner_module.CROSS_ACCOUNT_SPREAD_MINUTES * 60
+
+
+def test_schedule_jobs_skips_day_already_at_cap(db_session, make_account, monkeypatch):
+    """A day that already has profile_cap posts does not receive another slot."""
+    from freezegun import freeze_time
+
+    later = datetime(2026, 3, 15, 20, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(planner_module, "plan_slots_for_day", lambda *args, **kwargs: [later])
+
+    with freeze_time("2026-03-15 08:00:00", tz_offset=0):
+        account = make_account(
+            username="cap-full",
+            daily_post_cap=1,
+            min_gap_hours=1.0,
+            active_hour_start=10,
+            active_hour_end=22,
+            timezone="UTC",
+        )
+        db_session.add(
+            PostJob(
+                account_id=account.id,
+                source_video_path="/v/already.mp4",
+                scheduled_for=datetime(2026, 3, 15, 10, 30, tzinfo=timezone.utc),
+                status=PostJobStatus.done,
+            )
+        )
+        db_session.commit()
+        created = schedule_jobs(db_session, account, ["/v/extra.mp4"], days_ahead=1, rng=random.Random(1))
+
+    assert created == []

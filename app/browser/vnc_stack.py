@@ -48,7 +48,7 @@ def _require_running(proc: subprocess.Popen, name: str, *, cmd: list[str]) -> No
     if proc.poll() is None:
         return
     raise RuntimeError(
-        f"{name} exited immediately (code={proc.returncode}); command={cmd!r}"
+        f"{name} сразу завершился (код={proc.returncode}); команда={cmd!r}"
     )
 
 
@@ -67,7 +67,7 @@ class VncStack:
 
     async def start(self) -> None:
         if not vnc_stack_available():
-            raise RuntimeError("Xvfb/x11vnc/websockify not installed")
+            raise RuntimeError("Xvfb/x11vnc/websockify не установлены")
 
         env = os.environ.copy()
         env["DISPLAY"] = self.display_name

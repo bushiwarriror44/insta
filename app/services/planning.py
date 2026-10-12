@@ -229,8 +229,8 @@ def queue_ideas(
             kind="planned",
             account_id=channel.id,
             message=(
-                f"agent planned {posts} posts for {channel.username}"
-                + (f" — {shots} shots" if shots != posts else "")
+                f"агент запланировал постов: {posts} для {channel.username}"
+                + (f" — кадров: {shots}" if shots != posts else "")
             ),
         )
     )
@@ -241,8 +241,8 @@ def queue_ideas(
                 kind="unknown_soundtrack",
                 account_id=channel.id,
                 message=(
-                    "the agent asked for tracks that are not in the library, "
-                    f"so those posts are silent: {', '.join(sorted(set(invented)))}"
+                    "агент запросил треки, которых нет в библиотеке, "
+                    f"поэтому эти посты без звука: {', '.join(sorted(set(invented)))}"
                 ),
             )
         )
@@ -285,7 +285,7 @@ def plan_for_channel(
         settings=settings,
     )
     if exhausted:
-        raise AgentError(f"not planning today — {exhausted}")
+        raise AgentError(f"сегодня планирование недоступно — {exhausted}")
 
     sources = gather_sources(session, channel, settings=settings)
     tracks = library_tracks(session)
@@ -414,7 +414,7 @@ def replan_post(
     """
     settings = settings or get_settings()
     if any(job.status is not PipelineStatus.queued for job in jobs):
-        raise AgentError("this post has already started rendering")
+        raise AgentError("этот пост уже начал рендер")
 
     doomed = {job.id for job in jobs}
     still_planned = list(
@@ -449,8 +449,8 @@ def replan_post(
             kind="replanned",
             account_id=channel.id,
             message=(
-                f"asked again for {jobs[0].post_title[:60]!r} — "
-                f"{replacement[0].post_title[:60]!r} instead"
+                f"повторный план: {jobs[0].post_title[:60]!r} → "
+                f"{replacement[0].post_title[:60]!r}"
             ),
         )
     )

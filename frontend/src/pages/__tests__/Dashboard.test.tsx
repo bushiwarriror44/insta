@@ -81,6 +81,42 @@ describe("Dashboard page", () => {
     expect(screen.getByText(/риск 24ч:/i)).toBeInTheDocument();
   });
 
+  it("links review, failures and agent questions when they need attention", async () => {
+    apiMock.dashboard.mockResolvedValue(
+      summary({ jobs_awaiting_review: 3, jobs_failed_24h: 4, open_questions: 2 })
+    );
+    renderDashboard();
+    expect(await screen.findByRole("link", { name: /на проверке/i })).toHaveAttribute(
+      "href",
+      "/activity?status=awaiting_review"
+    );
+    expect(screen.getByRole("link", { name: /ошибки за 24 часа/i })).toHaveAttribute(
+      "href",
+      "/activity?status=errors"
+    );
+    expect(screen.getByRole("link", { name: /вопросы агента/i })).toHaveAttribute("href", "/agent");
+  });
+
+  it("deep-links agent questions to the account with open questions", async () => {
+    apiMock.dashboard.mockResolvedValue(
+      summary({ open_questions: 2, questions_account_id: 7 })
+    );
+    renderDashboard();
+    expect(await screen.findByRole("link", { name: /вопросы агента/i })).toHaveAttribute(
+      "href",
+      "/agent?account=7"
+    );
+  });
+
+  it("deep-links quarantined accounts to the cooldown filter", async () => {
+    apiMock.dashboard.mockResolvedValue(summary({ quarantined_accounts: 2 }));
+    renderDashboard();
+    expect(await screen.findByRole("link", { name: /карантин/i })).toHaveAttribute(
+      "href",
+      "/accounts?status=cooldown"
+    );
+  });
+
   it("shows fallback messages when there is no activity", async () => {
     apiMock.dashboard.mockResolvedValue(
       summary({ daily_stats: [], recent_events: [] })
@@ -154,6 +190,10 @@ describe("Dashboard page", () => {
       "href",
       "/accounts"
     );
+    expect(screen.getByRole("link", { name: "Исправные прокси" })).toHaveAttribute(
+      "href",
+      "/accounts?proxy=bad"
+    );
     expect(screen.getByRole("link", { name: "В очереди / В работе" })).toHaveAttribute(
       "href",
       "/activity?status=queued"
@@ -161,6 +201,17 @@ describe("Dashboard page", () => {
     expect(screen.getByRole("link", { name: "Мёртвые задачи (всего)" })).toHaveAttribute(
       "href",
       "/activity?status=dead"
+    );
+  });
+
+  it("links healthy proxies card to accounts without a filter", async () => {
+    apiMock.dashboard.mockResolvedValue(
+      summary({ proxies_healthy: 3, proxies_total: 3 })
+    );
+    renderDashboard();
+    expect(await screen.findByRole("link", { name: "Исправные прокси" })).toHaveAttribute(
+      "href",
+      "/accounts"
     );
   });
 

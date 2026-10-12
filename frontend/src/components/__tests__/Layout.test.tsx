@@ -202,6 +202,29 @@ describe("Layout", () => {
     expect(screen.getByTestId("nav-agent")).toHaveTextContent("2");
   });
 
+  it("deep-links activity and agent nav when badges need attention", async () => {
+    vi.mocked(api.dashboard).mockResolvedValue({
+      jobs_awaiting_review: 3,
+      jobs_failed_24h: 0,
+      open_questions: 2,
+      questions_account_id: 7,
+    } as never);
+    useAuthMock.mockReturnValue({
+      state: { state: "open" },
+      role: null,
+      authRequired: false,
+      logout: vi.fn(),
+      login: vi.fn(),
+      retryBootstrap: vi.fn(),
+    });
+    renderAt();
+    expect(await screen.findByTestId("nav-activity")).toHaveAttribute(
+      "href",
+      "/activity?status=awaiting_review"
+    );
+    expect(screen.getByTestId("nav-agent")).toHaveAttribute("href", "/agent?account=7");
+  });
+
   it("refreshes the agent badge when nav badges are invalidated", async () => {
     vi.mocked(api.dashboard)
       .mockResolvedValueOnce({
