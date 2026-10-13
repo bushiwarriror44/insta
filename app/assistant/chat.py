@@ -2265,8 +2265,10 @@ def _recent_talk(messages: list[dict[str, str]], limit: int = TALK_LIMIT) -> lis
 
 def _headers(settings: Settings) -> dict[str, str]:
     headers = {"Content-Type": "application/json"}
-    if settings.agent_api_key:
-        headers["Authorization"] = f"Bearer {settings.agent_api_key}"
+    key = (settings.agent_api_key or "").strip()
+    # Docker env_file may keep inline "# comment" in the value; httpx headers must be ASCII.
+    if key and key.isascii():
+        headers["Authorization"] = f"Bearer {key}"
     return headers
 
 

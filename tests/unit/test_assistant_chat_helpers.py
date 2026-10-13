@@ -1,9 +1,21 @@
 from app.assistant.chat import (
     _generation_create_detail,
     _generation_step_from_create_result,
+    _headers,
     _will_wait_render_later,
     build_assistant_thread,
 )
+from app.config import Settings
+
+
+def test_headers_skips_non_ascii_agent_api_key():
+    settings = Settings(agent_api_key="# если провайдер")
+    assert "Authorization" not in _headers(settings)
+
+
+def test_headers_strips_ascii_agent_api_key():
+    settings = Settings(agent_api_key="  secret-key  ")
+    assert _headers(settings)["Authorization"] == "Bearer secret-key"
 
 
 def test_generation_create_detail_uses_backend_key():
