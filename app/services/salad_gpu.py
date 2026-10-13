@@ -31,6 +31,7 @@ TIMEOUT = 30.0
 START_READY = frozenset({"stopped", "succeeded", "failed"})
 STOP_READY = frozenset({"running", "pending", "deploying"})
 GATEWAY_PORT = 11434
+WAN_GATEWAY_PORT = 8080
 WARMUP_MARKER = "gpu-warmup"
 LAUNCH_STATUS = "Запускаю видеокарту, подождите"
 WARM_STATUS = "Прогреваю модель, подождите"
@@ -253,24 +254,35 @@ def _command_text(state: GroupState) -> str:
     return " ".join(state.command)
 
 
-def needs_gateway_patch(state: GroupState) -> bool:
-    return WARMUP_MARKER not in _command_text(state) or state.port != GATEWAY_PORT
+def target_gateway_port(settings: Settings) -> int:
+    """8080 when local Wan shares the group; 11434 for chat-only Ollama."""
+    if (settings.wan_base_url or "").strip():
+        return WAN_GATEWAY_PORT
+    return GATEWAY_PORT
+
+
+def needs_gateway_patch(settings: Settings, state: GroupState) -> bool:
+    return (
+        WARMUP_MARKER not in _command_text(state)
+        or state.port != target_gateway_port(settings)
+    )
 
 
 def patch_gateway(settings: Settings, state: GroupState) -> GroupState:
     """Install the warmup command and chat port once. Salad restarts the replica."""
     settings = require_configured(settings)
+    port = target_gateway_port(settings)
     body: dict[str, Any] = {}
     if WARMUP_MARKER not in _command_text(state):
         body["container"] = {
             "command": ["/bin/bash", "-c", warmup_script(_model_name(settings))]
         }
-    if state.port != GATEWAY_PORT:
-        body["networking"] = {"port": GATEWAY_PORT}
+    if state.port != port:
+        body["networking"] = {"port": port}
     if not body:
         return state
     url = _group_url(settings)
-    log.info("salad.patch_gateway", port=GATEWAY_PORT)
+    log.info("salad.patch_gateway", port=port)
     try:
         with http_client(settings, timeout=TIMEOUT) as client:
             response = client.patch(
@@ -427,7 +439,7 @@ def prepare_for_chat(
             extra=extra,
         )
 
-    if needs_gateway_patch(state):
+    if needs_gateway_patch(settings, state):
         yield emit(PHASE_PATCH, 1, soft_s=60, force_milestone=True)
         state = patch_gateway(settings, state)
         _touch(settings)

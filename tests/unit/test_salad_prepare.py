@@ -1,6 +1,8 @@
 """Chat-triggered Salad start and in-container warmup."""
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 import respx
@@ -9,6 +11,7 @@ from app.config import settings
 from app.services import salad_gpu
 from app.services.salad_gpu import (
     GATEWAY_PORT,
+    WAN_GATEWAY_PORT,
     LAUNCH_STATUS,
     PHASE_MODEL,
     PHASE_PATCH,
@@ -33,6 +36,7 @@ def _enable(monkeypatch) -> None:
     monkeypatch.setattr(settings, "salad_project", "default", raising=True)
     monkeypatch.setattr(settings, "salad_container_group", "insta-duplicate", raising=True)
     monkeypatch.setattr(settings, "agent_model", "qwen3:32b", raising=True)
+    monkeypatch.setattr(settings, "wan_base_url", "", raising=True)
 
 
 def _group(status: str, *, command: tuple[str, ...] = ("gpu-warmup",), port: int = GATEWAY_PORT) -> GroupState:
@@ -155,6 +159,64 @@ def test_prepare_continues_when_the_patch_is_415(app_env, monkeypatch):
 def test_prepare_does_not_patch_when_warmup_is_already_installed(app_env, monkeypatch):
     _enable(monkeypatch)
     monkeypatch.setattr(salad_gpu, "get_group", lambda settings=None: _group("running"))
+    with respx.mock:
+        route = respx.patch(salad_gpu._group_url(settings)).mock(
+            return_value=httpx.Response(200, json={})
+        )
+        respx.get(f"{ORIGIN}/").mock(return_value=httpx.Response(200, text="Ollama is running"))
+        respx.get(f"{ORIGIN}/api/ps").mock(
+            return_value=httpx.Response(200, json={"models": [{"name": "qwen3:32b"}]})
+        )
+        gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None)
+        try:
+            while True:
+                next(gen)
+        except StopIteration as stop:
+            assert stop.value == f"{ORIGIN}/v1"
+    assert not route.called
+
+
+def test_prepare_patches_wan_gateway_port_when_wan_base_url_is_set(app_env, monkeypatch):
+    _enable(monkeypatch)
+    monkeypatch.setattr(settings, "wan_base_url", "https://gpu.example/generate", raising=True)
+    bare = _group("running", command=(), port=8888)
+    patched = _group("running", port=WAN_GATEWAY_PORT)
+    calls = {"n": 0}
+
+    def sequence(settings=None):
+        calls["n"] += 1
+        return bare if calls["n"] == 1 else patched
+
+    monkeypatch.setattr(salad_gpu, "get_group", sequence)
+    with respx.mock:
+        route = respx.patch(salad_gpu._group_url(settings)).mock(
+            return_value=httpx.Response(200, json={})
+        )
+        respx.get(f"{ORIGIN}/").mock(return_value=httpx.Response(200, text="Ollama is running"))
+        respx.get(f"{ORIGIN}/api/ps").mock(
+            return_value=httpx.Response(200, json={"models": [{"name": "qwen3:32b"}]})
+        )
+        gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None)
+        try:
+            while True:
+                next(gen)
+        except StopIteration:
+            pass
+    assert route.called
+    body = route.calls[0].request.read().decode()
+    payload = json.loads(body)
+    assert payload["networking"]["port"] == WAN_GATEWAY_PORT
+    assert payload["networking"]["port"] != GATEWAY_PORT
+
+
+def test_prepare_skips_patch_when_wan_port_and_warmup_are_already_set(app_env, monkeypatch):
+    _enable(monkeypatch)
+    monkeypatch.setattr(settings, "wan_base_url", "https://gpu.example/generate", raising=True)
+    monkeypatch.setattr(
+        salad_gpu,
+        "get_group",
+        lambda settings=None: _group("running", port=WAN_GATEWAY_PORT),
+    )
     with respx.mock:
         route = respx.patch(salad_gpu._group_url(settings)).mock(
             return_value=httpx.Response(200, json={})
