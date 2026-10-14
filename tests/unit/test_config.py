@@ -16,6 +16,12 @@ def test_singleton_settings_has_required_paths():
     assert settings.devices_dir.exists()
 
 
+def test_salad_idle_stop_defaults_to_two_hours(monkeypatch):
+    monkeypatch.delenv("SALAD_IDLE_STOP_MINUTES", raising=False)
+    fresh = Settings(_env_file=None)
+    assert fresh.salad_idle_stop_minutes == 120
+
+
 def test_settings_reads_env_overrides(monkeypatch, tmp_path):
     monkeypatch.setenv("DATABASE_URL", "sqlite:///custom.db")
     monkeypatch.setenv("DEFAULT_DAILY_POST_CAP", "7")

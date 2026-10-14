@@ -42,7 +42,7 @@ cd /opt/insta && docker compose up -d --force-recreate reels-api reels-worker
 
 Проверка с VPS: `curl -sS https://НОВЫЙ-ХОСТ.salad.cloud/` → `Ollama is running`. Рендер в панели — backend `local`.
 
-Не пользуешься — **Stop** группы, иначе идёт почасовка. Start снова качает образ на новый ПК. Панель сама гасит группу после простоя (`SALAD_IDLE_STOP_MINUTES`, по умолчанию 20): см. карточку GPU Salad.
+Не пользуешься — **Stop** группы, иначе идёт почасовка. Start снова качает образ на новый ПК. Панель сама гасит группу после простоя (`SALAD_IDLE_STOP_MINUTES`, по умолчанию 120): см. карточку GPU Salad.
 
 ## Прогрев qwen3:32b без пересборки
 

@@ -501,6 +501,18 @@ class WorkerProcessOut(BaseModel):
     note: str = ""
 
 
+class LogTailOut(BaseModel):
+    name: str
+    available: bool
+    reason: str = ""
+    lines: list[str] = Field(default_factory=list)
+
+
+class GpuLogsOut(BaseModel):
+    docker: list[LogTailOut]
+    gpu: LogTailOut
+
+
 class GpuOut(BaseModel):
     configured: bool
     status: Optional[str] = None

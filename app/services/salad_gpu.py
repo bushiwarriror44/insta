@@ -14,6 +14,7 @@ import re
 import time
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
 
@@ -509,6 +510,68 @@ def prepare_for_chat(
     if not base:
         raise SaladProblem("Salad не вернул адрес группы")
     return base
+
+
+def _label(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def container_logs(settings: Settings | None = None) -> dict[str, Any]:
+    """Stdout/stderr of the GPU group for the last hour. Never includes the API key."""
+    settings = settings or get_settings()
+    if not configured(settings):
+        return {"available": False, "reason": "Salad не настроен", "lines": []}
+    org, project, group = _names(settings)
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(hours=1)
+    query = (
+        'resource.type = "container"'
+        f' and resource.labels.project_name = "{_label(project)}"'
+        f' and resource.labels.container_group_name = "{_label(group)}"'
+    )
+    url = f"{SALAD_API_ROOT}/organizations/{quote(org, safe='')}/log-entries"
+    body = {
+        "sort_order": "desc",
+        "start_time": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "end_time": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "page_size": 50,
+        "query": query,
+    }
+    try:
+        with http_client(settings, timeout=TIMEOUT) as client:
+            response = client.post(url, headers=_headers(settings), json=body)
+    except httpx.RequestError:
+        log.warning("salad.logs_failed")
+        return {"available": False, "reason": "Salad не отвечает", "lines": []}
+    if response.status_code >= 400:
+        payload: Any = None
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        return {"available": False, "reason": _safe_detail(response.status_code, payload), "lines": []}
+    try:
+        payload = response.json()
+    except ValueError:
+        return {"available": False, "reason": "Salad вернул не JSON", "lines": []}
+    items = payload.get("items") if isinstance(payload, dict) else None
+    lines: list[str] = []
+    if isinstance(items, list):
+        for item in reversed(items):
+            if not isinstance(item, dict):
+                continue
+            text = item.get("text_log")
+            if isinstance(text, str) and text.strip():
+                lines.append(text.rstrip()[:2000])
+                continue
+            blob = item.get("json_log")
+            if blob is None:
+                continue
+            raw = blob if isinstance(blob, str) else json.dumps(blob, ensure_ascii=False)
+            lines.append(raw[:500])
+    if not lines:
+        return {"available": True, "reason": "за последний час логов нет", "lines": []}
+    return {"available": True, "reason": "", "lines": lines}
 
 
 def require_configured(settings: Settings | None = None) -> Settings:

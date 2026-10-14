@@ -439,6 +439,18 @@ export interface WorkerProcessOut {
   note: string;
 }
 
+export interface LogTailOut {
+  name: string;
+  available: boolean;
+  reason: string;
+  lines: string[];
+}
+
+export interface GpuLogsOut {
+  docker: LogTailOut[];
+  gpu: LogTailOut;
+}
+
 export interface GpuOut {
   configured: boolean;
   status: string | null;

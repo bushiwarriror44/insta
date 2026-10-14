@@ -12,6 +12,7 @@ import clsx from "clsx";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { api, formatApiError } from "../api/client";
+import type { GpuLogsOut } from "../api/types";
 import { ask, type AskField, type AssistantMessageAttachment } from "../api/assistant";
 import { mediaApiPath } from "../api/media";
 import {
@@ -36,6 +37,7 @@ import {
 import { SHOW_ASSISTANT } from "../lib/uiEvents";
 import { retryGenerationOnLocal } from "../lib/pollGeneration";
 import { RenderLocalSwitchModal, type LocalSwitchOffer } from "./RenderLocalSwitchModal";
+import { Modal } from "./Modal";
 
 const HIDDEN_KEY = "assistant-dock:hidden";
 const ALLOW_BROWSER_KEY = "assistant-dock:allow-browser-run";
@@ -440,9 +442,30 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const [localSwitchOffer, setLocalSwitchOffer] = useState<LocalSwitchOffer | null>(null);
   const [localSwitchBusy, setLocalSwitchBusy] = useState(false);
   const [draftAttachments, setDraftAttachments] = useState<UserAttachment[]>([]);
+  const [logsOpen, setLogsOpen] = useState(false);
+  const [logs, setLogs] = useState<GpuLogsOut | null>(null);
+  const [logsError, setLogsError] = useState("");
+  const [logsBusy, setLogsBusy] = useState(false);
 
   const box = useRef<HTMLTextAreaElement>(null);
   const tail = useRef<HTMLDivElement>(null);
+
+  const loadLogs = useCallback(async () => {
+    setLogsBusy(true);
+    setLogsError("");
+    try {
+      setLogs(await api.gpu.logs());
+    } catch (err) {
+      setLogsError(formatApiError(err));
+    } finally {
+      setLogsBusy(false);
+    }
+  }, []);
+
+  const openLogs = () => {
+    setLogsOpen(true);
+    void loadLogs();
+  };
 
   useEffect(() => {
     onHiddenChange?.(hidden);
@@ -1524,7 +1547,10 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
               </button>
             )}
           </form>
-          <div className="mt-1 flex justify-end px-2">
+          <div className="mt-1 flex justify-end gap-3 px-2">
+            <button type="button" onClick={openLogs} className="text-xs text-slate-500 hover:text-slate-300">
+              Логи
+            </button>
             <button type="button" onClick={hide} className="text-xs text-slate-500 hover:text-slate-300">
               Скрыть
             </button>
@@ -1588,6 +1614,53 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         onCancel={cancelLocalSwitch}
         onConfirm={() => void confirmLocalSwitch()}
       />
+      {logsOpen ? (
+        <div className="pointer-events-auto">
+          <Modal
+            open
+            onClose={() => setLogsOpen(false)}
+            title="Логи"
+            widthClass="max-w-3xl"
+            footer={
+              <button type="button" className="btn-ghost text-xs" onClick={() => void loadLogs()} disabled={logsBusy}>
+                {logsBusy ? "Обновляю…" : "Обновить"}
+              </button>
+            }
+          >
+            {logsError ? <p className="text-sm text-rose-300">{logsError}</p> : null}
+            {!logs && logsBusy ? <p className="text-sm text-slate-400">Читаю логи…</p> : null}
+            {logs ? (
+              <div className="space-y-4">
+                <section className="space-y-2">
+                  <h4 className="text-xs font-medium text-slate-300">Docker</h4>
+                  {logs.docker.map((row) => (
+                    <div key={row.name}>
+                      <p className="text-[11px] text-slate-500">{row.name}</p>
+                      {row.available ? (
+                        <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-3 font-mono text-[11px] leading-relaxed text-slate-300">
+                          {row.lines.length ? row.lines.join("\n") : row.reason || "пусто"}
+                        </pre>
+                      ) : (
+                        <p className="mt-1 text-xs text-slate-400">{row.reason || "логи недоступны"}</p>
+                      )}
+                    </div>
+                  ))}
+                </section>
+                <section>
+                  <h4 className="text-xs font-medium text-slate-300">Видеокарта</h4>
+                  {logs.gpu.available ? (
+                    <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-3 font-mono text-[11px] leading-relaxed text-slate-300">
+                      {logs.gpu.lines.length ? logs.gpu.lines.join("\n") : logs.gpu.reason || "пусто"}
+                    </pre>
+                  ) : (
+                    <p className="mt-1 text-xs text-slate-400">{logs.gpu.reason || "логи недоступны"}</p>
+                  )}
+                </section>
+              </div>
+            ) : null}
+          </Modal>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -1,6 +1,8 @@
 """Salad GPU Start/Stop from the admin panel."""
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 import respx
@@ -125,6 +127,7 @@ def test_operator_forbidden(auth_client):
     assert created.status_code == 201
     op_headers = {"Authorization": f"Bearer {created.json()['password']}"}
     assert auth_client.get("/api/gpu", headers=op_headers).status_code == 403
+    assert auth_client.get("/api/gpu/logs", headers=op_headers).status_code == 403
     assert auth_client.post("/api/gpu/start", headers=op_headers).status_code == 403
     assert auth_client.post("/api/gpu/stop", headers=op_headers).status_code == 403
 
@@ -333,3 +336,60 @@ def test_salad_403_returns_probes_without_echoing_key(auth_client, monkeypatch):
     assert body["wan_ok"] is False
     assert SECRET not in res.text
     assert "wan.example" not in res.text
+
+
+def test_gpu_logs_include_docker_and_salad_without_the_key(auth_client, monkeypatch):
+    _configure(monkeypatch)
+    monkeypatch.setattr(
+        "app.assistant.tools.docker_logs",
+        lambda service, tail=80: {
+            "available": True,
+            "lines": [f"{service} ok"],
+            "reason": "",
+        },
+    )
+    with respx.mock:
+        route = respx.post(url__regex=r".*/log-entries$").mock(
+            return_value=httpx.Response(
+                200,
+                json={"items": [{"text_log": "ollama ready"}, {"text_log": f"leak {SECRET}"}]},
+            )
+        )
+        res = auth_client.get("/api/gpu/logs", headers=_h())
+    assert res.status_code == 200
+    body = res.json()
+    assert [row["name"] for row in body["docker"]] == [
+        "reels-api",
+        "reels-worker",
+        "reels-frontend",
+    ]
+    assert body["docker"][0]["lines"] == ["reels-api ok"]
+    assert body["gpu"]["available"] is True
+    assert body["gpu"]["lines"] == ["leak …", "ollama ready"]
+    assert SECRET not in res.text
+    sent = json.loads(route.calls[0].request.read().decode())
+    assert 'resource.type = "container"' in sent["query"]
+    assert "insta-gpu" in sent["query"]
+    assert SECRET not in sent["query"]
+
+
+def test_gpu_logs_keep_docker_when_salad_is_not_configured(auth_client, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "salad_api_key", "", raising=True)
+    monkeypatch.setattr(
+        "app.assistant.tools.docker_logs",
+        lambda service, tail=80: {"available": False, "lines": [], "reason": f"нет {service}"},
+    )
+    with respx.mock:
+        route = respx.post(url__regex=r".*/log-entries$").mock(
+            return_value=httpx.Response(500, json={"message": "no"})
+        )
+        res = auth_client.get("/api/gpu/logs", headers=_h())
+    assert res.status_code == 200
+    body = res.json()
+    assert body["docker"][0]["reason"] == "нет reels-api"
+    assert body["gpu"]["available"] is False
+    assert body["gpu"]["reason"] == "Salad не настроен"
+    assert route.called is False
+    assert SECRET not in res.text

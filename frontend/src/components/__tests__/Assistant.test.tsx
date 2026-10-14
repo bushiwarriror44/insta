@@ -13,6 +13,7 @@ const apiMock = vi.hoisted(() => ({
   accounts: { list: vi.fn() },
   videos: { upload: vi.fn() },
   factory: { getGeneration: vi.fn() },
+  gpu: { logs: vi.fn() },
 }));
 
 vi.mock("../../context/AuthContext", () => ({
@@ -57,6 +58,11 @@ beforeEach(() => {
   });
   askMock.mockReset();
   askMock.mockResolvedValue(undefined);
+  apiMock.gpu.logs.mockReset();
+  apiMock.gpu.logs.mockResolvedValue({
+    docker: [{ name: "reels-api", available: true, reason: "", lines: ["api ok"] }],
+    gpu: { name: "gpu", available: true, reason: "", lines: ["ollama"] },
+  });
 });
 
 describe("Assistant", () => {
@@ -64,6 +70,16 @@ describe("Assistant", () => {
     renderDock();
     expect(await screen.findByLabelText(/спросить агента/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^спросить$/i })).toBeInTheDocument();
+  });
+
+  it("opens docker and gpu logs from the corner", async () => {
+    const user = userEvent.setup();
+    renderDock();
+    await user.click(await screen.findByRole("button", { name: "Логи" }));
+    expect(await screen.findByRole("heading", { name: "Логи" })).toBeInTheDocument();
+    expect(await screen.findByText("api ok")).toBeInTheDocument();
+    expect(screen.getByText("ollama")).toBeInTheDocument();
+    expect(screen.getByText("Видеокарта")).toBeInTheDocument();
   });
 
   it("sends the current page in the request", async () => {

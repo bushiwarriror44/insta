@@ -793,6 +793,7 @@ export const api = {
     status: () => request<import("./types").GpuOut>("/api/gpu"),
     start: () => request<import("./types").GpuOut>("/api/gpu/start", { method: "POST" }),
     stop: () => request<import("./types").GpuOut>("/api/gpu/stop", { method: "POST" }),
+    logs: () => request<import("./types").GpuLogsOut>("/api/gpu/logs"),
   },
 
   adminNotes: {

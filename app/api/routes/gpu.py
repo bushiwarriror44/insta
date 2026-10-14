@@ -1,11 +1,13 @@
 """Owner-only Start/Stop for the Salad GPU container group."""
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import httpx
 from fastapi import APIRouter, HTTPException
 
 from app.api.deps import DocsOwnerDep
-from app.api.schemas import GpuOut
+from app.api.schemas import GpuLogsOut, GpuOut, LogTailOut
 from app.config import Settings, get_settings
 from app.services import salad_gpu
 from app.services.http import client as http_client
@@ -76,6 +78,38 @@ def _payload(state: salad_gpu.GroupState | None, settings: Settings) -> GpuOut:
 
 def _http_error(exc: salad_gpu.SaladProblem) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+_LOG_SERVICES = ("reels-api", "reels-worker", "reels-frontend")
+
+
+def _hide_key(settings: Settings, text: str) -> str:
+    key = settings.salad_api_key.strip()
+    if len(key) >= 8 and key in text:
+        return text.replace(key, "…")
+    return text
+
+
+def _tail(name: str, row: Mapping[str, object], settings: Settings) -> LogTailOut:
+    raw_lines = row.get("lines")
+    lines = [_hide_key(settings, str(line)) for line in raw_lines] if isinstance(raw_lines, list) else []
+    return LogTailOut(
+        name=name,
+        available=bool(row.get("available")),
+        reason=_hide_key(settings, str(row.get("reason") or "")),
+        lines=lines,
+    )
+
+
+@router.get("/logs", response_model=GpuLogsOut)
+def read_gpu_logs() -> GpuLogsOut:
+    """Docker tails plus Salad container stdout. Does not refresh the idle clock."""
+    from app.assistant.tools import docker_logs
+
+    settings = get_settings()
+    docker = [_tail(name, docker_logs(name, tail=80), settings) for name in _LOG_SERVICES]
+    gpu = salad_gpu.container_logs(settings)
+    return GpuLogsOut(docker=docker, gpu=_tail("gpu", gpu, settings))
 
 
 @router.get("", response_model=GpuOut)
