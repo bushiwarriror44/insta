@@ -12,6 +12,7 @@ import pytest
 from app.assistant.chat import AssistantError, _prepare_runtime
 from app.config import Settings
 from app.generation.base import GenerationError, GenerationRequest
+from app.generation.download import raise_http
 from app.generation.local import LocalVideoBackend
 from app.services import gpu_slot
 
@@ -66,6 +67,7 @@ def test_local_render_unloads_chat_then_posts_wan(tmp_path):
         headers={"content-type": "video/mp4"},
         request=httpx.Request("POST", "http://gpu.example/generate"),
     )
+    client.get.return_value = httpx.Response(405, request=httpx.Request("GET", "http://gpu.example/generate"))
     client.post.return_value = response
     unloaded: list[str] = []
 
@@ -88,3 +90,51 @@ def test_local_render_unloads_chat_then_posts_wan(tmp_path):
     assert result.video_path.read_bytes() == destination_bytes
     assert gpu_slot.video_busy(settings) is None
     assert client.post.call_args.args[0] == "http://gpu.example/generate"
+
+
+def test_server_500_keeps_wan_detail():
+    response = httpx.Response(
+        500,
+        json={"detail": "CUDA out of memory"},
+        request=httpx.Request("POST", "http://gpu.example/generate"),
+    )
+    with pytest.raises(GenerationError, match="CUDA out of memory") as exc:
+        raise_http(response, "local", "generate")
+    assert "ошибка сервера 500" in str(exc.value)
+    assert exc.value.retryable is True
+
+
+def test_server_500_drops_salad_html():
+    response = httpx.Response(
+        503,
+        text="<!DOCTYPE html><title>503 Service Unavailable</title>",
+        request=httpx.Request("GET", "http://gpu.example/generate"),
+    )
+    with pytest.raises(GenerationError, match="ошибка сервера 503") as exc:
+        raise_http(response, "local", "generate")
+    assert "DOCTYPE" not in str(exc.value)
+
+
+def test_local_healthcheck_accepts_post_only_generate(tmp_path):
+    settings = make_settings(tmp_path)
+    client = MagicMock()
+    client.__enter__.return_value = client
+    client.get.return_value = httpx.Response(
+        405,
+        request=httpx.Request("GET", "http://gpu.example/generate"),
+    )
+    with patch("app.generation.local.http_client", return_value=client):
+        backend = LocalVideoBackend(settings)
+        assert backend.healthcheck() is True
+        assert backend.health_detail() == ""
+
+
+def test_local_healthcheck_false_when_wan_is_down(tmp_path):
+    settings = make_settings(tmp_path)
+    client = MagicMock()
+    client.__enter__.return_value = client
+    client.get.side_effect = httpx.ConnectError("refused")
+    with patch("app.generation.local.http_client", return_value=client):
+        backend = LocalVideoBackend(settings)
+        assert backend.healthcheck() is False
+        assert "не отвечает" in backend.health_detail()

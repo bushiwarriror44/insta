@@ -10,6 +10,10 @@ from app.services.generation import run_generation_job
 
 def test_run_generation_job_retries_when_gpu_slot_held(db_session, app_env, monkeypatch):
     monkeypatch.setattr(settings, "wan_base_url", "http://gpu.example/generate", raising=True)
+    monkeypatch.setattr(
+        "app.generation.local.LocalVideoBackend.healthcheck",
+        lambda self: True,
+    )
     job = GenerationJob(
         prompt="misty forest",
         backend="local",

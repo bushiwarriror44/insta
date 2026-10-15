@@ -9,6 +9,31 @@ import httpx
 from app.generation.base import GenerationError
 
 MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024
+_DETAIL_LIMIT = 400
+
+
+def _server_detail(response: httpx.Response) -> str:
+    """Short reason from a failed render response. Skips Salad HTML error pages."""
+    text = ""
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict):
+        detail = payload.get("detail")
+        if isinstance(detail, str):
+            text = detail
+        elif isinstance(detail, list) and detail:
+            text = " ".join(str(item) for item in detail)
+    if not text:
+        raw = (response.text or "").strip()
+        if not raw or raw.startswith("<") or "Service Unavailable" in raw:
+            return ""
+        text = raw
+    text = " ".join(text.split())
+    if len(text) > _DETAIL_LIMIT:
+        return text[: _DETAIL_LIMIT - 1] + "…"
+    return text
 
 
 def raise_http(response: httpx.Response, name: str, stage: str) -> None:
@@ -21,10 +46,11 @@ def raise_http(response: httpx.Response, name: str, stage: str) -> None:
     if response.status_code == 429:
         raise GenerationError(f"{name}: лимит запросов на {stage}", retryable=True)
     if response.status_code >= 500:
-        raise GenerationError(
-            f"{name}: ошибка сервера {response.status_code} ({stage})",
-            retryable=True,
-        )
+        message = f"{name}: ошибка сервера {response.status_code} ({stage})"
+        detail = _server_detail(response)
+        if detail:
+            message = f"{message}: {detail}"
+        raise GenerationError(message, retryable=True)
     raise GenerationError(f"{name}: {stage} завершился с кодом {response.status_code}")
 
 

@@ -42,12 +42,23 @@ class LocalVideoBackend(VideoBackend):
         self.settings = settings or get_settings()
 
     def healthcheck(self) -> bool:
-        return bool(self.settings.wan_base_url)
+        url = (self.settings.wan_base_url or "").strip()
+        if not url:
+            return False
+        try:
+            with http_client(self.settings, timeout=3.0) as client:
+                response = client.get(url)
+        except httpx.RequestError:
+            return False
+        # 2xx = health page; 405 = POST-only /generate is up.
+        return 200 <= response.status_code < 300 or response.status_code == 405
 
     def health_detail(self) -> str:
         if self.healthcheck():
             return ""
-        return "local не настроен — задайте WAN_BASE_URL"
+        if not (self.settings.wan_base_url or "").strip():
+            return "local не настроен — задайте WAN_BASE_URL"
+        return "Wan не отвечает по WAN_BASE_URL"
 
     def generate(
         self,
