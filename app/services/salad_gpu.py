@@ -21,6 +21,11 @@ from urllib.parse import quote
 import httpx
 
 from app.config import Settings, get_settings
+from app.services.salad_gpu_patch import (
+    WAN_ASYNC_PATCH_MARKER,
+    patch_configured,
+    patch_curl_shell,
+)
 from app.logging_setup import get_logger
 from app.services.http import client as http_client
 
@@ -224,8 +229,25 @@ def _model_name(settings: Settings) -> str:
     return name
 
 
-def warmup_script(model: str) -> str:
+def _warmup_command_stale(settings: Settings, text: str) -> bool:
+    if (
+        WARMUP_MARKER not in text
+        or IPV6_MARKER not in text
+        or WAN_DEPS_MARKER not in text
+    ):
+        return True
+    if patch_configured(settings) and WAN_ASYNC_PATCH_MARKER not in text:
+        return True
+    return False
+
+
+def warmup_script(model: str, settings: Settings | None = None) -> str:
     """In-container warmup. The public gateway cuts requests at ~100s."""
+    settings = settings or get_settings()
+    curl_patch = patch_curl_shell(settings)
+    header = f"# {WARMUP_MARKER} {IPV6_MARKER} {WAN_DEPS_MARKER}"
+    if curl_patch:
+        header += f" {WAN_ASYNC_PATCH_MARKER}"
     body = json.dumps(
         {"model": model, "prompt": "hi", "stream": False, "keep_alive": "30m"}
     )
@@ -235,14 +257,16 @@ def warmup_script(model: str) -> str:
         + json.dumps(body)
         + '.encode(), headers={"Content-Type": "application/json"}), timeout=600).read()'
     )
+    patch_lines = f"{curl_patch}\n" if curl_patch else ""
     return (
-        f"# {WARMUP_MARKER} {IPV6_MARKER} {WAN_DEPS_MARKER}\n"
+        f"{header}\n"
         "set -eu\n"
         "conf=/etc/nginx/conf.d/salad.conf\n"
         "if [ -f \"$conf\" ] && ! grep -q '\\[::\\]:8080' \"$conf\"; then\n"
         "  sed -i 's/listen 8080 default_server;/listen [::]:8080 default_server ipv6only=off;/' \"$conf\"\n"
         "fi\n"
         "python -m pip install -q dashscope\n"
+        f"{patch_lines}"
         "/opt/gpu/start.sh &\n"
         "spid=$!\n"
         "(\n"
@@ -271,11 +295,7 @@ def target_gateway_port(settings: Settings) -> int:
 
 def needs_gateway_patch(settings: Settings, state: GroupState) -> bool:
     text = _command_text(state)
-    if (
-        WARMUP_MARKER not in text
-        or IPV6_MARKER not in text
-        or WAN_DEPS_MARKER not in text
-    ):
+    if _warmup_command_stale(settings, text):
         return True
     # Salad sometimes omits networking.port. Unknown is not a mismatch.
     if state.port <= 0:
@@ -289,13 +309,13 @@ def patch_gateway(settings: Settings, state: GroupState) -> GroupState:
     port = target_gateway_port(settings)
     body: dict[str, Any] = {}
     text = _command_text(state)
-    if (
-        WARMUP_MARKER not in text
-        or IPV6_MARKER not in text
-        or WAN_DEPS_MARKER not in text
-    ):
+    if _warmup_command_stale(settings, text):
         body["container"] = {
-            "command": ["/bin/bash", "-c", warmup_script(_model_name(settings))]
+            "command": [
+                "/bin/bash",
+                "-c",
+                warmup_script(_model_name(settings), settings),
+            ]
         }
     if state.port > 0 and state.port != port:
         body["networking"] = {"port": port}

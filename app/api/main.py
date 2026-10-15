@@ -25,6 +25,7 @@ from app.api.routes import (
     health,
     jobs,
     maintenance,
+    salad_gpu_patch,
     operators,
     panel,
     proxies,
@@ -137,6 +138,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(health.router)
+    app.include_router(salad_gpu_patch.router)
     app.include_router(panel.router)
     app.include_router(auth.router)
     app.include_router(settings_routes.router)

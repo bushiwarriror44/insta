@@ -105,6 +105,9 @@ class Settings(BaseSettings):
     pollinations_video_url: str = Field(default="https://gen.pollinations.ai/video")
     pollinations_api_key: str = Field(default="")
     wan_base_url: str = Field(default="")
+    # Public HTTP base for Salad to curl generate_server.py (e.g. http://1.2.3.4:8000).
+    salad_gpu_patch_public_base: str = Field(default="")
+    salad_gpu_patch_token: str = Field(default="")
     # Salad's gateway cuts a silent POST after ~100s. Async submit+poll avoids that.
     # Also on when WAN_BASE_URL contains salad.cloud, even if this stays false.
     wan_async: bool = Field(default=False)

@@ -30,6 +30,22 @@ docker push ТВОЙ_ЛОГИН/insta-gpu:chat-wan
 
 Пересборка `docker build` на ПК по-прежнему нужна для **новых** узлов с нуля, но для уже работающей группы достаточно варианта 1 или 2.
 
+### Async Wan без пересборки образа (HTTP с Utah)
+
+Если на VPS только **IP без HTTPS**, можно раздавать свежий `generate_server.py` с **reels-api** (порт **8000**):
+
+1. В `.env` на Utah:
+   - `SALAD_GPU_PATCH_PUBLIC_BASE=http://ВАШ_ПУБЛИЧНЫЙ_IP:8000`
+   - `SALAD_GPU_PATCH_TOKEN=` длинная случайная строка (`openssl rand -hex 24`)
+   - `WAN_BASE_URL` уже указывает на Salad `/generate`
+2. Откройте **TCP 8000** в firewall VPS (Salad-узлы качают файл по HTTP).
+3. `docker compose up -d --build reels-api` (файл лежит в образе из репозитория).
+4. Проверка с ПК:  
+   `curl -fsSL "http://IP:8000/api/salad-gpu/generate_server.py?token=ТОКЕН" | head`
+5. Одно сообщение в нижний чат (или Start GPU в админке) — панель допишет в Command короткий `curl … -o /opt/gpu/generate_server.py` (маркер `wan-async-patch`). **Не** вставляйте base64 вручную.
+
+После Running: `POST` на `/generate` с `X-Async: 1` → **202** и `job_id`.
+
 ## Salad
 
 Stop старых групп (Ubuntu / чистый Ollama). Create container group:
