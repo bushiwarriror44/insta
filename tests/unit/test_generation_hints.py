@@ -35,3 +35,14 @@ def test_enrich_keeps_wan_traceback_without_url_hint():
 def test_enrich_empty_message_returns_hint_only():
     msg = enrich_generation_error("", backend="auto")
     assert msg.startswith(LOCAL_RENDER_HINT_MARKER)
+
+
+def test_enrich_524_names_the_salad_gateway_not_the_worker():
+    msg = enrich_generation_error(
+        "local: ошибка сервера 524 (generate)",
+        backend="local",
+    )
+    assert "шлюз Salad" in msg
+    assert "100" in msg
+    assert "контейнера worker" not in msg
+    assert "WAN_BASE_URL" not in msg

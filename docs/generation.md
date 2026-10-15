@@ -13,7 +13,7 @@
 | `fal` | `FAL_API_KEY`, модель Wan 2.5 5 или 10 с | прайс fal за секунду (`0.05` USD/с Wan 2.5 в коде) |
 | `huggingface` | свой `HF_TOKEN`, `HF_VIDEO_MODEL` | 0 |
 | `pollinations` | `POLLINATIONS_VIDEO_URL`; при 401/403 — проверьте `POLLINATIONS_API_KEY` (неверный ключ хуже пустого). В `auto` отказ по ключу **retryable** → следующий движок (`local`, …) | 0 |
-| `local` | `WAN_BASE_URL` (Comfy/Wan на отдельной GPU, не в compose панели). Образ чат+Wan для Salad: [`docker/salad-gpu`](../docker/salad-gpu/README.md) | 0 |
+| `local` | `WAN_BASE_URL` (Comfy/Wan на отдельной GPU, не в compose панели). Образ чат+Wan для Salad: [`docker/salad-gpu`](../docker/salad-gpu/README.md). Хост `*.salad.cloud` не держит один POST на всё время ролика: панель шлёт `X-Async: 1` и опрашивает задачу (шлюз Salad рвёт тишину через ~100 с, HTTP 524). Прямой GPU без Salad остаётся синхронным, пока не задан `WAN_ASYNC=true` | 0 |
 | `hfspace` | `HF_SPACE_ID`, experimental | 0 |
 | `slideshow` | `ffmpeg` в PATH на воркере | 0 |
 
@@ -36,6 +36,8 @@
 В нижнем чате агента **Ctrl+V** вставляет картинку (upload в библиотеку) и передаёт `filename` модели для `create_render` + `image_to_video`. Во время `wait_render` в чате видна панель прогресса рендера (статус и стадия).
 
 `local` перед запросом к `WAN_BASE_URL` выгружает модели Ollama (`keep_alive: 0`) и держит `data/gpu_slot.lock`, чтобы чат не забрал VRAM посреди ролика. Чат в это время отвечает, что GPU занята рендером. На одной 24 GB карте чат и видео всё равно не живут одновременно.
+
+Синхронный `POST /generate` через публичный хост `*.salad.cloud` не дожидается Wan: шлюз отвечает **524** примерно через 100 с, хотя контейнер ещё рендерит. Для таких URL (и при `WAN_ASYNC=true`) воркер сразу получает `job_id` и опрашивает `GET /generate/jobs/{id}`, затем скачивает mp4. Нужны образ GPU с этим API и пересобранный `reels-worker`.
 
 После постановки статус `queued`: рендерит **воркер**. В автономном run после `create_render` нужен `wait_render`, иначе `publish_now` упрётся в ещё не готовый файл.
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 from pathlib import Path
 
@@ -26,10 +27,11 @@ from app.generation.base import (
     ProgressCallback,
     VideoBackend,
 )
-from app.generation.download import save_response
+from app.generation.download import raise_http, save_response
 from app.services.gpu_slot import hold_for_video
 from app.services.http import client as http_client
 from app.services import runtime
+from app.services.salad_idle import touch
 
 
 class LocalVideoBackend(VideoBackend):
@@ -68,8 +70,6 @@ class LocalVideoBackend(VideoBackend):
     ) -> GenerationResult:
         if not self.healthcheck():
             raise GenerationError(self.health_detail())
-        from app.services.salad_idle import touch
-
         touch(self.settings)
         report = on_progress or (lambda _: None)
         report(Progress(STAGE_SUBMITTED))
@@ -105,17 +105,21 @@ class LocalVideoBackend(VideoBackend):
             with hold_for_video(self.settings):
                 report(Progress(STAGE_UNLOADING))
                 runtime.unload_loaded(self.settings)
-                with http_client(
-                    self.settings,
-                    timeout=self.settings.generation_timeout_seconds,
-                    headers=headers,
-                ) as client:
-                    report(Progress(STAGE_RENDERING))
-                    response = client.post(url, json=payload)
-                    if response.status_code == 404:
-                        response = client.post(f"{url}/generate", json=payload)
-                    report(Progress(STAGE_DOWNLOADING))
-                    path = save_response(client, response, destination, name=self.name)
+                if self._wan_async():
+                    with http_client(self.settings, timeout=60.0, headers=headers) as client:
+                        path = self._generate_async(client, url, payload, destination, report)
+                else:
+                    with http_client(
+                        self.settings,
+                        timeout=self.settings.generation_timeout_seconds,
+                        headers=headers,
+                    ) as client:
+                        report(Progress(STAGE_RENDERING))
+                        response = client.post(url, json=payload)
+                        if response.status_code == 404:
+                            response = client.post(f"{url}/generate", json=payload)
+                        report(Progress(STAGE_DOWNLOADING))
+                        path = save_response(client, response, destination, name=self.name)
         except httpx.RequestError as exc:
             raise GenerationError(f"local: {exc}", retryable=True) from exc
         return GenerationResult(
@@ -123,3 +127,77 @@ class LocalVideoBackend(VideoBackend):
             generator="local",
             backend=self.name,
         )
+
+    def _wan_async(self) -> bool:
+        if self.settings.wan_async:
+            return True
+        return "salad.cloud" in (self.settings.wan_base_url or "").lower()
+
+    def _generate_async(
+        self,
+        client: httpx.Client,
+        url: str,
+        payload: dict,
+        destination: Path,
+        report: ProgressCallback,
+    ) -> Path:
+        """Submit, poll, download. Each HTTP call stays well under Salad's ~100s cut."""
+        response = client.post(url, json=payload, headers={"X-Async": "1"})
+        base = url
+        if response.status_code == 404:
+            base = f"{url}/generate"
+            response = client.post(base, json=payload, headers={"X-Async": "1"})
+        if response.status_code == 200:
+            report(Progress(STAGE_DOWNLOADING))
+            return save_response(client, response, destination, name=self.name)
+        if response.status_code != 202:
+            raise_http(response, self.name, "generate")
+            raise GenerationError("local: async generate не вернул 202", retryable=True)
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise GenerationError("local: async generate вернул не JSON", retryable=True) from exc
+        job_id = str((body or {}).get("job_id") or "").strip()
+        if not job_id:
+            raise GenerationError("local: async generate без job_id", retryable=True)
+        return self._poll_job(client, base, job_id, destination, report)
+
+    def _poll_job(
+        self,
+        client: httpx.Client,
+        base: str,
+        job_id: str,
+        destination: Path,
+        report: ProgressCallback,
+    ) -> Path:
+        deadline = time.monotonic() + float(self.settings.generation_timeout_seconds)
+        interval = max(0.0, float(self.settings.generation_poll_seconds))
+        last_touch = time.monotonic()
+        status_url = f"{base}/jobs/{job_id}"
+        while True:
+            if time.monotonic() > deadline:
+                raise GenerationError("local: таймаут ожидания Wan", retryable=True)
+            response = client.get(status_url)
+            if response.status_code == 524:
+                time.sleep(interval)
+                continue
+            if response.status_code >= 400:
+                raise_http(response, self.name, "status")
+            try:
+                body = response.json()
+            except ValueError as exc:
+                raise GenerationError("local: статус Wan не JSON", retryable=True) from exc
+            status = str((body or {}).get("status") or "")
+            report(Progress(STAGE_RENDERING))
+            now = time.monotonic()
+            if now - last_touch >= 30:
+                touch(self.settings)
+                last_touch = now
+            if status == "failed":
+                err = str((body or {}).get("error") or "wan failed").strip() or "wan failed"
+                raise GenerationError(f"local: {err}", retryable=True)
+            if status == "done":
+                report(Progress(STAGE_DOWNLOADING))
+                file_response = client.get(f"{base}/jobs/{job_id}/file")
+                return save_response(client, file_response, destination, name=self.name)
+            time.sleep(interval)

@@ -14,9 +14,20 @@ _LOCAL_CHECK = (
     "в статусе «Работает» (карточка GPU), и доступность Wan из контейнера worker."
 )
 
+_SALAD_GATEWAY = (
+    "шлюз Salad оборвал ответ примерно через 100 с. "
+    "Длинный Wan идёт короткими запросами: обновите образ salad-gpu и reels-worker."
+)
+
 
 def enrich_generation_error(message: str, *, backend: str | None = None) -> str:
     text = (message or "").strip()
+    if "524" in text:
+        if "шлюз Salad" in text:
+            return text
+        if not text:
+            return _SALAD_GATEWAY
+        return f"{text} — {_SALAD_GATEWAY}"
     if LOCAL_RENDER_HINT_MARKER in text:
         return text
     # Wan already explained itself (missing package, CUDA). The generic URL hint hides that.
