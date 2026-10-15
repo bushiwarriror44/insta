@@ -19,6 +19,16 @@ _SALAD_GATEWAY = (
     "Длинный Wan идёт короткими запросами: обновите образ salad-gpu и reels-worker."
 )
 
+_GPU_BUSY = (
+    "GPU уже рендерит другой ролик. Дождитесь его или Stop/Start группы Salad. "
+    "Для async нужен новый образ salad-gpu."
+)
+
+
+def _gpu_busy(text: str) -> bool:
+    low = text.lower()
+    return "409" in text or "gpu already rendering" in low or "занят" in low
+
 
 def enrich_generation_error(message: str, *, backend: str | None = None) -> str:
     text = (message or "").strip()
@@ -28,6 +38,12 @@ def enrich_generation_error(message: str, *, backend: str | None = None) -> str:
         if not text:
             return _SALAD_GATEWAY
         return f"{text} — {_SALAD_GATEWAY}"
+    if _gpu_busy(text):
+        if "salad-gpu" in text or "Stop/Start" in text:
+            return text
+        if not text:
+            return _GPU_BUSY
+        return f"{text} — {_GPU_BUSY}"
     if LOCAL_RENDER_HINT_MARKER in text:
         return text
     # Wan already explained itself (missing package, CUDA). The generic URL hint hides that.

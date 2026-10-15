@@ -45,6 +45,15 @@ def raise_http(response: httpx.Response, name: str, stage: str) -> None:
         raise GenerationError(f"{name}: {stage} вернул 404", retryable=True)
     if response.status_code == 429:
         raise GenerationError(f"{name}: лимит запросов на {stage}", retryable=True)
+    if response.status_code == 409:
+        detail = _server_detail(response)
+        if stage == "file":
+            message = f"{name}: файл ещё не готов"
+        else:
+            message = f"{name}: Wan занят другим рендером"
+        if detail:
+            message = f"{message}: {detail}"
+        raise GenerationError(message, retryable=True)
     if response.status_code >= 500:
         message = f"{name}: ошибка сервера {response.status_code} ({stage})"
         detail = _server_detail(response)

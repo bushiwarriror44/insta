@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 
 from app.config import Settings
-from app.generation.base import GenerationRequest
+from app.generation.base import GenerationError, GenerationRequest
 from app.generation.local import LocalVideoBackend
 
 MP4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 16
@@ -85,6 +85,40 @@ def test_wan_async_flag_polls_a_direct_gpu(tmp_path: Path):
     result = _generate(backend, client, tmp_path)
     assert result.backend == "local"
     assert result.video_path.stat().st_size == len(MP4)
+
+
+def test_salad_retries_while_the_gpu_is_busy(tmp_path: Path):
+    backend = LocalVideoBackend(_settings(generation_timeout_seconds=30))
+    client = _client()
+    client.post.side_effect = [
+        httpx.Response(409, json={"detail": "GPU already rendering"}),
+        httpx.Response(202, json={"job_id": "later"}),
+    ]
+    client.get.side_effect = [
+        httpx.Response(200, json={"status": "done", "error": ""}),
+        httpx.Response(409, json={"detail": "job is not ready"}),
+        httpx.Response(200, content=MP4, headers={"content-type": "video/mp4"}),
+    ]
+    result = _generate(backend, client, tmp_path)
+    assert result.video_path.read_bytes() == MP4
+    assert client.post.call_count == 2
+
+
+def test_salad_200_without_job_means_the_gpu_image_is_old(tmp_path: Path):
+    backend = LocalVideoBackend(_settings())
+    client = _client()
+    client.post.return_value = httpx.Response(
+        200,
+        content=MP4,
+        headers={"content-type": "video/mp4"},
+    )
+    try:
+        _generate(backend, client, tmp_path)
+    except GenerationError as exc:
+        assert "без async API" in str(exc)
+        assert exc.retryable is False
+    else:
+        raise AssertionError("expected GenerationError")
 
 
 def test_direct_gpu_stays_synchronous(tmp_path: Path):

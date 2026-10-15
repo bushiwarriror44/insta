@@ -46,3 +46,14 @@ def test_enrich_524_names_the_salad_gateway_not_the_worker():
     assert "100" in msg
     assert "контейнера worker" not in msg
     assert "WAN_BASE_URL" not in msg
+
+
+def test_enrich_409_names_a_busy_gpu_not_the_worker():
+    msg = enrich_generation_error(
+        "local: generate завершился с кодом 409",
+        backend="local",
+    )
+    assert "GPU уже рендерит" in msg
+    assert "salad-gpu" in msg
+    assert "контейнера worker" not in msg
+    assert "WAN_BASE_URL" not in msg

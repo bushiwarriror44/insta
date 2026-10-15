@@ -17,6 +17,7 @@ from app.generation.base import (
     REF_MOTION_VIDEO,
     REF_START_IMAGE,
     STAGE_DOWNLOADING,
+    STAGE_QUEUED,
     STAGE_RENDERING,
     STAGE_SUBMITTED,
     STAGE_UNLOADING,
@@ -133,6 +134,12 @@ class LocalVideoBackend(VideoBackend):
             return True
         return "salad.cloud" in (self.settings.wan_base_url or "").lower()
 
+    def _busy_step(self) -> float:
+        poll = float(self.settings.generation_poll_seconds)
+        if poll < 5:
+            return max(0.0, poll)
+        return 15.0
+
     def _generate_async(
         self,
         client: httpx.Client,
@@ -142,17 +149,42 @@ class LocalVideoBackend(VideoBackend):
         report: ProgressCallback,
     ) -> Path:
         """Submit, poll, download. Each HTTP call stays well under Salad's ~100s cut."""
-        response = client.post(url, json=payload, headers={"X-Async": "1"})
         base = url
-        if response.status_code == 404:
-            base = f"{url}/generate"
+        tried_suffix = url.rstrip("/").endswith("/generate")
+        deadline = time.monotonic() + float(self.settings.generation_timeout_seconds)
+        step = self._busy_step()
+        while True:
             response = client.post(base, json=payload, headers={"X-Async": "1"})
-        if response.status_code == 200:
-            report(Progress(STAGE_DOWNLOADING))
-            return save_response(client, response, destination, name=self.name)
-        if response.status_code != 202:
+            if response.status_code == 404 and not tried_suffix:
+                base = f"{url}/generate"
+                tried_suffix = True
+                continue
+            if response.status_code == 202:
+                return self._accept_job(client, base, response, destination, report)
+            if response.status_code == 200:
+                return self._accept_immediate(client, base, response, destination, report)
+            if response.status_code == 409:
+                if time.monotonic() >= deadline:
+                    raise GenerationError(
+                        "local: GPU занята другим рендером. "
+                        "Дождитесь его или сделайте Stop/Start группы Salad.",
+                        retryable=True,
+                    )
+                report(Progress(STAGE_QUEUED))
+                touch(self.settings)
+                time.sleep(step)
+                continue
             raise_http(response, self.name, "generate")
             raise GenerationError("local: async generate не вернул 202", retryable=True)
+
+    def _accept_job(
+        self,
+        client: httpx.Client,
+        base: str,
+        response: httpx.Response,
+        destination: Path,
+        report: ProgressCallback,
+    ) -> Path:
         try:
             body = response.json()
         except ValueError as exc:
@@ -161,6 +193,33 @@ class LocalVideoBackend(VideoBackend):
         if not job_id:
             raise GenerationError("local: async generate без job_id", retryable=True)
         return self._poll_job(client, base, job_id, destination, report)
+
+    def _accept_immediate(
+        self,
+        client: httpx.Client,
+        base: str,
+        response: httpx.Response,
+        destination: Path,
+        report: ProgressCallback,
+    ) -> Path:
+        job_id = ""
+        ctype = (response.headers.get("content-type") or "").lower()
+        if "json" in ctype or response.content[:1] == b"{":
+            try:
+                body = response.json()
+            except ValueError:
+                body = None
+            if isinstance(body, dict):
+                job_id = str(body.get("job_id") or "").strip()
+        if job_id:
+            return self._poll_job(client, base, job_id, destination, report)
+        if "salad.cloud" in base.lower():
+            raise GenerationError(
+                "local: образ GPU без async API — пересоберите salad-gpu и сделайте Stop/Start группы Salad",
+                retryable=False,
+            )
+        report(Progress(STAGE_DOWNLOADING))
+        return save_response(client, response, destination, name=self.name)
 
     def _poll_job(
         self,
@@ -198,6 +257,12 @@ class LocalVideoBackend(VideoBackend):
                 raise GenerationError(f"local: {err}", retryable=True)
             if status == "done":
                 report(Progress(STAGE_DOWNLOADING))
-                file_response = client.get(f"{base}/jobs/{job_id}/file")
-                return save_response(client, file_response, destination, name=self.name)
+                while True:
+                    if time.monotonic() > deadline:
+                        raise GenerationError("local: таймаут ожидания Wan", retryable=True)
+                    file_response = client.get(f"{base}/jobs/{job_id}/file")
+                    if file_response.status_code == 409:
+                        time.sleep(interval)
+                        continue
+                    return save_response(client, file_response, destination, name=self.name)
             time.sleep(interval)
