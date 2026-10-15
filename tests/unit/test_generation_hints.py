@@ -25,6 +25,13 @@ def test_enrich_does_not_duplicate_marker():
     assert once.count(LOCAL_RENDER_HINT_MARKER) == 1
 
 
+def test_enrich_keeps_wan_traceback_without_url_hint():
+    raw = "ModuleNotFoundError: No module named 'dashscope'"
+    msg = enrich_generation_error(raw, backend="local")
+    assert msg == raw
+    assert LOCAL_RENDER_HINT_MARKER not in msg
+
+
 def test_enrich_empty_message_returns_hint_only():
     msg = enrich_generation_error("", backend="auto")
     assert msg.startswith(LOCAL_RENDER_HINT_MARKER)

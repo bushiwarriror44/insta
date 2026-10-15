@@ -19,6 +19,9 @@ def enrich_generation_error(message: str, *, backend: str | None = None) -> str:
     text = (message or "").strip()
     if LOCAL_RENDER_HINT_MARKER in text:
         return text
+    # Wan already explained itself (missing package, CUDA). The generic URL hint hides that.
+    if "ModuleNotFoundError" in text or "Traceback" in text:
+        return text
     hint = _LOCAL_CHECK if (backend or "").strip().lower() == "local" else _LOCAL_SWITCH
     if not text:
         return hint

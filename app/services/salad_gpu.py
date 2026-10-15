@@ -35,6 +35,7 @@ GATEWAY_PORT = 11434
 WAN_GATEWAY_PORT = 8080
 WARMUP_MARKER = "gpu-warmup"
 IPV6_MARKER = "gateway-ipv6"
+WAN_DEPS_MARKER = "wan-dashscope"
 LAUNCH_STATUS = "Запускаю видеокарту, подождите"
 WARM_STATUS = "Прогреваю модель, подождите"
 PHASE_PATCH = "Настраиваю шлюз"
@@ -235,12 +236,13 @@ def warmup_script(model: str) -> str:
         + '.encode(), headers={"Content-Type": "application/json"}), timeout=600).read()'
     )
     return (
-        f"# {WARMUP_MARKER} {IPV6_MARKER}\n"
+        f"# {WARMUP_MARKER} {IPV6_MARKER} {WAN_DEPS_MARKER}\n"
         "set -eu\n"
         "conf=/etc/nginx/conf.d/salad.conf\n"
         "if [ -f \"$conf\" ] && ! grep -q '\\[::\\]:8080' \"$conf\"; then\n"
         "  sed -i 's/listen 8080 default_server;/listen [::]:8080 default_server ipv6only=off;/' \"$conf\"\n"
         "fi\n"
+        "python -m pip install -q dashscope\n"
         "/opt/gpu/start.sh &\n"
         "spid=$!\n"
         "(\n"
@@ -269,7 +271,11 @@ def target_gateway_port(settings: Settings) -> int:
 
 def needs_gateway_patch(settings: Settings, state: GroupState) -> bool:
     text = _command_text(state)
-    if WARMUP_MARKER not in text or IPV6_MARKER not in text:
+    if (
+        WARMUP_MARKER not in text
+        or IPV6_MARKER not in text
+        or WAN_DEPS_MARKER not in text
+    ):
         return True
     # Salad sometimes omits networking.port. Unknown is not a mismatch.
     if state.port <= 0:
@@ -283,7 +289,11 @@ def patch_gateway(settings: Settings, state: GroupState) -> GroupState:
     port = target_gateway_port(settings)
     body: dict[str, Any] = {}
     text = _command_text(state)
-    if WARMUP_MARKER not in text or IPV6_MARKER not in text:
+    if (
+        WARMUP_MARKER not in text
+        or IPV6_MARKER not in text
+        or WAN_DEPS_MARKER not in text
+    ):
         body["container"] = {
             "command": ["/bin/bash", "-c", warmup_script(_model_name(settings))]
         }

@@ -39,12 +39,13 @@ RUN --mount=type=cache,id=ollama-qwen3-32b,target=/ollama-cache \
       rm -rf /opt/ollama/models; \
       cp -a /ollama-cache/models /opt/ollama/models'
 
+# dashscope is imported by Wan generate.py even when prompt extend is off.
 RUN git clone --depth 1 https://github.com/Wan-Video/Wan2.1.git /opt/wan \
  && pip install --no-cache-dir \
       "huggingface_hub[cli]" fastapi "uvicorn[standard]" \
       opencv-python-headless easydict ftfy imageio imageio-ffmpeg \
       diffusers transformers accelerate tqdm tokenizers \
-      einops sentencepiece protobuf
+      einops sentencepiece protobuf dashscope
 
 RUN --mount=type=cache,id=hf-wan-1.3b,target=/root/.cache/huggingface \
     hf download Wan-AI/Wan2.1-T2V-1.3B --local-dir /opt/wan/Wan2.1-T2V-1.3B

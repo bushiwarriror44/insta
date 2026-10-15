@@ -27,7 +27,7 @@ const account = { id: 1, username: "alice" };
 
 const apiMock = vi.hoisted(() => ({
   accounts: { list: vi.fn() },
-  videos: { list: vi.fn() },
+  videos: { list: vi.fn(), upload: vi.fn() },
   factory: {
     generations: vi.fn(),
     backends: vi.fn(),
@@ -130,10 +130,11 @@ describe("Renders page", () => {
     );
   });
 
-  it("queues a render with an explicit backend", async () => {
+  it("does not render a duplicate backend select", async () => {
     renderRenders();
     await screen.findByText("Ridge");
-    fireEvent.change(screen.getByRole("combobox", { name: /бэкенд/i }), { target: { value: "fal" } });
+    expect(screen.queryByRole("combobox", { name: /^бэкенд$/i })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^fal/i }));
     fireEvent.change(screen.getByPlaceholderText("Промпт"), { target: { value: "only fal" } });
     fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
     await waitFor(() =>
@@ -143,6 +144,72 @@ describe("Renders page", () => {
         account_id: undefined,
       })
     );
+  });
+
+  it("queues a render with a library image reference", async () => {
+    apiMock.videos.list.mockResolvedValue([
+      { filename: "still.jpg", media_type: "image", size_bytes: 12, modified_at: "" },
+    ]);
+    renderRenders();
+    await screen.findByText("Ridge");
+    fireEvent.change(screen.getByRole("combobox", { name: /или из библиотеки/i }), {
+      target: { value: "still.jpg" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Промпт"), { target: { value: "like this still" } });
+    fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
+    await waitFor(() =>
+      expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
+        prompt: "like this still",
+        backend: "auto",
+        account_id: undefined,
+        input_mode: "image_to_video",
+        reference_filename: "still.jpg",
+        reference_role: "start_image",
+      })
+    );
+  });
+
+  it("uploads a dropped image and sends it as the reference", async () => {
+    apiMock.videos.upload.mockResolvedValue({
+      filename: "paste.png",
+      media_type: "image",
+      size_bytes: 8,
+    });
+    renderRenders();
+    await screen.findByText("Ridge");
+    const file = new File([new Uint8Array([1, 2, 3])], "paste.png", { type: "image/png" });
+    fireEvent.change(screen.getByLabelText(/выбрать файл референса/i), {
+      target: { files: [file] },
+    });
+    expect(await screen.findByText("paste.png")).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("Промпт"), { target: { value: "match the frame" } });
+    fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
+    await waitFor(() =>
+      expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
+        prompt: "match the frame",
+        backend: "auto",
+        account_id: undefined,
+        input_mode: "image_to_video",
+        reference_filename: "paste.png",
+        reference_role: "start_image",
+      })
+    );
+  });
+
+  it("refuses Ken Burns when the reference is a video", async () => {
+    apiMock.videos.list.mockResolvedValue([
+      { filename: "motion.mp4", media_type: "video", size_bytes: 20, modified_at: "" },
+    ]);
+    renderRenders();
+    await screen.findByText("Ridge");
+    fireEvent.change(screen.getByRole("combobox", { name: /или из библиотеки/i }), {
+      target: { value: "motion.mp4" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /ken burns/i }));
+    fireEvent.change(screen.getByPlaceholderText("Промпт"), { target: { value: "pan" } });
+    fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
+    expect(await screen.findByText(/ken burns работает только с фото/i)).toBeInTheDocument();
+    expect(apiMock.factory.createGeneration).not.toHaveBeenCalled();
   });
 
   it("queues a render after clicking a backend chip", async () => {

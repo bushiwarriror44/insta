@@ -14,6 +14,14 @@ import { useAssistantMutate } from "../lib/assistantMutate";
 import { withLocalRenderHint } from "../lib/renderErrors";
 import { retryGenerationOnLocal } from "../lib/pollGeneration";
 import { RenderLocalSwitchModal, type LocalSwitchOffer } from "../components/RenderLocalSwitchModal";
+import { RenderReferenceField } from "../components/RenderReferenceField";
+import {
+  clipboardMediaFile,
+  modeForMedia,
+  uploadRenderReference,
+  type RenderInputMode,
+  type RenderReference,
+} from "../lib/referenceUpload";
 import type { AccountOut, RenderBackendOut } from "../api/types";
 
 type Gen = {
@@ -34,6 +42,38 @@ function backendLabel(name: string) {
   return name === "auto" ? "Авто" : name;
 }
 
+function referenceMismatch(reference: RenderReference | null, inputMode: RenderInputMode): string | null {
+  if (!reference) return null;
+  if (inputMode === "image_slideshow" && reference.mediaType !== "image") {
+    return "Ken Burns работает только с фото. Выберите изображение или режим «По видео».";
+  }
+  if (inputMode === "video_to_video" && reference.mediaType !== "video") {
+    return "Режим «По видео» нужен короткий ролик. Для картинки выберите «По фото».";
+  }
+  if (inputMode === "image_to_video" && reference.mediaType !== "image") {
+    return "Режим «По фото» нужен кадр-картинку. Для ролика выберите «По видео».";
+  }
+  return null;
+}
+
+function referenceBackendNote(
+  backends: RenderBackendOut[],
+  backend: string,
+  reference: RenderReference | null,
+  inputMode: RenderInputMode
+): string | null {
+  if (!reference || (backend !== "local" && backend !== "auto")) return null;
+  const engine = backends.find((item) => item.name === backend);
+  if (!engine) return null;
+  if (inputMode === "image_to_video" && engine.supports_i2v === false) {
+    return "Выбранный движок не принимает фото как референс. «Авто» пропустит неподходящие движки в цепочке.";
+  }
+  if (inputMode === "video_to_video" && engine.supports_v2v === false) {
+    return "Выбранный движок не принимает видео-референс. «Авто» пропустит неподходящие движки в цепочке.";
+  }
+  return null;
+}
+
 export function Renders() {
   const { push } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -48,8 +88,9 @@ export function Renders() {
   const [accountId, setAccountId] = useState<number | "">("");
   const [joinIds, setJoinIds] = useState("");
   const [libraryFiles, setLibraryFiles] = useState<Array<{ filename: string; media_type: string }>>([]);
-  const [referenceFilename, setReferenceFilename] = useState("");
-  const [inputMode, setInputMode] = useState("");
+  const [reference, setReference] = useState<RenderReference | null>(null);
+  const [inputMode, setInputMode] = useState<RenderInputMode>("");
+  const [uploadingReference, setUploadingReference] = useState(false);
   const [localOffer, setLocalOffer] = useState<LocalSwitchOffer | null>(null);
   const [localOfferBusy, setLocalOfferBusy] = useState(false);
   const highlightRef = useRef<HTMLTableRowElement | null>(null);
@@ -132,104 +173,135 @@ export function Renders() {
   return (
     <div className="space-y-6">
       <PageHeader icon={Clapperboard} title="Рендеры и склейки" />
-      <Card className="p-4 space-y-3">
-        <h2 className="font-medium">Новый рендер</h2>
+      <Card className="space-y-4 p-4 sm:p-5">
+        <div className="space-y-1">
+          <h2 className="font-medium">Новый рендер</h2>
+          <p className="text-sm text-slate-400">
+            Опишите ролик. При желании приложите пример кадра или короткое видео — генерация
+            возьмёт его за основу.
+          </p>
+        </div>
         {backends.length ? (
-          <div className="flex flex-wrap gap-2 text-sm">
-            {backends.map((engine) => (
-              <button
-                key={engine.name}
-                type="button"
-                title={engine.detail || engine.licence}
-                aria-pressed={backend === engine.name}
-                onClick={() => setBackend(engine.name)}
-                className={clsx(
-                  "rounded-full px-2.5 py-1 text-xs ring-1 transition-colors",
-                  backend === engine.name
-                    ? "bg-brand-600/20 text-brand-200 ring-brand-500/40"
-                    : engine.healthy
-                      ? "text-emerald-400 ring-emerald-500/30 hover:bg-emerald-500/10"
-                      : "text-slate-500 ring-slate-700 hover:bg-slate-800/60"
-                )}
-              >
-                {backendLabel(engine.name)}
-                {engine.experimental ? " · exp" : ""}
-                {engine.healthy ? " · ок" : " · нет"}
-              </button>
-            ))}
+          <div className="space-y-2">
+            <div className="text-sm text-slate-200">Движок</div>
+            <div className="flex flex-wrap gap-2">
+              {backends.map((engine) => (
+                <button
+                  key={engine.name}
+                  type="button"
+                  title={engine.detail || engine.licence}
+                  aria-pressed={backend === engine.name}
+                  onClick={() => setBackend(engine.name)}
+                  className={clsx(
+                    "rounded-full px-2.5 py-1 text-xs ring-1 transition-colors",
+                    backend === engine.name
+                      ? "bg-brand-600/20 text-brand-200 ring-brand-500/40"
+                      : engine.healthy
+                        ? "text-emerald-400 ring-emerald-500/30 hover:bg-emerald-500/10"
+                        : "text-slate-500 ring-slate-700 hover:bg-slate-800/60"
+                  )}
+                >
+                  {backendLabel(engine.name)}
+                  {engine.experimental ? " · exp" : ""}
+                  {engine.healthy ? " · ок" : " · нет"}
+                </button>
+              ))}
+            </div>
           </div>
         ) : null}
-        <textarea className="input min-h-[80px]" placeholder="Промпт" value={prompt} onChange={(e) => setPrompt(e.target.value)} />
-        <select
-          className="input"
-          aria-label="бэкенд"
-          value={backend}
-          onChange={(e) => setBackend(e.target.value)}
-        >
-          {(backends.length ? backends : [{ name: "auto", healthy: true }]).map((engine) => (
-            <option key={engine.name} value={engine.name}>
-              {backendLabel(engine.name)}
-              {engine.healthy === false ? " (нет)" : ""}
-            </option>
-          ))}
-        </select>
-        <select
-          className="input"
-          aria-label="аккаунт"
-          value={accountId}
-          onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")}
-        >
-          <option value="">без аккаунта</option>
-          {accounts.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.username}
-            </option>
-          ))}
-        </select>
-        <select
-          className="input"
-          aria-label="режим входа"
-          value={inputMode}
-          onChange={(e) => setInputMode(e.target.value)}
-        >
-          <option value="">авто (только промпт)</option>
-          <option value="image_to_video">фото → видео (I2V)</option>
-          <option value="video_to_video">видео → видео (V2V)</option>
-          <option value="image_slideshow">фото → Ken Burns (ffmpeg)</option>
-        </select>
-        <select
-          className="input"
-          aria-label="референс из библиотеки"
-          value={referenceFilename}
-          onChange={(e) => setReferenceFilename(e.target.value)}
-        >
-          <option value="">без референса</option>
-          {libraryFiles.map((f) => (
-            <option key={f.filename} value={f.filename}>
-              {f.media_type === "image" ? "🖼 " : "🎬 "}
-              {f.filename}
-            </option>
-          ))}
-        </select>
+        <label className="block text-sm text-slate-200">
+          Описание видео
+          <textarea
+            className="input mt-1 min-h-[96px]"
+            placeholder="Промпт"
+            aria-label="Описание видео"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            onPaste={(event) => {
+              const file = clipboardMediaFile(event.nativeEvent);
+              if (!file || !file.type.startsWith("image/")) return;
+              event.preventDefault();
+              setUploadingReference(true);
+              void uploadRenderReference(file)
+                .then((next) => {
+                  setReference(next);
+                  setInputMode(modeForMedia(next.mediaType));
+                  setLibraryFiles((prev) =>
+                    prev.some((item) => item.filename === next.filename)
+                      ? prev
+                      : [...prev, { filename: next.filename, media_type: next.mediaType }]
+                  );
+                })
+                .catch((err) => push(formatApiError(err), "error"))
+                .finally(() => setUploadingReference(false));
+            }}
+          />
+          <span className="mt-1 block text-xs text-slate-500">
+            Ctrl+V — вставить картинку как пример кадра
+          </span>
+        </label>
+        <RenderReferenceField
+          value={reference}
+          libraryFiles={libraryFiles}
+          inputMode={inputMode}
+          disabled={uploadingReference}
+          backendNote={referenceBackendNote(backends, backend, reference, inputMode)}
+          onChange={(next) => {
+            setReference(next);
+            if (!next) return;
+            setLibraryFiles((prev) =>
+              prev.some((item) => item.filename === next.filename)
+                ? prev
+                : [...prev, { filename: next.filename, media_type: next.mediaType }]
+            );
+          }}
+          onInputModeChange={setInputMode}
+        />
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <label className="block text-sm text-slate-200">
+            Аккаунт (необязательно)
+            <select
+              className="input mt-1"
+              aria-label="аккаунт"
+              value={accountId}
+              onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")}
+            >
+              <option value="">без аккаунта</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.username}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
         <button
           className="btn-primary"
-          disabled={!prompt.trim()}
+          disabled={!prompt.trim() || uploadingReference}
           onClick={async () => {
+            const mismatch = referenceMismatch(reference, inputMode);
+            if (mismatch) {
+              push(mismatch, "error");
+              return;
+            }
             try {
-              const ref = referenceFilename.trim();
-              const role = libraryFiles.find((f) => f.filename === ref)?.media_type === "video"
-                ? "motion_video"
-                : "start_image";
+              const ref = reference?.filename ?? "";
+              const role = reference?.mediaType === "video" ? "motion_video" : "start_image";
               const created = await api.factory.createGeneration({
                 prompt: prompt.trim(),
                 backend: inputMode === "image_slideshow" ? "slideshow" : backend,
                 account_id: typeof accountId === "number" ? accountId : undefined,
-                input_mode: inputMode || undefined,
-                reference_filename: ref || undefined,
-                reference_role: ref ? role : undefined,
+                ...(ref
+                  ? {
+                      input_mode: inputMode || undefined,
+                      reference_filename: ref,
+                      reference_role: role,
+                    }
+                  : {}),
               });
               setPrompt("");
-              setReferenceFilename("");
+              setReference(null);
+              setInputMode("");
               const href = created?.id ? `/renders?gen=${created.id}` : "/renders";
               push("Рендер в очереди", "success", { label: "Открыть", href });
               if (created?.id) {

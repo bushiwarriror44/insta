@@ -4,6 +4,8 @@ set -euo pipefail
 export OLLAMA_HOST="${OLLAMA_HOST:-0.0.0.0:11434}"
 export PYTHONPATH="${WAN_DIR:-/opt/wan}"
 
+python -c "import dashscope" 2>/dev/null || python -m pip install -q dashscope
+
 cleanup() {
   kill "$OLLAMA_PID" "$WAN_PID" 2>/dev/null || true
 }
