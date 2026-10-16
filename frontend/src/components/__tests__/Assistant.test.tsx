@@ -575,6 +575,39 @@ describe("Assistant", () => {
     expect(screen.getByText("Рассуждение").closest("details")).toHaveAttribute("open");
   });
 
+  it("keeps a live reasoning block open and appends the next chunk", async () => {
+    let release: (() => void) | undefined;
+    askMock.mockImplementationOnce(
+      (_messages, onStep) =>
+        new Promise<void>((resolve) => {
+          onStep({ type: "think", text: "проверяю воркер" });
+          onStep({ type: "think", text: " и логи" });
+          release = () => {
+            onStep({
+              type: "done",
+              reply: "воркер запущен",
+              open_url: null,
+              opened: null,
+              used: [],
+              images: [],
+              thinking: "проверяю воркер и логи",
+            });
+            resolve();
+          };
+        })
+    );
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "привет");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    const summary = await screen.findByText("Рассуждение");
+    expect(summary.closest("details")).toHaveAttribute("open");
+    expect(screen.getByText("проверяю воркер и логи")).toBeInTheDocument();
+    expect(summary.closest("details")?.querySelector("p")?.className).toMatch(/max-h-64/);
+    release?.();
+    expect(await screen.findByText("воркер запущен")).toBeInTheDocument();
+  });
+
   it("keeps two chats apart and renames the active one", async () => {
     askMock.mockImplementation(async (messages, onStep) => {
       const last = (messages as Array<{ content: string }>).at(-1)?.content ?? "";

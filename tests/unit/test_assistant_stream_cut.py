@@ -30,6 +30,36 @@ class AlwaysCut(httpx.BaseTransport):
         )
 
 
+def test_complete_treats_length_as_a_cut(app_env, monkeypatch):
+    monkeypatch.setattr(settings, "agent_base_url", "https://example/v1", raising=True)
+    body = (
+        'data: {"choices":[{"delta":{"content":"<think>долго"},"finish_reason":null}]}\n\n'
+        'data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\n'
+        "data: [DONE]\n\n"
+    )
+
+    class Length(httpx.BaseTransport):
+        def handle_request(self, request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, text=body)
+
+    with httpx.Client(transport=Length()) as client:
+        gen = _complete(
+            client,
+            settings,
+            [{"role": "user", "content": "hi"}],
+            [],
+            tools=[],
+        )
+        try:
+            while True:
+                next(gen)
+        except StopIteration as stop:
+            message = stop.value
+    assert message["cut"] == "Ответ оборвался на шлюзе."
+    assert "долго" in message["thinking"]
+    assert message["content"] == ""
+
+
 def test_complete_retries_once_after_a_cut(app_env, monkeypatch):
     monkeypatch.setattr(settings, "agent_base_url", "https://example/v1", raising=True)
     transport = CutThenOk()
@@ -529,6 +559,71 @@ def test_stream_auto_continues_after_a_partial_cut(app_env, monkeypatch, db_sess
     assert any("Продолжи" in text for text in prompts)
     assert think_flags[0] is True
     assert think_flags[1] is False
+
+
+def test_stream_resumes_a_cut_thought(app_env, monkeypatch, db_session):
+    from app.assistant import chat
+    from app.config import Settings
+
+    monkeypatch.setattr(chat, "salad_configured", lambda _s=None: False)
+    monkeypatch.setattr(chat, "_prepare_runtime", lambda _s: None)
+    monkeypatch.setattr(settings, "agent_base_url", "https://example/v1", raising=True)
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(chat, "http_client", lambda *a, **k: FakeClient())
+    n = {"i": 0}
+    think_flags: list[bool] = []
+    prompts: list[str] = []
+    assistant_bits: list[str] = []
+
+    def fake_complete(client, settings_obj, thread, said, **kwargs):
+        if False:
+            yield chat.Step(kind="token", text="")
+        think_flags.append(kwargs.get("include_think", True))
+        n["i"] += 1
+        if n["i"] == 1:
+            yield chat.Step(kind="think", text="проверяю воркер")
+            return {
+                "role": "assistant",
+                "content": "",
+                "thinking": "проверяю воркер",
+                "cut": chat.CUT_NOTE,
+            }
+        prompts.append(thread[-1]["content"])
+        assistant_bits.append(thread[-2]["content"])
+        said.append("воркер запущен")
+        yield chat.Step(kind="token", text="воркер запущен")
+        return {
+            "role": "assistant",
+            "content": "воркер запущен",
+            "thinking": " и логи",
+            "cut": "",
+        }
+
+    monkeypatch.setattr(chat, "_complete", fake_complete)
+    steps = list(
+        chat.stream(
+            db_session,
+            [{"role": "user", "content": "ты здесь?"}],
+            settings=Settings(_env_file=None),
+            rounds=1,
+        )
+    )
+    answer = steps[-1]
+    assert isinstance(answer, chat.Answer)
+    assert answer.reply == "воркер запущен"
+    assert "проверяю воркер" in answer.thinking
+    assert "и логи" in answer.thinking
+    assert think_flags == [True, True]
+    assert assistant_bits[0].startswith("<think>проверяю воркер")
+    assert "</think>" not in assistant_bits[0]
+    assert any("Рассуждение оборвалось" in text for text in prompts)
 
 
 def test_stream_keeps_cut_after_continue_budget(app_env, monkeypatch, db_session):

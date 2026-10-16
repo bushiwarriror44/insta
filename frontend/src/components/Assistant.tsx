@@ -183,11 +183,16 @@ interface Said {
 function Reason({ text, live }: { text: string; live: boolean }) {
   const [open, setOpen] = useState(live);
   const wasLive = useRef(live);
+  const body = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
     if (live && !wasLive.current) setOpen(true);
     if (!live && wasLive.current) setOpen(false);
     wasLive.current = live;
   }, [live]);
+  useEffect(() => {
+    if (!live || !body.current) return;
+    body.current.scrollTop = body.current.scrollHeight;
+  }, [live, text]);
   if (!text.trim()) return null;
   return (
     <details
@@ -196,7 +201,15 @@ function Reason({ text, live }: { text: string; live: boolean }) {
       className="mb-1"
     >
       <summary className="cursor-pointer text-xs text-slate-500">Рассуждение</summary>
-      <p className="mt-1 max-h-36 overflow-y-auto whitespace-pre-wrap text-xs text-slate-400">{text}</p>
+      <p
+        ref={body}
+        className={clsx(
+          "mt-1 overflow-y-auto whitespace-pre-wrap text-xs text-slate-400",
+          live ? "max-h-64" : "max-h-36"
+        )}
+      >
+        {text}
+      </p>
     </details>
   );
 }

@@ -2061,11 +2061,20 @@ def stream(
                 while cut and continues < MAX_CONTINUES and (reply.strip() or thoughts):
                     continues += 1
                     yield Step(kind="status", text=CONTINUE_STATUS)
-                    prior = reply.strip() or "…"
+                    think_only = not reply.strip() and bool(thoughts)
+                    if think_only:
+                        partial = "\n".join(part.strip() for part in thoughts if part.strip())
+                        prior = f"<think>{partial}"
+                        prompt = CONTINUE_THINK_PROMPT
+                        keep_think = True
+                    else:
+                        prior = reply.strip() or "…"
+                        prompt = CONTINUE_PROMPT
+                        keep_think = False
                     round_thread = [
                         *thread,
                         {"role": "assistant", "content": prior},
-                        {"role": "user", "content": CONTINUE_PROMPT},
+                        {"role": "user", "content": prompt},
                     ]
                     more_said: list[str] = []
                     message = yield from _complete(
@@ -2074,7 +2083,7 @@ def stream(
                         round_thread,
                         more_said,
                         tools=specs,
-                        include_think=False,
+                        include_think=keep_think,
                     )
                     more_thought = str(message.pop("thinking", "") or "")
                     cut = str(message.pop("cut", "") or "")
@@ -2428,6 +2437,7 @@ def _complete(
         )
         held: list[str] = []
         media_line = False
+        length_cut = False
         try:
             # A 415 means the gateway refused the JSON shape. The retry is a
             # plain OpenAI body with an explicit content type and length.
@@ -2473,6 +2483,8 @@ def _complete(
                         if _delta(line) is None and _only_media([line]):
                             media_line = True
                             break
+                        if _finish_reason(line) == "length":
+                            length_cut = True
                         delta = _delta(line)
                         if delta is None:
                             continue
@@ -2599,6 +2611,12 @@ def _complete(
                     thinking = Thinking()
                     continue
                 raise AssistantError(FORMAT_ERROR, retryable=True)
+            if (
+                length_cut
+                and not _calls_ready(calls)
+                and ("".join(content).strip() or "".join(thought).strip())
+            ):
+                cut = True
         break
 
     message: dict[str, Any] = {
@@ -2617,6 +2635,10 @@ CONTINUE_STATUS = "Продолжаю ответ…"
 CONTINUE_PROMPT = (
     "Продолжи ответ с того места, где оборвался. "
     "Не повторяй уже написанное. Не начинай сначала."
+)
+CONTINUE_THINK_PROMPT = (
+    "Рассуждение оборвалось на шлюзе. Продолжи его с этого места, "
+    "затем закрой </think> и дай ответ оператору. Не повторяй уже написанное."
 )
 MAX_CONTINUES = 3
 
@@ -2732,6 +2754,22 @@ def _raise_for(response: httpx.Response, url: str) -> None:
             retryable=True,
         )
     raise AssistantError(f"модель отклонила запрос: {response.text[:200]}")
+
+
+def _finish_reason(line: str) -> str:
+    if not line.startswith("data:"):
+        return ""
+    payload = line[5:].strip()
+    if not payload or payload == "[DONE]":
+        return ""
+    try:
+        choice = json.loads(payload)["choices"][0]
+    except (KeyError, IndexError, ValueError, TypeError):
+        return ""
+    if not isinstance(choice, dict):
+        return ""
+    reason = choice.get("finish_reason")
+    return reason if isinstance(reason, str) else ""
 
 
 def _delta(line: str) -> dict[str, Any] | None:
