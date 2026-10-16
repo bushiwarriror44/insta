@@ -41,7 +41,10 @@ WAN_GATEWAY_PORT = 8080
 WARMUP_MARKER = "gpu-warmup"
 IPV6_MARKER = "gateway-ipv6"
 WAN_DEPS_MARKER = "wan-dashscope"
+SEND_START = "Отправляю Start в Salad…"
 LAUNCH_STATUS = "Запускаю видеокарту, подождите"
+START_NOT_SENT = "Не удалось отправить Start в Salad, группа осталась остановленной."
+API_DOWN = "API Salad не отвечает. Напишите снова через минуту."
 WARM_STATUS = "Прогреваю модель, подождите"
 PHASE_PATCH = "Настраиваю шлюз"
 PHASE_NODE = "Жду узел"
@@ -500,7 +503,9 @@ def prepare_for_chat(
     def fetch_group(
         *,
         attempts: int = POLL_API_ATTEMPTS,
+        pulling: bool = False,
     ) -> Generator[PrepStatus, None, GroupState]:
+        exhausted = API_DOWN_WHILE_PULL if pulling else API_DOWN
         for attempt in range(1, attempts + 1):
             try:
                 return get_group(settings)
@@ -508,7 +513,7 @@ def prepare_for_chat(
                 if not _api_unreachable(exc):
                     raise
                 if attempt >= attempts:
-                    raise SaladProblem(API_DOWN_WHILE_PULL) from None
+                    raise SaladProblem(exhausted) from None
                 yield emit(
                     PHASE_API,
                     2,
@@ -516,13 +521,14 @@ def prepare_for_chat(
                     extra=f"попытка {attempt}",
                 )
                 pause(POLL_S)
-        raise SaladProblem(API_DOWN_WHILE_PULL)
+        raise SaladProblem(exhausted)
 
     def call_action(
-        action: Callable[[], GroupState],
+        action: Callable[[], Any],
         *,
         attempts: int = ACTION_API_ATTEMPTS,
-    ) -> Generator[PrepStatus, None, GroupState]:
+        exhausted: str = API_DOWN,
+    ) -> Generator[PrepStatus, None, Any]:
         for attempt in range(1, attempts + 1):
             try:
                 return action()
@@ -530,7 +536,7 @@ def prepare_for_chat(
                 if exc.status_code == 409 or not _api_unreachable(exc):
                     raise
                 if attempt >= attempts:
-                    raise SaladProblem(API_DOWN_WHILE_PULL) from None
+                    raise SaladProblem(exhausted) from None
                 yield emit(
                     PHASE_API,
                     2,
@@ -538,7 +544,7 @@ def prepare_for_chat(
                     extra=f"попытка {attempt}",
                 )
                 pause(POLL_S)
-        raise SaladProblem(API_DOWN_WHILE_PULL)
+        raise SaladProblem(exhausted)
 
     state = yield from fetch_group()
     patch_after_pull = False
@@ -552,13 +558,17 @@ def prepare_for_chat(
             _touch(settings)
     if state.status != "running":
         if state.status in START_READY:
-            yield emit(_launch_title(state), 2, soft_s=START_WAIT_S, force_milestone=True)
+            yield emit(SEND_START, 2, soft_s=60, force_milestone=True)
             try:
-                state = yield from call_action(lambda: start_group(settings))
+                yield from call_action(
+                    lambda: request_start(settings),
+                    exhausted=START_NOT_SENT,
+                )
             except SaladProblem as exc:
                 if exc.status_code != 409:
                     raise
-                state = yield from fetch_group()
+            yield emit(LAUNCH_STATUS, 2, soft_s=START_WAIT_S, force_milestone=True)
+            state = yield from fetch_group()
             _touch(settings)
         wait_started = clock()
         non_pull_started: float | None = None
@@ -580,7 +590,7 @@ def prepare_for_chat(
                 soft = START_WAIT_S
             yield emit(_launch_title(state), 2, soft_s=soft, extra=state.status)
             pause(POLL_S)
-            state = yield from fetch_group()
+            state = yield from fetch_group(pulling=state.still_pulling)
             _touch(settings)
     if patch_after_pull and needs_gateway_patch(settings, state):
         yield emit(PHASE_PATCH, 1, soft_s=60, force_milestone=True)
@@ -719,6 +729,12 @@ def _post_action(settings: Settings, action: str) -> None:
         raise SaladProblem(SALAD_UNREACHABLE) from None
     if response.status_code not in {200, 202}:
         _raise_http(response)
+
+
+def request_start(settings: Settings | None = None) -> None:
+    """POST /start only. The caller already knows the group is stopped."""
+    settings = require_configured(settings)
+    _post_action(settings, "start")
 
 
 def start_group(settings: Settings | None = None) -> GroupState:

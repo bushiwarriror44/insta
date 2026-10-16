@@ -199,6 +199,24 @@ describe("Assistant", () => {
     expect(screen.getByText(/инстанс может ещё загружаться/i)).toBeInTheDocument();
   });
 
+  it("does not pretend the image is downloading when Start was not sent", async () => {
+    askMock.mockImplementationOnce(async (_messages, onStep) => {
+      onStep({ type: "progress", text: "Отправляю Start в Salad…", detail: "попытка 2", ratio: 0.2 });
+      onStep({
+        type: "error",
+        detail: "Не удалось отправить Start в Salad, группа осталась остановленной.",
+        retryable: true,
+      });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "привет");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect(await screen.findByText(/осталась остановленной/i)).toBeInTheDocument();
+    expect(screen.queryByText(/инстанс может ещё загружаться/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  });
+
   it("asks for clarifications and sends them as the next message", async () => {
     askMock.mockImplementationOnce(async (_messages, onStep) => {
       onStep({ type: "ask", questions: ["какой username?"], text: "нужен логин" });

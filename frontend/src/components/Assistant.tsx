@@ -704,10 +704,12 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                 askAnswers: {},
               });
             } else if (step.type === "error") {
-              const detail = step.retryable
-                ? `${step.detail} Инстанс может ещё загружаться — подождите Running в Salad.`
-                : step.detail;
-              if (step.retryable) keepProgress = true;
+              const stillPulling = /кача/i.test(step.detail);
+              const detail =
+                step.retryable && stillPulling
+                  ? `${step.detail} Инстанс может ещё загружаться — подождите Running в Salad.`
+                  : step.detail;
+              if (stillPulling) keepProgress = true;
               if (writingRef.current[id] || (thinkRef.current[id] ?? "").trim() || (doingRef.current[id] ?? []).length) {
                 keepPartial(detail);
               } else {

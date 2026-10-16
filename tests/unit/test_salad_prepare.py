@@ -66,9 +66,8 @@ def test_prepare_starts_stopped_group_and_waits_until_the_model_is_loaded(app_en
     running = _group("running")
     seen: list[str] = []
 
-    def start_group(settings=None):
+    def request_start(settings=None):
         seen.append("start")
-        return running
 
     calls = {"n": 0}
 
@@ -79,7 +78,7 @@ def test_prepare_starts_stopped_group_and_waits_until_the_model_is_loaded(app_en
         return running
 
     monkeypatch.setattr(salad_gpu, "get_group", sequence)
-    monkeypatch.setattr(salad_gpu, "start_group", start_group)
+    monkeypatch.setattr(salad_gpu, "request_start", request_start)
     with respx.mock:
         respx.get(f"{ORIGIN}/").mock(return_value=httpx.Response(200, text="Ollama is running"))
         respx.get(f"{ORIGIN}/api/ps").mock(
@@ -340,7 +339,7 @@ def test_prepare_reports_deploying_and_model_phases(app_env, monkeypatch):
         return httpx.Response(200, json={"models": [{"name": "qwen3:32b"}]})
 
     monkeypatch.setattr(salad_gpu, "get_group", sequence)
-    monkeypatch.setattr(salad_gpu, "start_group", lambda settings=None: sequence())
+    monkeypatch.setattr(salad_gpu, "request_start", lambda settings=None: None)
     with respx.mock:
         respx.get(f"{ORIGIN}/").mock(return_value=httpx.Response(200, text="Ollama is running"))
         respx.get(f"{ORIGIN}/api/ps").mock(side_effect=ps_side_effect)
@@ -386,7 +385,7 @@ def test_prepare_waits_through_a_long_image_pull(app_env, monkeypatch):
         clock["t"] += 10 * 60
 
     monkeypatch.setattr(salad_gpu, "get_group", sequence)
-    monkeypatch.setattr(salad_gpu, "start_group", lambda settings=None: sequence())
+    monkeypatch.setattr(salad_gpu, "request_start", lambda settings=None: None)
     with respx.mock:
         respx.get(f"{ORIGIN}/").mock(return_value=httpx.Response(200, text="Ollama is running"))
         respx.get(f"{ORIGIN}/api/ps").mock(
@@ -507,7 +506,7 @@ def test_prepare_defers_gateway_patch_until_the_node_is_running(app_env, monkeyp
     assert base == f"{ORIGIN}/v1"
 
 
-def test_prepare_says_api_may_still_be_pulling_after_retries(app_env, monkeypatch):
+def test_prepare_says_api_is_down_before_any_status(app_env, monkeypatch):
     _enable(monkeypatch)
 
     def down(settings=None):
@@ -515,9 +514,37 @@ def test_prepare_says_api_may_still_be_pulling_after_retries(app_env, monkeypatc
 
     monkeypatch.setattr(salad_gpu, "get_group", down)
     gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None)
-    with pytest.raises(SaladProblem, match="может ещё качать образ"):
+    with pytest.raises(SaladProblem, match="API Salad не отвечает"):
         while True:
             next(gen)
+
+
+def test_prepare_does_not_claim_a_pull_when_start_never_leaves(app_env, monkeypatch):
+    _enable(monkeypatch)
+    gets = {"n": 0}
+    posts = {"n": 0}
+
+    def sequence(settings=None):
+        gets["n"] += 1
+        return _group("stopped")
+
+    def boom(settings=None):
+        posts["n"] += 1
+        raise SaladProblem(salad_gpu.SALAD_UNREACHABLE)
+
+    monkeypatch.setattr(salad_gpu, "get_group", sequence)
+    monkeypatch.setattr(salad_gpu, "request_start", boom)
+    lines = []
+    gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None)
+    with pytest.raises(SaladProblem, match="осталась остановленной"):
+        while True:
+            lines.append(next(gen))
+    titles = _titles(lines)
+    assert salad_gpu.SEND_START in titles
+    assert LAUNCH_STATUS not in titles
+    assert "качать образ" not in " ".join(titles)
+    assert posts["n"] == salad_gpu.ACTION_API_ATTEMPTS
+    assert gets["n"] == 1
 
 
 def test_prepare_says_start_failed_when_salad_marks_failed(app_env, monkeypatch):
@@ -531,7 +558,7 @@ def test_prepare_says_start_failed_when_salad_marks_failed(app_env, monkeypatch)
         return GroupState(status="failed", dns=HOST, port=GATEWAY_PORT, command=_READY)
 
     monkeypatch.setattr(salad_gpu, "get_group", sequence)
-    monkeypatch.setattr(salad_gpu, "start_group", lambda settings=None: sequence())
+    monkeypatch.setattr(salad_gpu, "request_start", lambda settings=None: None)
     gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None)
     with pytest.raises(SaladProblem, match="не удался"):
         while True:
