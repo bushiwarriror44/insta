@@ -17,6 +17,7 @@ from app.proxies.pool import (
     geo_verify,
     health_check,
     health_check_cached,
+    normalize_proxy_url,
     health_check_record,
     note_proxy_login_http_status,
     reach_instagram,
@@ -169,6 +170,29 @@ def test_health_check_record_marks_unhealthy_on_failure(db_session, make_proxy):
     db_session.refresh(proxy)
     assert proxy.is_healthy is False
     assert proxy.last_checked_at is not None
+
+
+def test_normalize_proxy_url_accepts_host_port_login_password():
+    assert (
+        normalize_proxy_url("203.0.113.10:8000:login:secret")
+        == "http://login:secret@203.0.113.10:8000"
+    )
+    assert normalize_proxy_url("203.0.113.10:8000") == "http://203.0.113.10:8000"
+    assert normalize_proxy_url("http://u:p@h:1") == "http://u:p@h:1"
+
+
+def test_upsert_proxy_stores_a_normalized_url(db_session):
+    proxy = upsert_proxy(db_session, label="colon", url="203.0.113.10:8000:login:secret")
+    assert proxy.url == "http://login:secret@203.0.113.10:8000"
+
+
+@respx.mock
+def test_health_check_accepts_host_port_login_password():
+    respx.get(settings.proxy_health_url).mock(
+        return_value=httpx.Response(200, json={"ip": "1.2.3.4"})
+    )
+    data = health_check("203.0.113.10:8000:login:secret", timeout=5)
+    assert data == {"ip": "1.2.3.4"}
 
 
 def test_upsert_proxy_inserts_then_updates(db_session):

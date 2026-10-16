@@ -135,8 +135,29 @@ def note_proxy_login_http_status(proxy_url: str, status: int) -> None:
         )
 
 
+def normalize_proxy_url(url: str) -> str:
+    """Turn provider exports ``host:port:login:password`` into an httpx URL.
+
+    Values that already have a scheme are left unchanged.
+    """
+    raw = (url or "").strip()
+    if not raw or "://" in raw:
+        return raw
+    if "@" in raw:
+        return f"http://{raw}"
+    parts = raw.split(":")
+    if len(parts) >= 4 and parts[1].isdigit():
+        host, port, user = parts[0], parts[1], parts[2]
+        password = ":".join(parts[3:])
+        return f"http://{user}:{password}@{host}:{port}"
+    if len(parts) == 2 and parts[1].isdigit():
+        return f"http://{raw}"
+    return raw
+
+
 def health_check(proxy_url: str, timeout: int | None = None) -> dict[str, str]:
     """Verify the proxy works. Returns ``{"ip": ...}`` on success."""
+    proxy_url = normalize_proxy_url(proxy_url)
     timeout = timeout or settings.proxy_health_timeout_sec
     try:
         with httpx.Client(
@@ -154,7 +175,8 @@ def health_check(proxy_url: str, timeout: int | None = None) -> dict[str, str]:
                 data = {"ip": response.text.strip()}
             return data
     except (httpx.HTTPError, OSError) as exc:
-        raise ProxyError(f"Прокси {_mask(proxy_url)} недоступен: {exc}") from exc
+        detail = str(exc).replace(proxy_url, _mask(proxy_url))
+        raise ProxyError(f"Прокси {_mask(proxy_url)} недоступен: {detail}") from exc
 
 
 def reach_instagram(proxy_url: str, timeout: int | None = None) -> bool:
@@ -405,6 +427,7 @@ def upsert_proxy(
 ) -> Proxy:
     if country is not None:
         country = normalize_country_code(country)
+    url = normalize_proxy_url(url)
     proxy = db.query(Proxy).filter(Proxy.label == label).one_or_none()
     if proxy is None:
         proxy = Proxy(label=label, url=url, country=country, timezone=timezone_name, notes=notes)

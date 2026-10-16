@@ -32,7 +32,7 @@ from app.behavior.warmup_instagrapi import warmup
 from app.geo.timezone_normalize import timezone_from_proxy
 from app.db import Account, AccountStatus, Event, EventLevel, Proxy
 from app.logging_setup import get_logger
-from app.proxies.pool import HealthCheckScope, ProxyError, health_check_cached
+from app.proxies.pool import HealthCheckScope, ProxyError, health_check_cached, normalize_proxy_url
 
 logger = get_logger(__name__)
 
@@ -94,7 +94,7 @@ def idle_warmup(username: str) -> bool:
         if proxy is None:
             log.info("idle.no_proxy")
             return False
-        proxy_url = proxy.url
+        proxy_url = normalize_proxy_url(proxy.url)
         proxy_country = proxy.country or "US"
         proxy_timezone_id = timezone_from_proxy(proxy.timezone, proxy.country)
         totp_seed = account.totp_seed

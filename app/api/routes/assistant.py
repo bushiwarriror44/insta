@@ -14,6 +14,9 @@ from sqlalchemy.orm import Session
 from app.api.deps import AuthDep, AuthPrincipal, get_db
 from app.assistant.chat import Answer, AssistantError, Step, ask, stream
 from app.config import Settings, get_settings
+from app.logging_setup import get_logger
+
+log = get_logger(__name__)
 
 router = APIRouter(prefix="/api/assistant", tags=["assistant"], dependencies=[AuthDep])
 
@@ -198,6 +201,15 @@ def talk_streaming(
                     yield _event(payload_step)
         except AssistantError as exc:
             yield _event({"type": "error", "detail": str(exc), "retryable": exc.retryable})
+        except Exception:
+            log.exception("assistant.stream_failed")
+            yield _event(
+                {
+                    "type": "error",
+                    "detail": "Связь с чатом оборвалась. Напишите ещё раз.",
+                    "retryable": True,
+                }
+            )
 
     return StreamingResponse(
         events(),

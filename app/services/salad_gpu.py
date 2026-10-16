@@ -715,13 +715,12 @@ def get_group(settings: Settings | None = None) -> GroupState:
     try:
         with http_client(settings, timeout=TIMEOUT) as client:
             response = client.get(url, headers=_headers(settings))
+            if response.status_code >= 400:
+                _raise_http(response)
+            payload = response.json()
     except httpx.RequestError:
         log.warning("salad.get_failed")
         raise SaladProblem(SALAD_UNREACHABLE) from None
-    if response.status_code >= 400:
-        _raise_http(response)
-    try:
-        payload = response.json()
     except ValueError:
         raise SaladProblem("Salad вернул не JSON") from None
     if not isinstance(payload, dict):
@@ -736,11 +735,11 @@ def _post_action(settings: Settings, action: str) -> None:
     try:
         with http_client(settings, timeout=TIMEOUT) as client:
             response = client.post(url, headers=_headers(settings))
+            if response.status_code not in {200, 202}:
+                _raise_http(response)
     except httpx.RequestError:
         log.warning("salad.action_failed", action=action)
         raise SaladProblem(SALAD_UNREACHABLE) from None
-    if response.status_code not in {200, 202}:
-        _raise_http(response)
 
 
 def request_start(settings: Settings | None = None) -> None:

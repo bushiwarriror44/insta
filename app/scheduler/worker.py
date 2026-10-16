@@ -17,6 +17,7 @@ Per job:
 from __future__ import annotations
 
 import random
+import re
 import signal
 import time
 from datetime import datetime, timedelta, timezone
@@ -753,6 +754,10 @@ def _maybe_sync_publication_stats(now: datetime) -> None:
             logger.info("worker.publication_stats_synced", count=count)
 
 
+def _redact_proxy(text: str) -> str:
+    return re.sub(r"URL\('[^']*'\)", "URL('…')", text)
+
+
 def run() -> None:
     configure_logging()
     init_db()
@@ -812,7 +817,7 @@ def run() -> None:
                     try:
                         maybe_run_idle_warmup()
                     except Exception as exc:  # noqa: BLE001 - never crash the loop
-                        logger.warning("worker.idle_warmup_failed", error=str(exc))
+                        logger.warning("worker.idle_warmup_failed", error=_redact_proxy(str(exc)))
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("worker.loop_error", error=str(exc))
 

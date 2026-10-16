@@ -373,6 +373,33 @@ def test_gpu_logs_include_docker_and_salad_without_the_key(auth_client, monkeypa
     assert SECRET not in sent["query"]
 
 
+def test_get_group_turns_a_cut_body_into_salad_problem(monkeypatch):
+    from app.services import salad_gpu
+    from app.services.salad_gpu import SaladProblem
+
+    _configure(monkeypatch)
+
+    class CutBody:
+        status_code = 200
+
+        def json(self):
+            raise httpx.RemoteProtocolError("Error in input stream")
+
+    class Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def get(self, *args, **kwargs):
+            return CutBody()
+
+    monkeypatch.setattr(salad_gpu, "http_client", lambda *a, **k: Client())
+    with pytest.raises(SaladProblem, match="не отвечает"):
+        salad_gpu.get_group()
+
+
 def test_gpu_logs_keep_docker_when_salad_is_not_configured(auth_client, monkeypatch):
     from app.config import settings
 
