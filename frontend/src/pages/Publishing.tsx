@@ -478,7 +478,7 @@ export function Publishing() {
         title="Библиотека"
         description="Загружайте готовые Reels, просматривайте в браузере и публикуйте в один клик."
       />
-      <Card className="p-4 space-y-3">
+      <Card>
         <h2 className="font-medium">Сгенерировать / склеить</h2>
         <div className="flex flex-wrap gap-2">
           <input className="input min-w-[12rem] flex-1" placeholder="Промпт для рендера" value={generatePrompt} onChange={(e) => setGeneratePrompt(e.target.value)} />

@@ -36,4 +36,9 @@ def patch_curl_shell(settings: Settings | None = None) -> str:
     url = patch_download_url(settings)
     if not url or not patch_configured(settings):
         return ""
-    return f"curl -fsSL {shlex.quote(url)} -o /opt/gpu/generate_server.py"
+    quoted = shlex.quote(url)
+    return (
+        "curl --connect-timeout 10 --max-time 45 -fsSL "
+        f"{quoted} -o /opt/gpu/generate_server.py "
+        "|| echo 'wan-async-patch: download failed, keeping image copy' >&2"
+    )

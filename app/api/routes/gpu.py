@@ -3,15 +3,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-import httpx
 from fastapi import APIRouter, HTTPException
 
 from app.api.deps import DocsOwnerDep
 from app.api.schemas import GpuLogsOut, GpuOut, LogTailOut
 from app.config import Settings, get_settings
 from app.services import salad_gpu
-from app.services.http import client as http_client
-from app.services.runtime import native
+from app.services.gateway_probe import ollama_reachable, wan_reachable
 
 router = APIRouter(prefix="/api/gpu", tags=["gpu"], dependencies=[DocsOwnerDep])
 
@@ -20,28 +18,11 @@ _DOWN = frozenset({"stopped", "succeeded", "failed"})
 
 
 def _wan_ok(settings: Settings) -> bool | None:
-    url = (settings.wan_base_url or "").strip()
-    if not url:
-        return None
-    try:
-        with http_client(settings, timeout=3.0) as client:
-            response = client.get(url)
-    except httpx.RequestError:
-        return False
-    # 2xx = health; 405 = POST-only /generate is up. 404 from Salad edge ≠ live Wan.
-    return 200 <= response.status_code < 300 or response.status_code == 405
+    return wan_reachable(settings)
 
 
 def _chat_ok(settings: Settings) -> bool:
-    root = native(settings.agent_base_url)
-    if not root:
-        return False
-    try:
-        with http_client(settings, timeout=3.0) as client:
-            response = client.get(f"{root}/api/tags")
-    except httpx.RequestError:
-        return False
-    return response.status_code < 400
+    return ollama_reachable(settings)
 
 
 def _payload(state: salad_gpu.GroupState | None, settings: Settings) -> GpuOut:
@@ -54,13 +35,18 @@ def _payload(state: salad_gpu.GroupState | None, settings: Settings) -> GpuOut:
             wan_ok=_wan_ok(settings),
             idle_stop_minutes=int(settings.salad_idle_stop_minutes),
         )
-    chat_ok = _chat_ok(settings)
-    wan_ok = _wan_ok(settings)
+    booting = (
+        state.status in {"pending", "deploying"}
+        or state.creating_count > 0
+        or state.allocating_count > 0
+    )
     forced_down = state.status in _DOWN
-    if forced_down:
+    if forced_down or booting:
         chat_ok = False
-        if wan_ok is not None:
-            wan_ok = False
+        wan_ok = None if not (settings.wan_base_url or "").strip() else False
+    else:
+        chat_ok = _chat_ok(settings)
+        wan_ok = _wan_ok(settings)
     return GpuOut(
         configured=True,
         status=state.status,

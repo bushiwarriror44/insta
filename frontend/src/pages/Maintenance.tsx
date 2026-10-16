@@ -64,7 +64,7 @@ export function Maintenance() {
   return (
     <div className="space-y-6">
       <PageHeader icon={Wrench} title="Обслуживание" />
-      <Card className="p-4 space-y-3">
+      <Card>
         <h2 className="font-medium">Ollama</h2>
         {runtime ? (
           <>
@@ -114,7 +114,7 @@ export function Maintenance() {
           <div className="text-sm text-slate-500">Загрузка…</div>
         )}
       </Card>
-      <Card className="p-4 space-y-3">
+      <Card>
         <div className="flex items-center justify-between">
           <h2 className="font-medium">Копии базы</h2>
           <button

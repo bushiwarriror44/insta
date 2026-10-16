@@ -181,6 +181,24 @@ describe("Assistant", () => {
     await waitFor(() => expect(screen.queryByRole("progressbar")).not.toBeInTheDocument());
   });
 
+  it("keeps the pull line and progress when Salad is still deploying", async () => {
+    askMock.mockImplementationOnce(async (_messages, onStep) => {
+      onStep({ type: "progress", text: "Качается образ на узел", detail: "deploying · 12 с", ratio: 0.3 });
+      onStep({
+        type: "error",
+        detail: "API Salad не отвечает, но группа может ещё качать образ",
+        retryable: true,
+      });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "привет");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect(await screen.findByRole("progressbar", { name: /качается образ/i })).toBeInTheDocument();
+    expect(screen.getAllByText("Качается образ на узел").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/инстанс может ещё загружаться/i)).toBeInTheDocument();
+  });
+
   it("asks for clarifications and sends them as the next message", async () => {
     askMock.mockImplementationOnce(async (_messages, onStep) => {
       onStep({ type: "ask", questions: ["какой username?"], text: "нужен логин" });

@@ -79,6 +79,7 @@ def test_local_render_unloads_chat_then_posts_wan(tmp_path):
     with (
         patch("app.generation.local.runtime.unload_loaded", side_effect=fake_unload),
         patch("app.generation.local.http_client", return_value=client),
+        patch("app.services.gateway_probe.http_client", return_value=client),
     ):
         result = LocalVideoBackend(settings).generate(
             GenerationRequest(prompt="fog"),
@@ -115,6 +116,22 @@ def test_server_500_drops_salad_html():
     assert "DOCTYPE" not in str(exc.value)
 
 
+def test_wan_probe_is_reused_within_the_ttl(tmp_path):
+    settings = make_settings(tmp_path)
+    client = MagicMock()
+    client.__enter__.return_value = client
+    client.get.return_value = httpx.Response(
+        200,
+        json={"ok": True},
+        request=httpx.Request("GET", "http://gpu.example/generate"),
+    )
+    with patch("app.services.gateway_probe.http_client", return_value=client):
+        backend = LocalVideoBackend(settings)
+        assert backend.healthcheck() is True
+        assert backend.health_detail() == ""
+    assert client.get.call_count == 1
+
+
 def test_local_healthcheck_accepts_post_only_generate(tmp_path):
     settings = make_settings(tmp_path)
     client = MagicMock()
@@ -123,7 +140,7 @@ def test_local_healthcheck_accepts_post_only_generate(tmp_path):
         405,
         request=httpx.Request("GET", "http://gpu.example/generate"),
     )
-    with patch("app.generation.local.http_client", return_value=client):
+    with patch("app.services.gateway_probe.http_client", return_value=client):
         backend = LocalVideoBackend(settings)
         assert backend.healthcheck() is True
         assert backend.health_detail() == ""
@@ -134,7 +151,7 @@ def test_local_healthcheck_false_when_wan_is_down(tmp_path):
     client = MagicMock()
     client.__enter__.return_value = client
     client.get.side_effect = httpx.ConnectError("refused")
-    with patch("app.generation.local.http_client", return_value=client):
+    with patch("app.services.gateway_probe.http_client", return_value=client):
         backend = LocalVideoBackend(settings)
         assert backend.healthcheck() is False
         assert "не отвечает" in backend.health_detail()

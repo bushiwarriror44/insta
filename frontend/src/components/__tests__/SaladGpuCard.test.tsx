@@ -65,6 +65,7 @@ describe("SaladGpuCard", () => {
     await userEvent.click(screen.getByRole("button", { name: /^да$/i }));
     await waitFor(() => expect(api.gpu.start).toHaveBeenCalled());
     expect(await screen.findByText(/качается образ/i)).toBeInTheDocument();
+    expect(screen.getByText(/чат после запуска узла/i)).toBeInTheDocument();
   });
 
   it("does not start when confirm is cancelled", async () => {

@@ -30,6 +30,22 @@ describe("Card", () => {
     expect(screen.getByText("plain")).toBeInTheDocument();
   });
 
+  it("spaces body children and keeps grid class on the section", () => {
+    const { container } = render(
+      <Card className="xl:col-span-2">
+        <span>first</span>
+        <span>second</span>
+      </Card>
+    );
+    const section = container.querySelector("section");
+    expect(section?.className).toMatch(/xl:col-span-2/);
+    expect(section?.className).not.toMatch(/\bp-4\b/);
+    const body = section?.firstElementChild as HTMLElement;
+    expect(body.className).toMatch(/gap-4/);
+    expect(body.className).toMatch(/p-5/);
+    expect(body.children).toHaveLength(2);
+  });
+
   it("renders header when only actions provided", () => {
     const { container } = render(
       <Card actions={<span>x</span>}>body</Card>

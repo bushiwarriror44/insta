@@ -57,6 +57,15 @@ import app.db as app_db  # noqa: E402
 import app.db.session as app_db_session  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _clear_gateway_probes():
+    from app.services.gateway_probe import clear_probes
+
+    clear_probes()
+    yield
+    clear_probes()
+
+
 @pytest.fixture()
 def app_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Per-test path + DB isolation.

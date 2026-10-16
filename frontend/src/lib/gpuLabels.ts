@@ -38,6 +38,14 @@ export function canStop(gpu: GpuOut): boolean {
 }
 
 export function chatLine(gpu: GpuOut): string {
+  if (
+    gpu.status === "deploying" ||
+    gpu.status === "pending" ||
+    gpu.creating_count > 0 ||
+    gpu.allocating_count > 0
+  ) {
+    return "после запуска узла";
+  }
   return gpu.chat_ok ? "отвечает" : "не отвечает";
 }
 

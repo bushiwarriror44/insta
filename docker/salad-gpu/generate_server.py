@@ -27,6 +27,13 @@ jobs: dict[str, dict[str, object]] = {}
 app = FastAPI()
 
 
+@app.get("/")
+@app.get("/generate")
+def health() -> dict[str, bool]:
+    """Panel liveness probe. Does not take the GPU lock or start a render."""
+    return {"ok": True}
+
+
 class Request(BaseModel):
     prompt: str = Field(min_length=1, max_length=1500)
     negative_prompt: str = ""

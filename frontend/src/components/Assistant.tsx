@@ -594,6 +594,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
       const controller = new AbortController();
       stops.current[id] = controller;
       let answered = false;
+      let keepProgress = false;
       const keepPartial = (detail: string) => {
         const printed = writingRef.current[id] ?? "";
         const thinking = (thinkRef.current[id] ?? "").trim();
@@ -630,6 +631,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
             if (step.type === "status") {
               pushStatus(step.text);
             } else if (step.type === "progress") {
+              if (step.text) pushStatus(step.text);
               patchLive(id, {
                 progressText: step.text,
                 progressDetail: step.detail ?? null,
@@ -689,11 +691,15 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                 askAnswers: {},
               });
             } else if (step.type === "error") {
+              const detail = step.retryable
+                ? `${step.detail} Инстанс может ещё загружаться — подождите Running в Salad.`
+                : step.detail;
+              if (step.retryable) keepProgress = true;
               if (writingRef.current[id] || (thinkRef.current[id] ?? "").trim() || (doingRef.current[id] ?? []).length) {
-                keepPartial(step.detail);
+                keepPartial(detail);
               } else {
                 answered = true;
-                replaceMessages(id, [...asked, ...notes, { role: "assistant", content: step.detail }]);
+                replaceMessages(id, [...asked, ...notes, { role: "assistant", content: detail }]);
               }
             } else if (step.type === "done") {
               answered = true;
@@ -777,9 +783,9 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
           doing: [],
           doingName: null,
           pending: [],
-          progressText: null,
-          progressDetail: null,
-          progressRatio: null,
+          ...(keepProgress
+            ? {}
+            : { progressText: null, progressDetail: null, progressRatio: null }),
         });
         if (activeRef.current === id) box.current?.focus();
       }
@@ -1110,7 +1116,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                 <RenderProgressCard job={activeGeneration} />
               </div>
             ) : null}
-            {busy && (
+            {(busy || Boolean(progressText && !activeGeneration)) && (
               <div role="status" className="space-y-2">
                 {progressText && !activeGeneration ? (
                   <div className="space-y-2 rounded-lg border border-slate-800 bg-slate-900/70 p-3">

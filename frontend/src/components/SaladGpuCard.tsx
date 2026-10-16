@@ -6,7 +6,7 @@ import { api, formatApiError } from "../api/client";
 import type { GpuOut } from "../api/types";
 import { useToast } from "../context/ToastContext";
 import { usePollWhenVisible } from "../hooks/usePollWhenVisible";
-import { canStart, canStop, statusLabel } from "../lib/gpuLabels";
+import { canStart, canStop, chatLine, statusLabel } from "../lib/gpuLabels";
 import { GpuConfirm } from "./GpuConfirm";
 
 const POLL_MS = 8000;
@@ -74,7 +74,7 @@ export function SaladGpuCard() {
     (gpu.status === "running" || gpu.status === "deploying" || gpu.status === "pending");
 
   return (
-    <section className="card space-y-3 p-4" aria-labelledby="gpu-heading">
+    <section className="card space-y-4 p-5" aria-labelledby="gpu-heading">
       <h2 id="gpu-heading" className="text-lg font-semibold text-slate-100">
         GPU Salad
       </h2>
@@ -105,7 +105,7 @@ export function SaladGpuCard() {
             {loadError
               ? "статус не обновился"
               : gpu.configured
-                ? `Инстансы: работают ${gpu.running_count}, создаются ${gpu.creating_count}, выделяются ${gpu.allocating_count}, останавливаются ${gpu.stopping_count}. Чат ${gpu.chat_ok ? "отвечает" : "не отвечает"}.`
+                ? `Инстансы: работают ${gpu.running_count}, создаются ${gpu.creating_count}, выделяются ${gpu.allocating_count}, останавливаются ${gpu.stopping_count}. Чат ${chatLine(gpu)}.`
                 : "Ключ и имена группы задаются в .env на админ-VPS."}
           </div>
         </div>

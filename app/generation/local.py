@@ -29,6 +29,7 @@ from app.generation.base import (
     VideoBackend,
 )
 from app.generation.download import raise_http, save_response
+from app.services.gateway_probe import wan_reachable
 from app.services.gpu_slot import hold_for_video
 from app.services.http import client as http_client
 from app.services import runtime
@@ -45,16 +46,8 @@ class LocalVideoBackend(VideoBackend):
         self.settings = settings or get_settings()
 
     def healthcheck(self) -> bool:
-        url = (self.settings.wan_base_url or "").strip()
-        if not url:
-            return False
-        try:
-            with http_client(self.settings, timeout=3.0) as client:
-                response = client.get(url)
-        except httpx.RequestError:
-            return False
-        # 2xx = health page; 405 = POST-only /generate is up.
-        return 200 <= response.status_code < 300 or response.status_code == 405
+        # 2xx = health page; 405 = POST-only /generate is up. Cached with the GPU card.
+        return bool(wan_reachable(self.settings))
 
     def health_detail(self) -> str:
         if self.healthcheck():

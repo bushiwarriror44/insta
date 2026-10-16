@@ -122,7 +122,7 @@ export function Administration() {
       {tab === "overview" ? (
         <div id="admin-panel-overview" role="tabpanel" aria-labelledby="admin-tab-overview" className="space-y-4">
           <SaladGpuCard />
-          <section className="card space-y-2 p-4" aria-labelledby="costs-heading">
+          <section className="card space-y-4 p-5" aria-labelledby="costs-heading">
             <h2 id="costs-heading" className="text-lg font-semibold text-slate-100">
               Оплата
             </h2>

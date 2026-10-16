@@ -188,11 +188,11 @@ export function Agent() {
           </details>
         ))}
       </section>
-      <Card className="p-4">
+      <Card>
         <h2 className="font-medium mb-3">Процесс агента</h2>
         <AgentToggle />
       </Card>
-      <Card className="p-4 space-y-3">
+      <Card>
         <label className="text-sm">
           Аккаунт
           <select
@@ -322,7 +322,7 @@ export function Agent() {
           </button>
         </div>
       </Card>
-      <Card className="p-4 space-y-3">
+      <Card>
         <h2 className="font-medium">Источники</h2>
         <div className="flex gap-2">
           <input className="input" placeholder="https://…" value={sourceValue} onChange={(e) => setSourceValue(e.target.value)} />
@@ -378,7 +378,7 @@ export function Agent() {
           ))}
         </ul>
       </Card>
-      <Card className="p-4 space-y-3">
+      <Card>
         <h2 className="font-medium">Планы</h2>
         {plans.length === 0 ? (
           <EmptyState>Планов пока нет.</EmptyState>
@@ -420,7 +420,7 @@ export function Agent() {
         )}
       </Card>
       {questions.length > 0 ? (
-        <Card className="p-4 space-y-3">
+        <Card>
           <h2 className="font-medium">Вопросы агента</h2>
           {questions.map((q) => (
             <div key={q.id} className="text-sm border-t border-slate-800 pt-2 space-y-2">
@@ -455,7 +455,7 @@ export function Agent() {
           ))}
         </Card>
       ) : null}
-      <Card className="p-4">
+      <Card>
         <h2 className="font-medium mb-3">Прогоны</h2>
         {busy ? <Loader label="Загрузка..." /> : null}
         <table className="table-base">

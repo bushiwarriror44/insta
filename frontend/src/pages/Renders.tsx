@@ -173,7 +173,7 @@ export function Renders() {
   return (
     <div className="space-y-6">
       <PageHeader icon={Clapperboard} title="Рендеры и склейки" />
-      <Card className="space-y-4 p-4 sm:p-5">
+      <Card>
         <div className="space-y-1">
           <h2 className="font-medium">Новый рендер</h2>
           <p className="text-sm text-slate-400">
@@ -325,7 +325,7 @@ export function Renders() {
           Поставить рендер
         </button>
       </Card>
-      <Card className="p-4">
+      <Card>
         <h2 className="font-medium mb-3">Рендеры</h2>
         <table className="table-base">
           <thead>
@@ -401,7 +401,7 @@ export function Renders() {
           </tbody>
         </table>
       </Card>
-      <Card className="p-4 space-y-3">
+      <Card>
         <h2 className="font-medium">Склейки</h2>
         <div className="flex gap-2">
           <input className="input" placeholder="id клипов через запятую" value={joinIds} onChange={(e) => setJoinIds(e.target.value)} />

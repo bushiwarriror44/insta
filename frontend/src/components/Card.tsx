@@ -24,7 +24,7 @@ export function Card({ id, title, description, actions, className, children }: P
           {actions && <div className="flex items-center gap-2">{actions}</div>}
         </header>
       )}
-      <div className="p-5">{children}</div>
+      <div className="flex flex-col gap-4 p-5">{children}</div>
     </section>
   );
 }

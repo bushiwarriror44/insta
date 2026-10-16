@@ -428,6 +428,98 @@ def test_prepare_says_image_still_pulling_after_pull_budget(app_env, monkeypatch
         next(gen)
 
 
+def test_prepare_retries_salad_api_while_the_image_downloads(app_env, monkeypatch):
+    _enable(monkeypatch)
+    calls = {"n": 0}
+
+    def sequence(settings=None):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise SaladProblem(salad_gpu.SALAD_UNREACHABLE)
+        if calls["n"] < 5:
+            return GroupState(
+                status="deploying",
+                dns=HOST,
+                port=GATEWAY_PORT,
+                command=_READY,
+                creating_count=1,
+            )
+        return _group("running")
+
+    monkeypatch.setattr(salad_gpu, "get_group", sequence)
+    with respx.mock:
+        respx.get(f"{ORIGIN}/").mock(return_value=httpx.Response(200, text="Ollama is running"))
+        respx.get(f"{ORIGIN}/api/ps").mock(
+            return_value=httpx.Response(200, json={"models": [{"name": "qwen3:32b"}]})
+        )
+        lines = []
+        gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None)
+        try:
+            while True:
+                lines.append(next(gen))
+        except StopIteration as stop:
+            base = stop.value
+    titles = _titles(lines)
+    assert salad_gpu.PHASE_API in titles
+    assert PHASE_PULL in titles
+    assert salad_gpu.API_DOWN_WHILE_PULL not in titles
+    assert base == f"{ORIGIN}/v1"
+
+
+def test_prepare_defers_gateway_patch_until_the_node_is_running(app_env, monkeypatch):
+    _enable(monkeypatch)
+    calls = {"n": 0}
+    seen: list[str] = []
+
+    def sequence(settings=None):
+        calls["n"] += 1
+        if calls["n"] < 4:
+            return GroupState(
+                status="deploying",
+                dns=HOST,
+                port=GATEWAY_PORT,
+                command=(),
+                creating_count=1,
+            )
+        return GroupState(status="running", dns=HOST, port=GATEWAY_PORT, command=(), running_count=1)
+
+    def tracking_patch(settings, state):
+        seen.append(state.status)
+        return _group("running")
+
+    monkeypatch.setattr(salad_gpu, "get_group", sequence)
+    monkeypatch.setattr(salad_gpu, "patch_gateway", tracking_patch)
+    with respx.mock:
+        respx.get(f"{ORIGIN}/").mock(return_value=httpx.Response(200, text="Ollama is running"))
+        respx.get(f"{ORIGIN}/api/ps").mock(
+            return_value=httpx.Response(200, json={"models": [{"name": "qwen3:32b"}]})
+        )
+        lines = []
+        gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None)
+        try:
+            while True:
+                lines.append(next(gen))
+        except StopIteration as stop:
+            base = stop.value
+    assert seen == ["running"]
+    titles = _titles(lines)
+    assert titles.index(PHASE_PULL) < titles.index(PHASE_PATCH)
+    assert base == f"{ORIGIN}/v1"
+
+
+def test_prepare_says_api_may_still_be_pulling_after_retries(app_env, monkeypatch):
+    _enable(monkeypatch)
+
+    def down(settings=None):
+        raise SaladProblem(salad_gpu.SALAD_UNREACHABLE)
+
+    monkeypatch.setattr(salad_gpu, "get_group", down)
+    gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None)
+    with pytest.raises(SaladProblem, match="может ещё качать образ"):
+        while True:
+            next(gen)
+
+
 def test_prepare_says_start_failed_when_salad_marks_failed(app_env, monkeypatch):
     _enable(monkeypatch)
     calls = {"n": 0}

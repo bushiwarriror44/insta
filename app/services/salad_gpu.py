@@ -49,6 +49,14 @@ PHASE_PULL = "Качается образ на узел"
 PHASE_ALLOC = "Выделяю GPU"
 PHASE_OLLAMA = "Жду Ollama"
 PHASE_MODEL = "Гружу модель в память"
+PHASE_API = "Связь с Salad, повтор…"
+SALAD_UNREACHABLE = "Salad не отвечает"
+API_DOWN_WHILE_PULL = (
+    "API Salad не отвечает, но группа может ещё качать образ — "
+    "проверьте портал и напишите снова через минуту"
+)
+POLL_API_ATTEMPTS = 5
+ACTION_API_ATTEMPTS = 3
 POLL_S = 5.0
 START_WAIT_S = 25 * 60
 PULL_WAIT_S = 90 * 60
@@ -257,7 +265,15 @@ def warmup_script(model: str, settings: Settings | None = None) -> str:
         + json.dumps(body)
         + '.encode(), headers={"Content-Type": "application/json"}), timeout=600).read()'
     )
-    patch_lines = f"{curl_patch}\n" if curl_patch else ""
+    if curl_patch:
+        install = (
+            "python -m pip install -q dashscope &\n"
+            "pip_pid=$!\n"
+            f"{curl_patch}\n"
+            'wait "$pip_pid" || true\n'
+        )
+    else:
+        install = "python -m pip install -q dashscope\n"
     return (
         f"{header}\n"
         "set -eu\n"
@@ -265,8 +281,7 @@ def warmup_script(model: str, settings: Settings | None = None) -> str:
         "if [ -f \"$conf\" ] && ! grep -q '\\[::\\]:8080' \"$conf\"; then\n"
         "  sed -i 's/listen 8080 default_server;/listen [::]:8080 default_server ipv6only=off;/' \"$conf\"\n"
         "fi\n"
-        "python -m pip install -q dashscope\n"
-        f"{patch_lines}"
+        f"{install}"
         "/opt/gpu/start.sh &\n"
         "spid=$!\n"
         "(\n"
@@ -332,7 +347,7 @@ def patch_gateway(settings: Settings, state: GroupState) -> GroupState:
             )
     except httpx.RequestError:
         log.warning("salad.patch_failed")
-        raise SaladProblem("Salad не отвечает") from None
+        raise SaladProblem(SALAD_UNREACHABLE) from None
     if response.status_code == 415:
         log.warning("salad.patch_rejected", status=response.status_code)
         return state
@@ -437,6 +452,10 @@ def _prep(
     )
 
 
+def _api_unreachable(exc: BaseException) -> bool:
+    return isinstance(exc, SaladProblem) and str(exc) == SALAD_UNREACHABLE
+
+
 def prepare_for_chat(
     settings: Settings | None = None,
     *,
@@ -449,7 +468,6 @@ def prepare_for_chat(
     so a long image pull does not look stuck.
     """
     settings = require_configured(settings)
-    state = get_group(settings)
     _touch(settings)
     started = clock()
     phase_started = started
@@ -479,19 +497,68 @@ def prepare_for_chat(
             extra=extra,
         )
 
+    def fetch_group(
+        *,
+        attempts: int = POLL_API_ATTEMPTS,
+    ) -> Generator[PrepStatus, None, GroupState]:
+        for attempt in range(1, attempts + 1):
+            try:
+                return get_group(settings)
+            except SaladProblem as exc:
+                if not _api_unreachable(exc):
+                    raise
+                if attempt >= attempts:
+                    raise SaladProblem(API_DOWN_WHILE_PULL) from None
+                yield emit(
+                    PHASE_API,
+                    2,
+                    soft_s=POLL_S * attempts,
+                    extra=f"попытка {attempt}",
+                )
+                pause(POLL_S)
+        raise SaladProblem(API_DOWN_WHILE_PULL)
+
+    def call_action(
+        action: Callable[[], GroupState],
+        *,
+        attempts: int = ACTION_API_ATTEMPTS,
+    ) -> Generator[PrepStatus, None, GroupState]:
+        for attempt in range(1, attempts + 1):
+            try:
+                return action()
+            except SaladProblem as exc:
+                if exc.status_code == 409 or not _api_unreachable(exc):
+                    raise
+                if attempt >= attempts:
+                    raise SaladProblem(API_DOWN_WHILE_PULL) from None
+                yield emit(
+                    PHASE_API,
+                    2,
+                    soft_s=POLL_S * attempts,
+                    extra=f"попытка {attempt}",
+                )
+                pause(POLL_S)
+        raise SaladProblem(API_DOWN_WHILE_PULL)
+
+    state = yield from fetch_group()
+    patch_after_pull = False
     if needs_gateway_patch(settings, state):
-        yield emit(PHASE_PATCH, 1, soft_s=60, force_milestone=True)
-        state = patch_gateway(settings, state)
-        _touch(settings)
+        if state.still_pulling:
+            patch_after_pull = True
+        else:
+            yield emit(PHASE_PATCH, 1, soft_s=60, force_milestone=True)
+            known = state
+            state = yield from call_action(lambda: patch_gateway(settings, known))
+            _touch(settings)
     if state.status != "running":
         if state.status in START_READY:
             yield emit(_launch_title(state), 2, soft_s=START_WAIT_S, force_milestone=True)
             try:
-                state = start_group(settings)
+                state = yield from call_action(lambda: start_group(settings))
             except SaladProblem as exc:
                 if exc.status_code != 409:
                     raise
-                state = get_group(settings)
+                state = yield from fetch_group()
             _touch(settings)
         wait_started = clock()
         non_pull_started: float | None = None
@@ -513,8 +580,13 @@ def prepare_for_chat(
                 soft = START_WAIT_S
             yield emit(_launch_title(state), 2, soft_s=soft, extra=state.status)
             pause(POLL_S)
-            state = get_group(settings)
+            state = yield from fetch_group()
             _touch(settings)
+    if patch_after_pull and needs_gateway_patch(settings, state):
+        yield emit(PHASE_PATCH, 1, soft_s=60, force_milestone=True)
+        known = state
+        state = yield from call_action(lambda: patch_gateway(settings, known))
+        _touch(settings)
     origin = gateway_origin(state.dns)
     if not origin:
         raise SaladProblem("Salad не вернул адрес группы")
@@ -533,7 +605,7 @@ def prepare_for_chat(
         else:
             yield emit(PHASE_OLLAMA, 3, soft_s=START_WAIT_S, extra=state.status or "")
         pause(POLL_S)
-        state = get_group(settings)
+        state = yield from fetch_group()
         origin = gateway_origin(state.dns) or origin
         _touch(settings)
     base = chat_base_url(state)
@@ -572,7 +644,7 @@ def container_logs(settings: Settings | None = None) -> dict[str, Any]:
             response = client.post(url, headers=_headers(settings), json=body)
     except httpx.RequestError:
         log.warning("salad.logs_failed")
-        return {"available": False, "reason": "Salad не отвечает", "lines": []}
+        return {"available": False, "reason": SALAD_UNREACHABLE, "lines": []}
     if response.status_code >= 400:
         payload: Any = None
         try:
@@ -623,7 +695,7 @@ def get_group(settings: Settings | None = None) -> GroupState:
             response = client.get(url, headers=_headers(settings))
     except httpx.RequestError:
         log.warning("salad.get_failed")
-        raise SaladProblem("Salad не отвечает") from None
+        raise SaladProblem(SALAD_UNREACHABLE) from None
     if response.status_code >= 400:
         _raise_http(response)
     try:
@@ -644,7 +716,7 @@ def _post_action(settings: Settings, action: str) -> None:
             response = client.post(url, headers=_headers(settings))
     except httpx.RequestError:
         log.warning("salad.action_failed", action=action)
-        raise SaladProblem("Salad не отвечает") from None
+        raise SaladProblem(SALAD_UNREACHABLE) from None
     if response.status_code not in {200, 202}:
         _raise_http(response)
 

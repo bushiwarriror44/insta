@@ -23,8 +23,9 @@ def test_patch_url_requires_base_token_and_wan(monkeypatch):
     url = patch_download_url(settings)
     assert url.startswith("http://203.0.113.10:8000/api/salad-gpu/generate_server.py?token=")
     curl = patch_curl_shell(settings)
-    assert "curl -fsSL" in curl
+    assert "curl --connect-timeout 10 --max-time 45 -fsSL" in curl
     assert "/opt/gpu/generate_server.py" in curl
+    assert "|| echo" in curl
 
 
 def test_warmup_includes_curl_when_patch_configured(monkeypatch):
@@ -33,8 +34,9 @@ def test_warmup_includes_curl_when_patch_configured(monkeypatch):
     monkeypatch.setattr(settings, "wan_base_url", "https://host.salad.cloud/generate")
     script = warmup_script("qwen3:32b", settings)
     assert WAN_ASYNC_PATCH_MARKER in script
-    assert "curl -fsSL" in script
-    assert script.index("pip install") < script.index("curl -fsSL") < script.index("start.sh")
+    assert "--max-time 45" in script
+    assert 'wait "$pip_pid" || true' in script
+    assert script.index("pip install") < script.index("curl --connect-timeout") < script.index("start.sh")
 
 
 def test_generate_server_source_exists_in_repo():
@@ -42,6 +44,7 @@ def test_generate_server_source_exists_in_repo():
     assert path.is_file(), path
     text = path.read_text(encoding="utf-8")
     assert "X-Async" in text
+    assert '@app.get("/generate")' in text
 
 
 @pytest.fixture()
