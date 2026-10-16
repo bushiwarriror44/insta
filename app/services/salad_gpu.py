@@ -75,6 +75,15 @@ class SaladProblem(Exception):
 
 
 @dataclass(frozen=True)
+class WireTrace:
+    """One Salad or Ollama call shown in the chat. Never includes the API key."""
+
+    method: str
+    path: str
+    result: str
+
+
+@dataclass(frozen=True)
 class PrepStatus:
     """Live line for the chat dock while Salad starts and the model loads."""
 
@@ -129,6 +138,11 @@ def _names(settings: Settings) -> tuple[str, str, str]:
         settings.salad_project.strip(),
         settings.salad_container_group.strip(),
     )
+
+
+def _group_public_path(settings: Settings) -> str:
+    org, project, group = _names(settings)
+    return f"/organizations/{org}/projects/{project}/containers/{group}"
 
 
 def _group_url(settings: Settings) -> str:
@@ -464,7 +478,7 @@ def prepare_for_chat(
     *,
     pause: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
-) -> Generator[PrepStatus, None, str]:
+) -> Generator[PrepStatus | WireTrace, None, str]:
     """Start the group, warm qwen inside it, and return the chat base URL.
 
     Yields live PrepStatus lines for the bottom chat. The caller streams them
@@ -500,18 +514,31 @@ def prepare_for_chat(
             extra=extra,
         )
 
+    seen_wire: set[str] = set()
+    group_path = _group_public_path(settings)
+
+    def wire(method: str, path: str, result: str) -> WireTrace | None:
+        key = f"{method} {path} {result}"
+        if key in seen_wire:
+            return None
+        seen_wire.add(key)
+        return WireTrace(method, path, result[:160])
+
     def fetch_group(
         *,
         attempts: int = POLL_API_ATTEMPTS,
         pulling: bool = False,
-    ) -> Generator[PrepStatus, None, GroupState]:
+    ) -> Generator[PrepStatus | WireTrace, None, GroupState]:
         exhausted = API_DOWN_WHILE_PULL if pulling else API_DOWN
         for attempt in range(1, attempts + 1):
             try:
-                return get_group(settings)
+                found = get_group(settings)
             except SaladProblem as exc:
                 if not _api_unreachable(exc):
                     raise
+                traced = wire("GET", group_path, "нет связи")
+                if traced:
+                    yield traced
                 if attempt >= attempts:
                     raise SaladProblem(exhausted) from None
                 yield emit(
@@ -521,6 +548,11 @@ def prepare_for_chat(
                     extra=f"попытка {attempt}",
                 )
                 pause(POLL_S)
+                continue
+            traced = wire("GET", group_path, f"200 {found.status}")
+            if traced:
+                yield traced
+            return found
         raise SaladProblem(exhausted)
 
     def call_action(
@@ -559,14 +591,22 @@ def prepare_for_chat(
     if state.status != "running":
         if state.status in START_READY:
             yield emit(SEND_START, 2, soft_s=60, force_milestone=True)
+            start_path = f"{group_path}/start"
             try:
                 yield from call_action(
                     lambda: request_start(settings),
                     exhausted=START_NOT_SENT,
                 )
             except SaladProblem as exc:
+                traced = wire("POST", start_path, str(exc)[:160])
+                if traced:
+                    yield traced
                 if exc.status_code != 409:
                     raise
+            else:
+                traced = wire("POST", start_path, "202")
+                if traced:
+                    yield traced
             yield emit(LAUNCH_STATUS, 2, soft_s=START_WAIT_S, force_milestone=True)
             state = yield from fetch_group()
             _touch(settings)
@@ -596,10 +636,17 @@ def prepare_for_chat(
                 except SaladProblem as exc:
                     if not _api_unreachable(exc):
                         raise
+                    traced = wire("GET", group_path, "нет связи")
+                    if traced:
+                        yield traced
                     if clock() - wait_started > PULL_WAIT_S:
                         raise SaladProblem(API_DOWN_WHILE_PULL) from None
                     yield emit(PHASE_PULL, 2, soft_s=PULL_WAIT_S, extra="нет связи с Salad")
                     continue
+                else:
+                    traced = wire("GET", group_path, f"200 {state.status}")
+                    if traced:
+                        yield traced
                 _touch(settings)
                 continue
             state = yield from fetch_group()
@@ -616,7 +663,14 @@ def prepare_for_chat(
     deadline = clock() + START_WAIT_S + WARM_WAIT_S
     while True:
         up = _ollama_up(origin, settings)
-        if up and _model_loaded(origin, settings, model):
+        loaded = _model_loaded(origin, settings, model) if up else False
+        ollama_result = (
+            "200, модель в памяти" if up and loaded else ("200, жду модель" if up else "нет связи")
+        )
+        traced = wire("GET", f"{origin}/", ollama_result)
+        if traced:
+            yield traced
+        if up and loaded:
             break
         if clock() > deadline:
             raise SaladProblem(
@@ -640,14 +694,18 @@ def _label(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def container_logs(settings: Settings | None = None) -> dict[str, Any]:
-    """Stdout/stderr of the GPU group for the last hour. Never includes the API key."""
+def container_logs(
+    settings: Settings | None = None,
+    *,
+    since: timedelta | None = None,
+) -> dict[str, Any]:
+    """Stdout/stderr of the GPU group. Never includes the API key."""
     settings = settings or get_settings()
     if not configured(settings):
         return {"available": False, "reason": "Salad не настроен", "lines": []}
     org, project, group = _names(settings)
     end = datetime.now(timezone.utc)
-    start = end - timedelta(hours=1)
+    start = end - (since if since is not None else timedelta(hours=1))
     query = (
         'resource.type = "container"'
         f' and resource.labels.project_name = "{_label(project)}"'

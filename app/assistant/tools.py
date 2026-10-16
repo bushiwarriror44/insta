@@ -1173,7 +1173,7 @@ def diagnose(db: Session, *, tail: int = DIAGNOSE_LOG_TAIL) -> dict[str, Any]:
     }
 
 
-def docker_logs(service: Any, *, tail: int = LOG_TAIL) -> dict[str, Any]:
+def docker_logs(service: Any, *, tail: int = LOG_TAIL, since: str = "1h") -> dict[str, Any]:
     name = one_word(service)
     if name not in COMPOSE_SERVICES:
         raise ToolError(
@@ -1184,10 +1184,11 @@ def docker_logs(service: Any, *, tail: int = LOG_TAIL) -> dict[str, Any]:
     except (TypeError, ValueError):
         n = LOG_TAIL
     n = max(1, min(n, 200))
-    compose = _docker_compose_logs(name, n)
+    window = since if since in {"15m", "1h", "6h", "24h"} else "1h"
+    compose = _docker_compose_logs(name, n, since=window)
     if compose.get("available"):
         return compose
-    engine = _docker_engine_logs(COMPOSE_CONTAINERS[name], n)
+    engine = _docker_engine_logs(COMPOSE_CONTAINERS[name], n, since=window)
     if engine.get("available"):
         engine["service"] = name
         engine["source"] = "engine"
@@ -1201,7 +1202,7 @@ def docker_logs(service: Any, *, tail: int = LOG_TAIL) -> dict[str, Any]:
     }
 
 
-def _docker_compose_logs(name: str, n: int) -> dict[str, Any]:
+def _docker_compose_logs(name: str, n: int, *, since: str = "1h") -> dict[str, Any]:
     if not COMPOSE_FILE.is_file():
         return {
             "available": False,
@@ -1216,6 +1217,7 @@ def _docker_compose_logs(name: str, n: int) -> dict[str, Any]:
         str(COMPOSE_FILE),
         "logs",
         "--no-color",
+        f"--since={since}",
         f"--tail={n}",
         name,
     ]
@@ -1290,12 +1292,17 @@ def _decode_docker_log_stream(raw: bytes) -> str:
     return b"".join(chunks).decode("utf-8", errors="replace")
 
 
-def _docker_engine_logs(container: str, tail: int) -> dict[str, Any]:
+def _docker_engine_logs(container: str, tail: int, *, since: str = "1h") -> dict[str, Any]:
     if not hasattr(socket, "AF_UNIX"):
         return {"available": False, "reason": "нет unix-сокетов", "lines": []}
     if not DOCKER_SOCK.exists():
         return {"available": False, "reason": f"нет {DOCKER_SOCK.as_posix()}", "lines": []}
-    path = f"/containers/{quote(container, safe='')}/logs?stdout=1&stderr=1&timestamps=0&tail={int(tail)}"
+    seconds = {"15m": 15 * 60, "1h": 3600, "6h": 6 * 3600, "24h": 24 * 3600}.get(since, 3600)
+    since_ts = int(time.time()) - seconds
+    path = (
+        f"/containers/{quote(container, safe='')}/logs"
+        f"?stdout=1&stderr=1&timestamps=0&tail={int(tail)}&since={since_ts}"
+    )
     conn: _UnixHTTPConnection | None = None
     try:
         conn = _UnixHTTPConnection(str(DOCKER_SOCK), timeout=DOCKER_LOG_TIMEOUT)

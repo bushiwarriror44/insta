@@ -342,7 +342,7 @@ def test_gpu_logs_include_docker_and_salad_without_the_key(auth_client, monkeypa
     _configure(monkeypatch)
     monkeypatch.setattr(
         "app.assistant.tools.docker_logs",
-        lambda service, tail=80: {
+        lambda service, tail=200, since="1h": {
             "available": True,
             "lines": [f"{service} ok"],
             "reason": "",
@@ -371,6 +371,27 @@ def test_gpu_logs_include_docker_and_salad_without_the_key(auth_client, monkeypa
     assert 'resource.type = "container"' in sent["query"]
     assert "insta-gpu" in sent["query"]
     assert SECRET not in sent["query"]
+
+
+def test_gpu_logs_since_15m_shrinks_the_salad_window(auth_client, monkeypatch):
+    from datetime import datetime
+
+    _configure(monkeypatch)
+    monkeypatch.setattr(
+        "app.assistant.tools.docker_logs",
+        lambda service, tail=200, since="1h": {"available": True, "lines": [], "reason": ""},
+    )
+    with respx.mock:
+        route = respx.post(url__regex=r".*/log-entries$").mock(
+            return_value=httpx.Response(200, json={"items": []})
+        )
+        res = auth_client.get("/api/gpu/logs", params={"since": "15m"}, headers=_h())
+    assert res.status_code == 200
+    sent = json.loads(route.calls[0].request.read().decode())
+    start = datetime.strptime(sent["start_time"], "%Y-%m-%dT%H:%M:%SZ")
+    end = datetime.strptime(sent["end_time"], "%Y-%m-%dT%H:%M:%SZ")
+    assert int((end - start).total_seconds()) == 15 * 60
+    assert SECRET not in res.text
 
 
 def test_get_group_turns_a_cut_body_into_salad_problem(monkeypatch):
@@ -406,7 +427,7 @@ def test_gpu_logs_keep_docker_when_salad_is_not_configured(auth_client, monkeypa
     monkeypatch.setattr(settings, "salad_api_key", "", raising=True)
     monkeypatch.setattr(
         "app.assistant.tools.docker_logs",
-        lambda service, tail=80: {"available": False, "lines": [], "reason": f"нет {service}"},
+        lambda service, tail=200, since="1h": {"available": False, "lines": [], "reason": f"нет {service}"},
     )
     with respx.mock:
         route = respx.post(url__regex=r".*/log-entries$").mock(

@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import timedelta
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.api.deps import DocsOwnerDep
 from app.api.schemas import GpuLogsOut, GpuOut, LogTailOut
@@ -67,6 +68,12 @@ def _http_error(exc: salad_gpu.SaladProblem) -> HTTPException:
 
 
 _LOG_SERVICES = ("reels-api", "reels-worker", "reels-frontend")
+_LOG_WINDOWS = {
+    "15m": timedelta(minutes=15),
+    "1h": timedelta(hours=1),
+    "6h": timedelta(hours=6),
+    "24h": timedelta(hours=24),
+}
 
 
 def _hide_key(settings: Settings, text: str) -> str:
@@ -88,13 +95,16 @@ def _tail(name: str, row: Mapping[str, object], settings: Settings) -> LogTailOu
 
 
 @router.get("/logs", response_model=GpuLogsOut)
-def read_gpu_logs() -> GpuLogsOut:
+def read_gpu_logs(since: str = Query(default="1h")) -> GpuLogsOut:
     """Docker tails plus Salad container stdout. Does not refresh the idle clock."""
     from app.assistant.tools import docker_logs
 
+    window = since if since in _LOG_WINDOWS else "1h"
     settings = get_settings()
-    docker = [_tail(name, docker_logs(name, tail=80), settings) for name in _LOG_SERVICES]
-    gpu = salad_gpu.container_logs(settings)
+    docker = [
+        _tail(name, docker_logs(name, tail=200, since=window), settings) for name in _LOG_SERVICES
+    ]
+    gpu = salad_gpu.container_logs(settings, since=_LOG_WINDOWS[window])
     return GpuLogsOut(docker=docker, gpu=_tail("gpu", gpu, settings))
 
 

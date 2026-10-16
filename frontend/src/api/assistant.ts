@@ -51,6 +51,7 @@ export type AssistantStep =
     }
     | { type: "status"; text: string }
     | { type: "progress"; text: string; detail?: string; ratio?: number; name?: string }
+    | { type: "wire"; text: string; detail?: string; name?: string }
     | { type: "generation"; text: string; detail?: string; name?: string }
     | { type: "error"; detail: string; retryable: boolean };
 

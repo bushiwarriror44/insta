@@ -24,6 +24,7 @@ from app.services.runtime import probe
 from app.services.salad_gpu import (
     PrepStatus,
     SaladProblem,
+    WireTrace,
     configured as salad_configured,
     prepare_for_chat,
 )
@@ -2000,7 +2001,14 @@ def stream(
                 except StopIteration as stop:
                     base = str(stop.value or "")
                     break
-                if isinstance(line, PrepStatus):
+                if isinstance(line, WireTrace):
+                    yield Step(
+                        kind="wire",
+                        text=line.method,
+                        name=line.path,
+                        detail=line.result,
+                    )
+                elif isinstance(line, PrepStatus):
                     yield Step(
                         kind="progress",
                         text=line.title,

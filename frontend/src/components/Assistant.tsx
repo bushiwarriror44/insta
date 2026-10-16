@@ -178,6 +178,7 @@ interface Said {
   thinking?: string;
   steps?: string[];
   cut?: string;
+  wires?: string[];
 }
 
 function Reason({ text, live }: { text: string; live: boolean }) {
@@ -214,6 +215,20 @@ function Reason({ text, live }: { text: string; live: boolean }) {
   );
 }
 
+function WireList({ lines }: { lines: string[] }) {
+  if (!lines.length) return null;
+  return (
+    <div className="mb-2 space-y-1 rounded-lg border border-slate-800 bg-slate-900/70 p-3" aria-label="Подключение">
+      <p className="text-xs font-medium text-slate-300">Подключение</p>
+      {lines.map((line, index) => (
+        <p key={index} className="break-all font-mono text-[11px] leading-relaxed text-slate-400">
+          {line}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 function openInPlace(navigate: (to: string) => void, url: string) {
   if (url.startsWith("http")) {
     const parsed = new URL(url);
@@ -247,6 +262,7 @@ interface Live {
   progressDetail: string | null;
   progressRatio: number | null;
   activeGeneration: ActiveGeneration | null;
+  wires: string[];
 }
 
 function emptyLive(): Live {
@@ -266,6 +282,7 @@ function emptyLive(): Live {
     progressDetail: null,
     progressRatio: null,
     activeGeneration: null,
+    wires: [],
   };
 }
 
@@ -435,6 +452,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const writingRef = useRef<Record<string, string>>({});
   const thinkRef = useRef<Record<string, string>>({});
   const doingRef = useRef<Record<string, string[]>>({});
+  const wireRef = useRef<Record<string, string[]>>({});
   const stops = useRef<Record<string, AbortController>>({});
   const busyIds = useRef(new Set<string>());
   const chatsRef = useRef(chats);
@@ -459,15 +477,16 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const [logs, setLogs] = useState<GpuLogsOut | null>(null);
   const [logsError, setLogsError] = useState("");
   const [logsBusy, setLogsBusy] = useState(false);
+  const [logsSince, setLogsSince] = useState("1h");
 
   const box = useRef<HTMLTextAreaElement>(null);
   const tail = useRef<HTMLDivElement>(null);
 
-  const loadLogs = useCallback(async () => {
+  const loadLogs = useCallback(async (since = "1h") => {
     setLogsBusy(true);
     setLogsError("");
     try {
-      setLogs(await api.gpu.logs());
+      setLogs(await api.gpu.logs(since));
     } catch (err) {
       setLogsError(formatApiError(err));
     } finally {
@@ -477,7 +496,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
 
   const openLogs = () => {
     setLogsOpen(true);
-    void loadLogs();
+    void loadLogs(logsSince);
   };
 
   useEffect(() => {
@@ -584,6 +603,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
       writingRef.current[id] = "";
       thinkRef.current[id] = "";
       doingRef.current[id] = [];
+      wireRef.current[id] = [];
       patchLive(id, {
         note: null,
         asks: [],
@@ -623,6 +643,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
             content: media ? FORMAT_LINE : printed || (kept ? "" : detail),
             thinking: thinking || undefined,
             steps: steps.length ? steps : undefined,
+            wires: (wireRef.current[id] ?? []).length ? wireRef.current[id] : undefined,
             cut: media ? undefined : printed || thinking ? CUT_LINE : undefined,
           },
         ]);
@@ -643,6 +664,10 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
             if (controller.signal.aborted) return;
             if (step.type === "status") {
               pushStatus(step.text);
+            } else if (step.type === "wire") {
+              const line = `${step.text} ${step.name ?? ""} → ${step.detail ?? ""}`.trim();
+              wireRef.current[id] = [...(wireRef.current[id] ?? []), line];
+              patchLive(id, { wires: wireRef.current[id] });
             } else if (step.type === "progress") {
               if (step.text) pushStatus(step.text);
               patchLive(id, {
@@ -704,6 +729,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                 askAnswers: {},
               });
             } else if (step.type === "error") {
+              const wires = wireRef.current[id] ?? [];
               const stillPulling = /кача/i.test(step.detail);
               const detail =
                 step.retryable && stillPulling
@@ -714,7 +740,15 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                 keepPartial(detail);
               } else {
                 answered = true;
-                replaceMessages(id, [...asked, ...notes, { role: "assistant", content: detail }]);
+                replaceMessages(id, [
+                  ...asked,
+                  ...notes,
+                  {
+                    role: "assistant",
+                    content: detail,
+                    wires: wires.length ? wires : undefined,
+                  },
+                ]);
               }
             } else if (step.type === "done") {
               answered = true;
@@ -729,6 +763,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                   used: step.used,
                   images: step.images,
                   thinking: thinking || undefined,
+                  wires: (wireRef.current[id] ?? []).length ? wireRef.current[id] : undefined,
                   cut: step.cut || undefined,
                 },
               ]);
@@ -791,6 +826,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         writingRef.current[id] = "";
         thinkRef.current[id] = "";
         doingRef.current[id] = [];
+        wireRef.current[id] = [];
         patchLive(id, {
           busy: false,
           writing: "",
@@ -798,6 +834,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
           doing: [],
           doingName: null,
           pending: [],
+          wires: [],
           ...(keepProgress
             ? {}
             : { progressText: null, progressDetail: null, progressRatio: null }),
@@ -849,6 +886,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const askAnswers = view.askAnswers;
   const note = view.note;
   const progressText = view.progressText;
+  const liveWires = view.wires ?? [];
   const progressDetail = view.progressDetail;
   const progressRatio = view.progressRatio;
   const activeGeneration = view.activeGeneration;
@@ -1074,6 +1112,9 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
           >
             {thread.map((message, n) => (
               <div key={n}>
+                {message.role === "assistant" && message.wires?.length ? (
+                  <WireList lines={message.wires} />
+                ) : null}
                 {message.role === "assistant" && message.thinking ? (
                   <Reason text={message.thinking} live={false} />
                 ) : null}
@@ -1131,6 +1172,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                 <RenderProgressCard job={activeGeneration} />
               </div>
             ) : null}
+            {busy && liveWires.length ? <WireList lines={liveWires} /> : null}
             {(busy || Boolean(progressText && !activeGeneration)) && (
               <div role="status" className="space-y-2">
                 {progressText && !activeGeneration ? (
@@ -1643,11 +1685,29 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
             title="Логи"
             widthClass="max-w-3xl"
             footer={
-              <button type="button" className="btn-ghost text-xs" onClick={() => void loadLogs()} disabled={logsBusy}>
+              <button type="button" className="btn-ghost text-xs" onClick={() => void loadLogs(logsSince)} disabled={logsBusy}>
                 {logsBusy ? "Обновляю…" : "Обновить"}
               </button>
             }
           >
+            <label className="mb-3 flex items-center gap-2 text-xs text-slate-400">
+              За период
+              <select
+                className="input py-1 text-xs"
+                aria-label="Период логов"
+                value={logsSince}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setLogsSince(next);
+                  void loadLogs(next);
+                }}
+              >
+                <option value="15m">15 мин</option>
+                <option value="1h">1 час</option>
+                <option value="6h">6 часов</option>
+                <option value="24h">24 часа</option>
+              </select>
+            </label>
             {logsError ? <p className="text-sm text-rose-300">{logsError}</p> : null}
             {!logs && logsBusy ? <p className="text-sm text-slate-400">Читаю логи…</p> : null}
             {logs ? (

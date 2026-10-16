@@ -1237,6 +1237,27 @@ def test_diagnose_without_app_log_does_not_crash(db_session, monkeypatch):
     assert "render_backends" in out
 
 
+def test_docker_logs_passes_since(monkeypatch):
+    from app.assistant.tools import docker_logs
+
+    seen: dict[str, list[str]] = {}
+
+    def fake_run(cmd, **_kwargs):
+        seen["cmd"] = list(cmd)
+
+        class Proc:
+            returncode = 0
+            stdout = "line"
+            stderr = ""
+
+        return Proc()
+
+    monkeypatch.setattr("app.assistant.tools.subprocess.run", fake_run)
+    out = docker_logs("reels-api", since="15m")
+    assert out["available"] is True
+    assert "--since=15m" in seen["cmd"]
+
+
 def test_docker_logs_without_cli(monkeypatch):
     from app.assistant.tools import docker_logs
 
@@ -1263,7 +1284,7 @@ def test_docker_logs_falls_back_to_engine(monkeypatch):
     monkeypatch.setattr("app.assistant.tools.subprocess.run", boom)
     monkeypatch.setattr(
         "app.assistant.tools._docker_engine_logs",
-        lambda container, tail: {
+        lambda container, tail, since="1h": {
             "available": True,
             "lines": [f"{container} started"],
         },

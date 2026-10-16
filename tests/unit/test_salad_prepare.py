@@ -92,6 +92,12 @@ def test_prepare_starts_stopped_group_and_waits_until_the_model_is_loaded(app_en
         except StopIteration as stop:
             base = stop.value
     assert seen == ["start"]
+    wires = [line for line in lines if isinstance(line, salad_gpu.WireTrace)]
+    posted = next(line for line in wires if line.method == "POST")
+    assert posted.path.endswith("/start")
+    assert posted.result == "202"
+    assert "salad-secret" not in posted.path
+    assert "Salad-Api-Key" not in posted.result
     assert LAUNCH_STATUS in _titles(lines)
     assert any(isinstance(line, PrepStatus) and line.phase == 2 for line in lines)
     assert base == f"{ORIGIN}/v1"
@@ -309,7 +315,8 @@ def test_prepare_times_out_when_the_model_never_loads(app_env, monkeypatch):
         respx.get(f"{ORIGIN}/api/ps").mock(return_value=httpx.Response(200, json={"models": []}))
         gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None, clock=jump)
         with pytest.raises(SaladProblem, match="не успела прогреться"):
-            next(gen)
+            while True:
+                next(gen)
 
 
 def test_prepare_reports_deploying_and_model_phases(app_env, monkeypatch):
@@ -353,9 +360,11 @@ def test_prepare_reports_deploying_and_model_phases(app_env, monkeypatch):
     titles = _titles(lines)
     assert PHASE_PULL in titles
     assert PHASE_MODEL in titles
-    assert all(isinstance(line, PrepStatus) for line in lines)
-    assert any(line.milestone and line.title == PHASE_PULL for line in lines)
-    assert any(0 < line.ratio < 1 for line in lines)
+    assert all(isinstance(line, (PrepStatus, salad_gpu.WireTrace)) for line in lines)
+    assert any(
+        isinstance(line, PrepStatus) and line.milestone and line.title == PHASE_PULL for line in lines
+    )
+    assert any(isinstance(line, PrepStatus) and 0 < line.ratio < 1 for line in lines)
     assert base == f"{ORIGIN}/v1"
 
 
@@ -424,7 +433,8 @@ def test_prepare_says_image_still_pulling_after_pull_budget(app_env, monkeypatch
     )
     gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None, clock=jump)
     with pytest.raises(SaladProblem, match="всё ещё качается"):
-        next(gen)
+        while True:
+            next(gen)
 
 
 def test_prepare_keeps_waiting_when_pull_polls_drop(app_env, monkeypatch):

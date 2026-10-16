@@ -80,6 +80,29 @@ describe("Assistant", () => {
     expect(await screen.findByText("api ok")).toBeInTheDocument();
     expect(screen.getByText("ollama")).toBeInTheDocument();
     expect(screen.getByText("Видеокарта")).toBeInTheDocument();
+    expect(apiMock.gpu.logs).toHaveBeenCalledWith("1h");
+    await user.selectOptions(screen.getByLabelText("Период логов"), "15m");
+    await waitFor(() => expect(apiMock.gpu.logs).toHaveBeenCalledWith("15m"));
+  });
+
+  it("shows Salad requests in a connection block", async () => {
+    askMock.mockImplementationOnce(async (_messages, onStep) => {
+      onStep({ type: "wire", text: "POST", name: "/organizations/acme/containers/insta/start", detail: "202" });
+      onStep({
+        type: "done",
+        reply: "здесь",
+        open_url: null,
+        opened: null,
+        used: [],
+        images: [],
+      });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "привет");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect(await screen.findByText("здесь")).toBeInTheDocument();
+    expect(screen.getByLabelText("Подключение")).toHaveTextContent("POST /organizations/acme/containers/insta/start → 202");
   });
 
   it("sends the current page in the request", async () => {
