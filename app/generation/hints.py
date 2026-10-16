@@ -19,6 +19,11 @@ _SALAD_GATEWAY = (
     "Длинный Wan идёт короткими запросами: обновите образ salad-gpu и reels-worker."
 )
 
+_WAN_TIMEOUT = (
+    "процесс Wan на GPU не уложился в 14 минут. "
+    "Панель запустит следующую попытку, если они ещё есть."
+)
+
 _GPU_BUSY = (
     "GPU уже рендерит другой ролик. Дождитесь его или Stop/Start группы Salad. "
     "Для async нужен новый образ salad-gpu."
@@ -44,6 +49,10 @@ def enrich_generation_error(message: str, *, backend: str | None = None) -> str:
         if not text:
             return _GPU_BUSY
         return f"{text} — {_GPU_BUSY}"
+    if "wan timed out" in text.lower():
+        if _WAN_TIMEOUT in text:
+            return text
+        return f"{text} — {_WAN_TIMEOUT}"
     if LOCAL_RENDER_HINT_MARKER in text:
         return text
     # Wan already explained itself (missing package, CUDA). The generic URL hint hides that.

@@ -38,6 +38,29 @@ type Gen = {
 const LOCAL_OFFER_DISMISS_KEY = "renders:local-offer-dismissed";
 type Join = { id: number; status: string; post_title: string; last_error: string | null; clips: number };
 
+const FRAME_SIZES = [
+  { id: "9:16-720", label: "9:16 · 720×1280", width: 720, height: 1280 },
+  { id: "9:16-1080", label: "9:16 · 1080×1920", width: 1080, height: 1920 },
+  { id: "4:5", label: "4:5 · 1080×1350", width: 1080, height: 1350 },
+  { id: "1:1", label: "1:1 · 1080×1080", width: 1080, height: 1080 },
+  { id: "16:9", label: "16:9 · 1280×720", width: 1280, height: 720 },
+] as const;
+
+const LOCAL_DURATIONS = [5, 10] as const;
+const CLOUD_DURATIONS = [5, 10, 15, 30] as const;
+type DurationS = (typeof CLOUD_DURATIONS)[number];
+
+const PLATFORMS = [
+  { id: "", label: "без платформы", duration: null },
+  { id: "reels", label: "Reels", duration: 15 },
+  { id: "shorts", label: "Shorts", duration: 30 },
+  { id: "tiktok", label: "TikTok", duration: 15 },
+] as const;
+
+function shortDurationOnly(backend: string, inputMode: RenderInputMode): boolean {
+  return backend === "local" || inputMode === "image_slideshow";
+}
+
 function backendLabel(name: string) {
   return name === "auto" ? "Авто" : name;
 }
@@ -86,6 +109,11 @@ export function Renders() {
   const [prompt, setPrompt] = useState("");
   const [backend, setBackend] = useState("auto");
   const [accountId, setAccountId] = useState<number | "">("");
+  const [frameId, setFrameId] = useState<(typeof FRAME_SIZES)[number]["id"]>("9:16-720");
+  const [durationS, setDurationS] = useState<DurationS>(5);
+  const [negativePrompt, setNegativePrompt] = useState("");
+  const [seed, setSeed] = useState("");
+  const [platform, setPlatform] = useState<(typeof PLATFORMS)[number]["id"]>("");
   const [joinIds, setJoinIds] = useState("");
   const [libraryFiles, setLibraryFiles] = useState<Array<{ filename: string; media_type: string }>>([]);
   const [reference, setReference] = useState<RenderReference | null>(null);
@@ -94,6 +122,12 @@ export function Renders() {
   const [localOffer, setLocalOffer] = useState<LocalSwitchOffer | null>(null);
   const [localOfferBusy, setLocalOfferBusy] = useState(false);
   const highlightRef = useRef<HTMLTableRowElement | null>(null);
+
+  const durations = shortDurationOnly(backend, inputMode) ? LOCAL_DURATIONS : CLOUD_DURATIONS;
+
+  useEffect(() => {
+    if (shortDurationOnly(backend, inputMode) && durationS > 10) setDurationS(10);
+  }, [backend, inputMode, durationS]);
 
   useEffect(() => {
     if (!genFromUrl && !joinFromUrl) return;
@@ -257,7 +291,81 @@ export function Renders() {
           }}
           onInputModeChange={setInputMode}
         />
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <label className="block text-sm text-slate-200">
+            Платформа
+            <select
+              className="input mt-1"
+              aria-label="Платформа"
+              value={platform}
+              onChange={(e) => {
+                const next = e.target.value as (typeof PLATFORMS)[number]["id"];
+                setPlatform(next);
+                const preset = PLATFORMS.find((item) => item.id === next);
+                if (!preset?.duration) return;
+                setFrameId("9:16-1080");
+                const cap = shortDurationOnly(backend, inputMode) ? 10 : preset.duration;
+                setDurationS(cap as DurationS);
+              }}
+            >
+              {PLATFORMS.map((item) => (
+                <option key={item.id || "none"} value={item.id}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-sm text-slate-200">
+            Размер кадра
+            <select
+              className="input mt-1"
+              aria-label="Размер кадра"
+              value={frameId}
+              onChange={(e) => setFrameId(e.target.value as (typeof FRAME_SIZES)[number]["id"])}
+            >
+              {FRAME_SIZES.map((size) => (
+                <option key={size.id} value={size.id}>
+                  {size.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-sm text-slate-200">
+            Длительность
+            <select
+              className="input mt-1"
+              aria-label="Длительность"
+              value={durationS}
+              onChange={(e) => setDurationS(Number(e.target.value) as DurationS)}
+            >
+              {durations.map((seconds) => (
+                <option key={seconds} value={seconds}>
+                  {seconds} с
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-sm text-slate-200">
+            Негативный промпт
+            <input
+              className="input mt-1"
+              aria-label="Негативный промпт"
+              placeholder="текст, логотип, лишние руки"
+              value={negativePrompt}
+              onChange={(e) => setNegativePrompt(e.target.value)}
+            />
+          </label>
+          <label className="block text-sm text-slate-200">
+            Seed
+            <input
+              className="input mt-1"
+              aria-label="Seed"
+              inputMode="numeric"
+              placeholder="пусто — каждый раз новый"
+              value={seed}
+              onChange={(e) => setSeed(e.target.value.replace(/[^\d]/g, ""))}
+            />
+          </label>
           <label className="block text-sm text-slate-200">
             Аккаунт (необязательно)
             <select
@@ -275,6 +383,14 @@ export function Renders() {
             </select>
           </label>
         </div>
+        <p className="text-xs text-slate-500">
+          {shortDurationOnly(backend, inputMode)
+            ? "Local Wan длиннее 10 с не снимет. 480p: портрет 480×832, альбом 832×480."
+            : backend === "fal"
+              ? "fal снимет 5 или 10 с, ближайшее к выбранному."
+              : "Локальный Wan 1.3B снимает 480p и только 5 или 10 с. Размер выше задаёт ориентацию."}
+          {platform ? " 9:16, звук и поля под кнопки платформы. Файл остаётся mp4." : ""}
+        </p>
         <button
           className="btn-primary"
           disabled={!prompt.trim() || uploadingReference}
@@ -287,10 +403,17 @@ export function Renders() {
             try {
               const ref = reference?.filename ?? "";
               const role = reference?.mediaType === "video" ? "motion_video" : "start_image";
+              const frame = FRAME_SIZES.find((size) => size.id === frameId) ?? FRAME_SIZES[0];
+              const seedNumber = seed.trim() ? Number(seed) : undefined;
               const created = await api.factory.createGeneration({
                 prompt: prompt.trim(),
                 backend: inputMode === "image_slideshow" ? "slideshow" : backend,
                 account_id: typeof accountId === "number" ? accountId : undefined,
+                width: frame.width,
+                height: frame.height,
+                duration_s: durationS,
+                ...(negativePrompt.trim() ? { negative_prompt: negativePrompt.trim() } : {}),
+                ...(seedNumber !== undefined ? { seed: seedNumber } : {}),
                 ...(ref
                   ? {
                       input_mode: inputMode || undefined,
@@ -368,9 +491,9 @@ export function Renders() {
                     "max-w-[200px] truncate text-xs",
                     ["failed", "dead"].includes(g.status) && g.last_error ? "text-rose-300" : "text-slate-500"
                   )}
-                  title={g.last_error || undefined}
+                  title={["failed", "dead"].includes(g.status) ? g.last_error || undefined : undefined}
                 >
-                  {g.last_error || "—"}
+                  {["failed", "dead"].includes(g.status) ? g.last_error || "—" : "—"}
                 </td>
                 <td className="tabular-nums">{g.cost_usd}</td>
                 <td className="text-right">

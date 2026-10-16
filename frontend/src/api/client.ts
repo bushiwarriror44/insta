@@ -689,6 +689,10 @@ export const api = {
       prompt: string;
       account_id?: number;
       duration_s?: number;
+      width?: number;
+      height?: number;
+      negative_prompt?: string;
+      seed?: number;
       backend?: string;
       input_mode?: string;
       reference_asset_id?: number;

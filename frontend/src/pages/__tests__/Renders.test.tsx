@@ -102,6 +102,9 @@ describe("Renders page", () => {
         prompt: "fog over ridge",
         backend: "auto",
         account_id: undefined,
+        width: 720,
+        height: 1280,
+        duration_s: 5,
       })
     );
     const open = await screen.findByRole("link", { name: /открыть/i });
@@ -112,6 +115,91 @@ describe("Renders page", () => {
     renderRenders("/renders?gen=9");
     const title = await screen.findByText("Ridge");
     expect(title.closest("tr")).toHaveClass("bg-brand-600/10");
+  });
+
+  it("sends the chosen frame size and duration", async () => {
+    renderRenders();
+    await screen.findByText("Ridge");
+    fireEvent.change(screen.getByRole("combobox", { name: "Размер кадра" }), {
+      target: { value: "16:9" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "Длительность" }), {
+      target: { value: "10" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Промпт"), { target: { value: "wide ridge" } });
+    fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
+    await waitFor(() =>
+      expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
+        prompt: "wide ridge",
+        backend: "auto",
+        account_id: undefined,
+        width: 1280,
+        height: 720,
+        duration_s: 10,
+      })
+    );
+  });
+
+  it("keeps local Wan on 5 or 10 seconds", async () => {
+    apiMock.factory.backends.mockResolvedValue([
+      { name: "local", healthy: true, licence: "Apache-2.0", experimental: false, detail: "" },
+    ]);
+    renderRenders();
+    await screen.findByText("Ridge");
+    fireEvent.click(screen.getByRole("button", { name: /^local/i }));
+    const duration = screen.getByRole("combobox", { name: "Длительность" });
+    expect(within(duration).queryByRole("option", { name: "15 с" })).toBeNull();
+    expect(within(duration).getByRole("option", { name: "10 с" })).toBeInTheDocument();
+    expect(screen.getByText(/длиннее 10 с не снимет/i)).toBeInTheDocument();
+  });
+
+  it("sends 30 seconds for fal and notes the snap", async () => {
+    renderRenders();
+    await screen.findByText("Ridge");
+    fireEvent.click(screen.getByRole("button", { name: /^fal/i }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Длительность" }), {
+      target: { value: "30" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Промпт"), { target: { value: "long fal" } });
+    fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
+    expect(screen.getByText(/fal снимет 5 или 10/i)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
+        prompt: "long fal",
+        backend: "fal",
+        account_id: undefined,
+        width: 720,
+        height: 1280,
+        duration_s: 30,
+      })
+    );
+  });
+
+  it("applies a Reels preset and optional seed", async () => {
+    renderRenders();
+    await screen.findByText("Ridge");
+    fireEvent.change(screen.getByRole("combobox", { name: "Платформа" }), {
+      target: { value: "reels" },
+    });
+    fireEvent.change(screen.getByLabelText("Негативный промпт"), {
+      target: { value: "текст, логотип" },
+    });
+    fireEvent.change(screen.getByLabelText("Seed"), { target: { value: "42" } });
+    fireEvent.change(screen.getByPlaceholderText("Промпт"), { target: { value: "reels apple" } });
+    fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
+    expect(screen.getByText(/файл остаётся mp4/i)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
+        prompt: "reels apple",
+        backend: "auto",
+        account_id: undefined,
+        width: 1080,
+        height: 1920,
+        duration_s: 15,
+        negative_prompt: "текст, логотип",
+        seed: 42,
+      })
+    );
   });
 
   it("queues a render with the selected account", async () => {
@@ -126,6 +214,9 @@ describe("Renders page", () => {
         prompt: "city night",
         backend: "auto",
         account_id: 1,
+        width: 720,
+        height: 1280,
+        duration_s: 5,
       })
     );
   });
@@ -142,6 +233,9 @@ describe("Renders page", () => {
         prompt: "only fal",
         backend: "fal",
         account_id: undefined,
+        width: 720,
+        height: 1280,
+        duration_s: 5,
       })
     );
   });
@@ -162,6 +256,9 @@ describe("Renders page", () => {
         prompt: "like this still",
         backend: "auto",
         account_id: undefined,
+        width: 720,
+        height: 1280,
+        duration_s: 5,
         input_mode: "image_to_video",
         reference_filename: "still.jpg",
         reference_role: "start_image",
@@ -189,6 +286,9 @@ describe("Renders page", () => {
         prompt: "match the frame",
         backend: "auto",
         account_id: undefined,
+        width: 720,
+        height: 1280,
+        duration_s: 5,
         input_mode: "image_to_video",
         reference_filename: "paste.png",
         reference_role: "start_image",
@@ -223,6 +323,9 @@ describe("Renders page", () => {
         prompt: "from chip",
         backend: "fal",
         account_id: undefined,
+        width: 720,
+        height: 1280,
+        duration_s: 5,
       })
     );
   });
@@ -293,6 +396,21 @@ describe("Renders page", () => {
     expect(
       await screen.findByRole("heading", { name: /переключить на локальный wan/i })
     ).toBeInTheDocument();
+  });
+
+  it("hides a stale error while a generation is running", async () => {
+    apiMock.factory.generations.mockResolvedValue([
+      {
+        ...queuedGen,
+        id: 8,
+        status: "running",
+        stage: "рендер",
+        last_error: "local: wan timed out — проверьте WAN_BASE_URL",
+      },
+    ]);
+    renderRenders();
+    expect(await screen.findByText("В работе")).toBeInTheDocument();
+    expect(screen.queryByText(/wan timed out/i)).not.toBeInTheDocument();
   });
 
   it("shows last_error for a failed generation", async () => {

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from contextvars import ContextVar
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -58,6 +59,8 @@ API_DOWN_WHILE_PULL = (
     "API Salad не отвечает, но группа может ещё качать образ — "
     "проверьте портал и напишите снова через минуту"
 )
+POLL_TIMEOUT = 8.0
+_poll_timeout: ContextVar[float | None] = ContextVar("salad_poll_timeout", default=None)
 POLL_API_ATTEMPTS = 5
 ACTION_API_ATTEMPTS = 3
 POLL_S = 5.0
@@ -118,7 +121,14 @@ class GroupState:
         return self.status == "running"
 
     @property
+    def replica_ready(self) -> bool:
+        """Portal can still say deploying while the replica is already running."""
+        return self.running_count > 0 and self.creating_count == 0
+
+    @property
     def still_pulling(self) -> bool:
+        if self.replica_ready:
+            return False
         return self.status in {"pending", "deploying"} or self.creating_count > 0
 
 
@@ -612,7 +622,32 @@ def prepare_for_chat(
             _touch(settings)
         wait_started = clock()
         non_pull_started: float | None = None
-        while state.status != "running":
+        misses = 0
+        while state.status != "running" and not state.replica_ready:
+            if state.status == "failed":
+                raise SaladProblem("Запуск видеокарты на Salad не удался.")
+            pause(POLL_S)
+            try:
+                token = _poll_timeout.set(POLL_TIMEOUT)
+                try:
+                    state = get_group(settings)
+                finally:
+                    _poll_timeout.reset(token)
+            except SaladProblem as exc:
+                if not _api_unreachable(exc):
+                    raise
+                misses += 1
+                yield WireTrace("GET", group_path, f"нет связи ({misses})")
+                if clock() - wait_started > PULL_WAIT_S:
+                    raise SaladProblem(API_DOWN_WHILE_PULL) from None
+                yield emit(PHASE_API, 2, soft_s=60, extra="нет связи с Salad")
+                continue
+            traced = wire("GET", group_path, f"200 {state.status}")
+            if traced:
+                yield traced
+            _touch(settings)
+            if state.status == "running" or state.replica_ready:
+                break
             if state.status == "failed":
                 raise SaladProblem("Запуск видеокарты на Salad не удался.")
             if state.still_pulling:
@@ -621,36 +656,13 @@ def prepare_for_chat(
                     raise SaladProblem(
                         "Образ всё ещё качается на узел. Подождите и спросите ещё раз — Start уже идёт."
                     )
-                soft = PULL_WAIT_S
+                yield emit(_launch_title(state), 2, soft_s=PULL_WAIT_S, extra=state.status)
             else:
                 if non_pull_started is None:
                     non_pull_started = clock()
                 if clock() - non_pull_started > START_WAIT_S:
                     raise SaladProblem("Видеокарта не успела запуститься")
-                soft = START_WAIT_S
-            yield emit(_launch_title(state), 2, soft_s=soft, extra=state.status)
-            pause(POLL_S)
-            if state.still_pulling:
-                try:
-                    state = get_group(settings)
-                except SaladProblem as exc:
-                    if not _api_unreachable(exc):
-                        raise
-                    traced = wire("GET", group_path, "нет связи")
-                    if traced:
-                        yield traced
-                    if clock() - wait_started > PULL_WAIT_S:
-                        raise SaladProblem(API_DOWN_WHILE_PULL) from None
-                    yield emit(PHASE_PULL, 2, soft_s=PULL_WAIT_S, extra="нет связи с Salad")
-                    continue
-                else:
-                    traced = wire("GET", group_path, f"200 {state.status}")
-                    if traced:
-                        yield traced
-                _touch(settings)
-                continue
-            state = yield from fetch_group()
-            _touch(settings)
+                yield emit(_launch_title(state), 2, soft_s=START_WAIT_S, extra=state.status)
     if patch_after_pull and needs_gateway_patch(settings, state):
         yield emit(PHASE_PATCH, 1, soft_s=60, force_milestone=True)
         known = state
@@ -771,7 +783,7 @@ def get_group(settings: Settings | None = None) -> GroupState:
     settings = require_configured(settings)
     url = _group_url(settings)
     try:
-        with http_client(settings, timeout=TIMEOUT) as client:
+        with http_client(settings, timeout=_poll_timeout.get() or TIMEOUT) as client:
             response = client.get(url, headers=_headers(settings))
             if response.status_code >= 400:
                 _raise_http(response)

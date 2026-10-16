@@ -82,6 +82,10 @@ def run_generation_job(
     """Render one queued prompt and attach the resulting asset."""
     settings = settings or get_settings()
     now = now or datetime.now(timezone.utc)
+    if job.last_error:
+        job.last_error = None
+        session.add(job)
+        session.commit()
     try:
         request = resolve_generation_inputs(session, job, settings)
     except GenerationError as exc:

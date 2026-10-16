@@ -91,7 +91,7 @@ class GenerationCreate(BaseModel):
     prompt: str = Field(min_length=1)
     negative_prompt: str = ""
     backend: str = "auto"
-    duration_s: float = Field(default=5.0, ge=5, le=10)
+    duration_s: float = Field(default=5.0, ge=5, le=30)
     width: int = Field(default=720, ge=256, le=1920)
     height: int = Field(default=1280, ge=256, le=1920)
     seed: Optional[int] = None

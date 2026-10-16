@@ -437,6 +437,88 @@ def test_prepare_says_image_still_pulling_after_pull_budget(app_env, monkeypatch
             next(gen)
 
 
+def test_prepare_leaves_pull_when_a_replica_is_already_running(app_env, monkeypatch):
+    _enable(monkeypatch)
+    calls = {"n": 0}
+
+    def sequence(settings=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return GroupState(status="stopped", dns=HOST, port=GATEWAY_PORT, command=_READY)
+        return GroupState(
+            status="deploying",
+            dns=HOST,
+            port=GATEWAY_PORT,
+            command=_READY,
+            running_count=1,
+            creating_count=0,
+        )
+
+    monkeypatch.setattr(salad_gpu, "get_group", sequence)
+    monkeypatch.setattr(salad_gpu, "request_start", lambda settings=None: None)
+    with respx.mock:
+        respx.get(f"{ORIGIN}/").mock(return_value=httpx.Response(200, text="Ollama is running"))
+        respx.get(f"{ORIGIN}/api/ps").mock(
+            return_value=httpx.Response(200, json={"models": [{"name": "qwen3:32b"}]})
+        )
+        lines = []
+        gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None)
+        try:
+            while True:
+                lines.append(next(gen))
+        except StopIteration as stop:
+            base = stop.value
+    assert PHASE_PULL not in _titles(lines)
+    assert base == f"{ORIGIN}/v1"
+
+
+def test_prepare_does_not_confirm_deploying_after_a_dropped_poll(app_env, monkeypatch):
+    _enable(monkeypatch)
+    calls = {"n": 0}
+
+    def sequence(settings=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return GroupState(status="stopped", dns=HOST, port=GATEWAY_PORT, command=_READY)
+        if calls["n"] == 2:
+            return GroupState(
+                status="deploying",
+                dns=HOST,
+                port=GATEWAY_PORT,
+                command=_READY,
+                creating_count=1,
+            )
+        if calls["n"] == 3:
+            raise SaladProblem(salad_gpu.SALAD_UNREACHABLE)
+        return _group("running")
+
+    monkeypatch.setattr(salad_gpu, "get_group", sequence)
+    monkeypatch.setattr(salad_gpu, "request_start", lambda settings=None: None)
+    with respx.mock:
+        respx.get(f"{ORIGIN}/").mock(return_value=httpx.Response(200, text="Ollama is running"))
+        respx.get(f"{ORIGIN}/api/ps").mock(
+            return_value=httpx.Response(200, json={"models": [{"name": "qwen3:32b"}]})
+        )
+        lines = []
+        gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None)
+        try:
+            while True:
+                lines.append(next(gen))
+        except StopIteration as stop:
+            base = stop.value
+    lost = next(
+        index
+        for index, line in enumerate(lines)
+        if isinstance(line, salad_gpu.WireTrace) and line.result.startswith("нет связи")
+    )
+    later = lines[lost + 1 :]
+    assert any(isinstance(line, PrepStatus) and "нет связи" in line.detail for line in later)
+    assert not any(
+        isinstance(line, PrepStatus) and line.detail.startswith("deploying") for line in later
+    )
+    assert base == f"{ORIGIN}/v1"
+
+
 def test_prepare_keeps_waiting_when_pull_polls_drop(app_env, monkeypatch):
     _enable(monkeypatch)
     calls = {"n": 0}
@@ -472,7 +554,6 @@ def test_prepare_keeps_waiting_when_pull_polls_drop(app_env, monkeypatch):
     details = " ".join(line.detail for line in lines if isinstance(line, PrepStatus))
     assert "напишите снова" not in details
     assert "нет связи с Salad" in details
-    assert PHASE_PULL in _titles(lines)
     assert calls["n"] == 8
     assert base == f"{ORIGIN}/v1"
 

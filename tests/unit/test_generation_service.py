@@ -159,6 +159,34 @@ def test_run_generation_job_slideshow_resolves_slideshow_backend(
     assert job.status is PipelineStatus.done
 
 
+def test_run_generation_clears_stale_error_before_the_next_attempt(db_session, app_env):
+    from app.db import SessionLocal
+
+    job = GenerationJob(
+        prompt="apple",
+        backend="local",
+        status=PipelineStatus.running,
+        attempts=1,
+        last_error="local: wan timed out — проверьте WAN_BASE_URL",
+    )
+    db_session.add(job)
+    db_session.commit()
+    job_id = job.id
+
+    class Peek(FakeEngine):
+        def generate(self, request, out_dir, on_progress=None):
+            with SessionLocal() as db:
+                row = db.get(GenerationJob, job_id)
+                assert row is not None
+                assert row.last_error is None
+            return super().generate(request, out_dir, on_progress)
+
+    run_generation_job(db_session, job, backend=Peek("local"), settings=settings)
+    db_session.refresh(job)
+    assert job.status is PipelineStatus.done
+    assert job.last_error is None
+
+
 def test_run_generation_resolve_failure_non_retryable(db_session, app_env):
     job = GenerationJob(
         prompt="animate",
