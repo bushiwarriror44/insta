@@ -590,7 +590,19 @@ def prepare_for_chat(
                 soft = START_WAIT_S
             yield emit(_launch_title(state), 2, soft_s=soft, extra=state.status)
             pause(POLL_S)
-            state = yield from fetch_group(pulling=state.still_pulling)
+            if state.still_pulling:
+                try:
+                    state = get_group(settings)
+                except SaladProblem as exc:
+                    if not _api_unreachable(exc):
+                        raise
+                    if clock() - wait_started > PULL_WAIT_S:
+                        raise SaladProblem(API_DOWN_WHILE_PULL) from None
+                    yield emit(PHASE_PULL, 2, soft_s=PULL_WAIT_S, extra="нет связи с Salad")
+                    continue
+                _touch(settings)
+                continue
+            state = yield from fetch_group()
             _touch(settings)
     if patch_after_pull and needs_gateway_patch(settings, state):
         yield emit(PHASE_PATCH, 1, soft_s=60, force_milestone=True)

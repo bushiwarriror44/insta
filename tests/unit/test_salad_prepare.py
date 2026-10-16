@@ -427,6 +427,46 @@ def test_prepare_says_image_still_pulling_after_pull_budget(app_env, monkeypatch
         next(gen)
 
 
+def test_prepare_keeps_waiting_when_pull_polls_drop(app_env, monkeypatch):
+    _enable(monkeypatch)
+    calls = {"n": 0}
+    deploying = GroupState(
+        status="deploying",
+        dns=HOST,
+        port=GATEWAY_PORT,
+        command=_READY,
+        creating_count=1,
+    )
+
+    def sequence(settings=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return deploying
+        if calls["n"] <= 7:
+            raise SaladProblem(salad_gpu.SALAD_UNREACHABLE)
+        return _group("running")
+
+    monkeypatch.setattr(salad_gpu, "get_group", sequence)
+    with respx.mock:
+        respx.get(f"{ORIGIN}/").mock(return_value=httpx.Response(200, text="Ollama is running"))
+        respx.get(f"{ORIGIN}/api/ps").mock(
+            return_value=httpx.Response(200, json={"models": [{"name": "qwen3:32b"}]})
+        )
+        lines = []
+        gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None)
+        try:
+            while True:
+                lines.append(next(gen))
+        except StopIteration as stop:
+            base = stop.value
+    details = " ".join(line.detail for line in lines if isinstance(line, PrepStatus))
+    assert "напишите снова" not in details
+    assert "нет связи с Salad" in details
+    assert PHASE_PULL in _titles(lines)
+    assert calls["n"] == 8
+    assert base == f"{ORIGIN}/v1"
+
+
 def test_prepare_retries_salad_api_while_the_image_downloads(app_env, monkeypatch):
     _enable(monkeypatch)
     calls = {"n": 0}
