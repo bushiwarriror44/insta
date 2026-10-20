@@ -39,9 +39,24 @@ function basename(path: string | null) {
   return path.split(/[\\/]/).pop() || path;
 }
 
-function defaultPostTypeForItem(item: VideoOut): PostType {
-  if (item.media_type === "image") return "feed_photo";
+function postTypeForAccount(
+  account: AccountOut | null | undefined,
+  item: { media_type: string } | null
+): PostType {
+  const platform = account?.platform || "instagram";
+  if (platform === "youtube") return "youtube_short";
+  if (platform === "tiktok") return "tiktok";
+  if (item?.media_type === "image") return "feed_photo";
   return "reel";
+}
+
+function postTypeAllowed(account: AccountOut | null | undefined, item: { media_type: string } | null, type: PostType): boolean {
+  const platform = account?.platform || "instagram";
+  const media = item?.media_type;
+  if (platform === "youtube") return media === "video" && type === "youtube_short";
+  if (platform === "tiktok") return media === "video" && type === "tiktok";
+  if (media === "image") return type === "feed_photo";
+  return type === "reel" || type === "feed_video";
 }
 
 function mergeLibrary(uploads: VideoOut[], generated: VideoOut[]): VideoOut[] {
@@ -77,6 +92,7 @@ export function Publishing() {
     return tab === "image" || tab === "video" ? tab : "";
   })();
   const usernameFromUrl = searchParams.get("username") || "";
+  const accountFromUrl = Number(searchParams.get("account") || "") || null;
   const mediaFromUrl = searchParams.get("media") || "";
 
   const [accounts, setAccounts] = useState<AccountOut[]>([]);
@@ -86,7 +102,7 @@ export function Publishing() {
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [refreshingId, setRefreshingId] = useState<number | null>(null);
-  const [username, setUsernameState] = useState(usernameFromUrl);
+  const [accountId, setAccountIdState] = useState<number | null>(accountFromUrl);
   const [postType, setPostType] = useState<PostType>("reel");
   const [selectedFilename, setSelectedFilename] = useState<string | null>(mediaFromUrl || null);
   const [libraryTab, setLibraryTabState] = useState<"video" | "image">(
@@ -106,7 +122,7 @@ export function Publishing() {
   const urlHydrated = useRef(false);
 
   const patchUrl = useCallback(
-    (patch: { tab?: "video" | "image"; username?: string; media?: string | null }) => {
+    (patch: { tab?: "video" | "image"; username?: string; account?: string | null; media?: string | null }) => {
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
@@ -117,6 +133,10 @@ export function Publishing() {
           if (patch.username !== undefined) {
             if (patch.username) next.set("username", patch.username);
             else next.delete("username");
+          }
+          if (patch.account !== undefined) {
+            if (patch.account) next.set("account", patch.account);
+            else next.delete("account");
           }
           if (patch.media !== undefined) {
             if (patch.media) next.set("media", patch.media);
@@ -138,22 +158,24 @@ export function Publishing() {
     [patchUrl]
   );
 
-  const setUsername = useCallback(
-    (next: string) => {
-      setUsernameState(next);
-      patchUrl({ username: next });
-    },
-    [patchUrl]
-  );
-
   const selectedItem = useMemo(
     () => media.find((m) => m.filename === selectedFilename) ?? null,
     [media, selectedFilename]
   );
 
-  const defaultUsername = useMemo(
-    () => accounts.find((a) => a.status === "active")?.username ?? accounts[0]?.username ?? "",
-    [accounts]
+  const selectedAccount = useMemo(
+    () => accounts.find((a) => a.id === accountId) ?? null,
+    [accounts, accountId]
+  );
+
+  const setAccountId = useCallback(
+    (next: number) => {
+      const row = accounts.find((a) => a.id === next);
+      setAccountIdState(next);
+      patchUrl({ username: row?.username ?? "", account: String(next) });
+      setPostType(postTypeForAccount(row, selectedItem));
+    },
+    [accounts, patchUrl, selectedItem]
   );
 
   useEffect(() => {
@@ -163,10 +185,17 @@ export function Publishing() {
   }, [tabFromUrl, libraryTab]);
 
   useEffect(() => {
-    if (usernameFromUrl && usernameFromUrl !== username) {
-      setUsernameState(usernameFromUrl);
-    }
-  }, [usernameFromUrl, username]);
+    if (!accounts.length) return;
+    setAccountIdState((current) => {
+      if (current != null && accounts.some((a) => a.id === current)) return current;
+      if (accountFromUrl != null && accounts.some((a) => a.id === accountFromUrl)) return accountFromUrl;
+      if (usernameFromUrl) {
+        const matches = accounts.filter((a) => a.username === usernameFromUrl);
+        return matches.length === 1 ? matches[0].id : null;
+      }
+      return accounts.find((a) => a.status === "active")?.id ?? accounts[0]?.id ?? null;
+    });
+  }, [accounts, accountFromUrl, usernameFromUrl]);
 
   const reload = useCallback(async () => {
     const [a, m, p, generated] = await Promise.all([
@@ -178,8 +207,7 @@ export function Publishing() {
     setAccounts(a);
     setMedia(mergeLibrary(m, generated));
     setPublications(p);
-    setUsernameState((current) => current || usernameFromUrl || defaultUsername || a[0]?.username || "");
-  }, [defaultUsername, usernameFromUrl]);
+  }, []);
 
   useAssistantMutate(reload);
 
@@ -209,7 +237,7 @@ export function Publishing() {
       if (!urlHydrated.current) {
         urlHydrated.current = true;
         setLibraryTabState(existing.media_type);
-        setPostType(defaultPostTypeForItem(existing));
+        setPostType(postTypeForAccount(selectedAccount, existing));
         if (!mediaFromUrl || !tabFromUrl) {
           patchUrl({
             media: existing.filename,
@@ -225,9 +253,9 @@ export function Publishing() {
     urlHydrated.current = true;
     setSelectedFilename(pick.filename);
     setLibraryTabState(pick.media_type);
-    setPostType(defaultPostTypeForItem(pick));
+    setPostType(postTypeForAccount(selectedAccount, pick));
     patchUrl({ media: pick.filename, tab: pick.media_type });
-  }, [media, selectedFilename, mediaFromUrl, tabFromUrl, patchUrl]);
+  }, [media, selectedFilename, mediaFromUrl, tabFromUrl, patchUrl, selectedAccount]);
 
   useEffect(() => {
     const known = new Set(media.map((m) => m.filename));
@@ -242,10 +270,19 @@ export function Publishing() {
     });
   }, [media]);
 
+  useEffect(() => {
+    if (!selectedAccount || !selectedItem) return;
+    setPostType((current) =>
+      postTypeAllowed(selectedAccount, selectedItem, current)
+        ? current
+        : postTypeForAccount(selectedAccount, selectedItem)
+    );
+  }, [selectedAccount, selectedItem]);
+
   function selectItem(item: VideoOut) {
     setSelectedFilename(item.filename);
     setLibraryTabState(item.media_type);
-    setPostType(defaultPostTypeForItem(item));
+    setPostType(postTypeForAccount(selectedAccount, item));
     patchUrl({ media: item.filename, tab: item.media_type });
   }
 
@@ -371,7 +408,7 @@ export function Publishing() {
   async function enqueuePublication(opts?: {
     mediaFilename?: string;
     postTypeOverride?: PostType;
-    usernameOverride?: string;
+    accountIdOverride?: number;
     captionOverride?: string | null;
     whenOverride?: string | null;
     title?: string;
@@ -379,7 +416,8 @@ export function Publishing() {
     tags?: string;
   }) {
     const mediaFilename = opts?.mediaFilename ?? selectedFilename;
-    const account = opts?.usernameOverride ?? username;
+    const id = opts?.accountIdOverride ?? accountId;
+    const account = accounts.find((row) => row.id === id) ?? null;
     if (!account || !mediaFilename) {
       push("Выберите аккаунт и медиафайл", "error");
       return;
@@ -393,7 +431,8 @@ export function Publishing() {
           ? new Date(whenLocal).toISOString()
           : null;
       const created = await api.jobs.enqueue({
-        username: account,
+        username: account.username,
+        account_id: account.id,
         media_filename: mediaFilename,
         post_type: type,
         caption_template: opts?.captionOverride !== undefined
@@ -421,7 +460,7 @@ export function Publishing() {
   }
 
   async function quickPublish(item: VideoOut) {
-    const account = username || defaultUsername;
+    const account = selectedAccount ?? accounts.find((row) => row.status === "active") ?? accounts[0];
     if (!account) {
       push("Сначала добавьте аккаунт", "error");
       return;
@@ -429,8 +468,8 @@ export function Publishing() {
     selectItem(item);
     await enqueuePublication({
       mediaFilename: item.filename,
-      postTypeOverride: defaultPostTypeForItem(item),
-      usernameOverride: account,
+      postTypeOverride: postTypeForAccount(account, item),
+      accountIdOverride: account.id,
       captionOverride: null,
       whenOverride: null,
     });
@@ -649,13 +688,13 @@ export function Publishing() {
           <MediaPreviewPanel
             item={selectedItem}
             accounts={accounts}
-            username={username}
+            accountId={accountId}
             postType={postType}
             whenLocal={whenLocal}
             caption={caption}
             saving={saving}
             downloadBusy={downloadBusy}
-            onUsernameChange={setUsername}
+            onAccountChange={setAccountId}
             onPostTypeChange={setPostType}
             onWhenChange={setWhenLocal}
             onCaptionChange={setCaption}

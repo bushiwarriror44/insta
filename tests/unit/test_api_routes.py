@@ -1245,6 +1245,66 @@ def test_enqueue_job_hold_for_review_awaits(api_client, app_env, make_account):
     assert res.json()["status"] == "awaiting_review"
 
 
+def test_enqueue_rejects_duplicate_username_without_account_id(api_client, app_env, make_account):
+    from app.db.models import Platform
+
+    make_account(username="shared", platform=Platform.instagram)
+    yt = make_account(username="shared", platform=Platform.youtube, password="")
+    filename = "shared.mp4"
+    (app_env.video_source_dir / filename).write_bytes(b"\x00" * 64)
+
+    ambiguous = api_client.post(
+        "/api/jobs",
+        json={"username": "shared", "media_filename": filename, "post_type": "youtube_short"},
+    )
+    assert ambiguous.status_code == 409, ambiguous.text
+
+    created = api_client.post(
+        "/api/jobs",
+        json={
+            "username": "shared",
+            "account_id": yt.id,
+            "media_filename": filename,
+            "post_type": "youtube_short",
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["account_id"] == yt.id
+    assert created.json()["post_type"] == "youtube_short"
+
+    mismatch = api_client.post(
+        "/api/jobs",
+        json={
+            "username": "shared",
+            "account_id": yt.id,
+            "media_filename": filename,
+            "post_type": "reel",
+        },
+    )
+    assert mismatch.status_code == 400, mismatch.text
+    assert "youtube" in mismatch.text
+
+
+def test_enqueue_finds_a_generated_file_and_refuses_to_delete_it(api_client, app_env, make_account, tmp_path, monkeypatch):
+    from app.config import settings
+
+    generated = tmp_path / "generated"
+    generated.mkdir()
+    monkeypatch.setattr(settings, "media_dir", generated, raising=True)
+    make_account(username="genuser")
+    (generated / "render.mp4").write_bytes(b"\x00" * 64)
+
+    created = api_client.post(
+        "/api/jobs",
+        json={"username": "genuser", "media_filename": "render.mp4", "post_type": "reel"},
+    )
+    assert created.status_code == 201, created.text
+
+    removed = api_client.delete("/api/videos/render.mp4")
+    assert removed.status_code == 400, removed.text
+    assert (generated / "render.mp4").is_file()
+
+
 def test_enqueue_job_without_hold_is_queued(api_client, app_env, make_account):
     make_account(username="freehold")
     filename = "freehold.mp4"

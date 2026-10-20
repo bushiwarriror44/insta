@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -317,6 +318,49 @@ def test_prepare_times_out_when_the_model_never_loads(app_env, monkeypatch):
         with pytest.raises(SaladProblem, match="не успела прогреться"):
             while True:
                 next(gen)
+
+
+def test_prepare_keeps_the_pull_clock_from_salad_start_time(app_env, monkeypatch):
+    _enable(monkeypatch)
+    started = datetime.now(timezone.utc) - timedelta(minutes=47, seconds=12)
+    monkeypatch.setattr(
+        salad_gpu,
+        "get_group",
+        lambda settings=None: GroupState(
+            status="deploying",
+            dns=HOST,
+            port=GATEWAY_PORT,
+            command=_READY,
+            creating_count=1,
+            start_time=started,
+        ),
+    )
+    clock = {"t": 0.0}
+
+    def tick() -> float:
+        clock["t"] += 1
+        return clock["t"]
+
+    gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None, clock=tick)
+    detail = ""
+    for _ in range(12):
+        line = next(gen)
+        if isinstance(line, PrepStatus) and line.title == PHASE_PULL:
+            detail = line.detail
+            break
+    assert "deploying" in detail
+    assert "47 мин" in detail
+
+
+def test_pull_stamp_stays_until_the_group_leaves_deploying(app_env, monkeypatch):
+    _enable(monkeypatch)
+    pulling = GroupState(status="deploying", creating_count=1)
+    first = salad_gpu.pull_started_at(pulling, settings)
+    second = salad_gpu.pull_started_at(pulling, settings)
+    assert first == second
+    assert salad_gpu.pull_started_at(GroupState(status="running", running_count=1), settings) is None
+    fresh = salad_gpu.pull_started_at(GroupState(status="deploying", creating_count=1), settings)
+    assert fresh is not None
 
 
 def test_prepare_reports_deploying_and_model_phases(app_env, monkeypatch):

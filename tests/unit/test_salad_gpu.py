@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -107,6 +108,31 @@ def test_get_unconfigured_does_not_call_salad(auth_client, monkeypatch):
     assert body["billing"] is False
     assert SECRET not in res.text
     assert "Salad-Api-Key" not in res.text
+
+
+@respx.mock
+def test_gpu_reports_deploy_start_only_while_the_image_is_pulling(auth_client, monkeypatch):
+    _configure(monkeypatch)
+    started = datetime.now(timezone.utc) - timedelta(minutes=47, seconds=12)
+    deploying = _state("deploying", creating=1)
+    deploying["current_state"]["start_time"] = started.strftime("%Y-%m-%dT%H:%M:%SZ")
+    respx.get(GROUP_URL).mock(
+        side_effect=[
+            httpx.Response(200, json=deploying),
+            httpx.Response(200, json=_state("stopped")),
+        ]
+    )
+    res = auth_client.get("/api/gpu", headers=_h())
+    assert res.status_code == 200
+    raw = res.json()["deploy_started_at"]
+    assert raw
+    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    elapsed = (datetime.now(timezone.utc) - parsed).total_seconds()
+    assert 47 * 60 - 5 <= elapsed <= 47 * 60 + 30
+
+    stopped = auth_client.get("/api/gpu", headers=_h())
+    assert stopped.status_code == 200
+    assert stopped.json()["deploy_started_at"] is None
 
 
 def test_get_open_mode_unconfigured(open_client, monkeypatch):
@@ -369,6 +395,8 @@ def test_gpu_logs_include_docker_and_salad_without_the_key(auth_client, monkeypa
     assert SECRET not in res.text
     sent = json.loads(route.calls[0].request.read().decode())
     assert 'resource.type = "container"' in sent["query"]
+    assert 'resource.type = "instance_controller"' in sent["query"]
+    assert sent["page_size"] == 100
     assert "insta-gpu" in sent["query"]
     assert SECRET not in sent["query"]
 
@@ -387,6 +415,8 @@ def test_gpu_logs_since_15m_shrinks_the_salad_window(auth_client, monkeypatch):
         )
         res = auth_client.get("/api/gpu/logs", params={"since": "15m"}, headers=_h())
     assert res.status_code == 200
+    assert res.json()["gpu"]["reason"] == "за последние 15 минут логов нет"
+    assert res.headers["cache-control"] == "no-store"
     sent = json.loads(route.calls[0].request.read().decode())
     start = datetime.strptime(sent["start_time"], "%Y-%m-%dT%H:%M:%SZ")
     end = datetime.strptime(sent["end_time"], "%Y-%m-%dT%H:%M:%SZ")

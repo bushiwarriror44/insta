@@ -3608,6 +3608,8 @@ def _upsert_account(
                 backup_codes = serialize_backup_codes(codes)
     if not name:
         raise ToolError("нужен username")
+    if creating and kind.value == "instagram" and not (password or "").strip():
+        raise ToolError("для Instagram нужен пароль")
     existing = db.scalar(select(Account).where(Account.username == name, Account.platform == kind))
     if existing is None:
         account = Account(username=name, platform=kind)

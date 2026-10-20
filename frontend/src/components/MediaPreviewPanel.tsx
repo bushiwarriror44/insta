@@ -19,16 +19,23 @@ const ACCOUNT_STATUS_LABELS: Record<string, string> = {
   error: "ошибка",
 };
 
+function typesForPlatform(platform: string | undefined, media: "image" | "video"): PostType[] {
+  if (platform === "youtube") return media === "video" ? ["youtube_short"] : [];
+  if (platform === "tiktok") return media === "video" ? ["tiktok"] : [];
+  if (media === "image") return ["feed_photo"];
+  return ["reel", "feed_video"];
+}
+
 interface Props {
   item: VideoOut | null;
   accounts: AccountOut[];
-  username: string;
+  accountId: number | null;
   postType: PostType;
   whenLocal: string;
   caption: string;
   saving: boolean;
   downloadBusy?: boolean;
-  onUsernameChange: (value: string) => void;
+  onAccountChange: (id: number) => void;
   onPostTypeChange: (value: PostType) => void;
   onWhenChange: (value: string) => void;
   onCaptionChange: (value: string) => void;
@@ -40,13 +47,13 @@ interface Props {
 export function MediaPreviewPanel({
   item,
   accounts,
-  username,
+  accountId,
   postType,
   whenLocal,
   caption,
   saving,
   downloadBusy,
-  onUsernameChange,
+  onAccountChange,
   onPostTypeChange,
   onWhenChange,
   onCaptionChange,
@@ -93,7 +100,11 @@ export function MediaPreviewPanel({
     );
   }
 
-  const compatibleTypes = POST_TYPES.filter((p) => p.media === item.media_type);
+  const selectedAccount = accounts.find((a) => a.id === accountId) ?? null;
+  const allowed = new Set(typesForPlatform(selectedAccount?.platform, item.media_type));
+  const compatibleTypes = POST_TYPES.filter(
+    (p) => p.media === item.media_type && allowed.has(p.value)
+  );
   const needsCopy = postType === "youtube_short" || postType === "tiktok";
 
   return (
@@ -138,11 +149,12 @@ export function MediaPreviewPanel({
           <label className="label">Аккаунт</label>
           <select
             className="input"
-            value={username}
-            onChange={(e) => onUsernameChange(e.target.value)}
+            value={accountId ?? ""}
+            onChange={(e) => onAccountChange(Number(e.target.value))}
           >
+            {accountId == null ? <option value="">Выберите аккаунт</option> : null}
             {accounts.map((a) => (
-              <option key={a.id} value={a.username}>
+              <option key={a.id} value={a.id}>
                 @{a.username} · {a.platform || "instagram"} — {ACCOUNT_STATUS_LABELS[a.status] ?? a.status}
               </option>
             ))}
@@ -161,6 +173,9 @@ export function MediaPreviewPanel({
               </option>
             ))}
           </select>
+          {compatibleTypes.length === 0 ? (
+            <p className="mt-1 text-xs text-amber-300">Для этой площадки нужно видео.</p>
+          ) : null}
         </div>
         <div>
           <label className="label">Запланировать на (необязательно)</label>
@@ -235,7 +250,7 @@ export function MediaPreviewPanel({
           <button
             type="submit"
             className="btn-primary flex-1 min-w-[8rem]"
-            disabled={saving || accounts.length === 0}
+            disabled={saving || accounts.length === 0 || accountId == null || compatibleTypes.length === 0}
           >
             <Send size={16} />
             {saving ? "Публикация…" : whenLocal ? "Запланировать" : "Опубликовать сейчас"}

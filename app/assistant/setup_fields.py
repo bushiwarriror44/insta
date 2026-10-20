@@ -13,7 +13,7 @@ ACCOUNT_FORM_FIELDS: list[dict[str, Any]] = [
         "options": ["instagram", "youtube", "tiktok"],
         "required": True,
     },
-    {"id": "password", "label": "Пароль Instagram", "kind": "password", "required": True},
+    {"id": "password", "label": "Пароль Instagram", "kind": "password", "required": False},
     {"id": "email", "label": "Эл. почта", "kind": "text", "required": False},
     {"id": "email_password", "label": "Пароль email", "kind": "password", "required": False},
     {"id": "imap_host", "label": "IMAP хост (если не авто)", "kind": "text", "required": False},

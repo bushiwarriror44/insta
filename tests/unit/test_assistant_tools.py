@@ -488,6 +488,40 @@ def test_create_and_update_proxy_and_account(db_session, make_proxy, monkeypatch
     assert changed["totp_seed"] == "ABCD"
 
 
+def test_create_account_requires_instagram_password_only(db_session):
+    from app.assistant.chat import run_tool
+    from app.assistant.tools import ToolError, create_account, create_proxy
+
+    create_proxy(db_session, label="mob-studio", url="http://u:p@example:8000", skip_health_check=True)
+    try:
+        create_account(
+            db_session,
+            username="ig-empty",
+            proxy_label="mob-studio",
+            platform="instagram",
+            password="",
+        )
+    except ToolError as exc:
+        assert "пароль" in str(exc)
+    else:
+        raise AssertionError("expected ToolError")
+
+    created, _opened = run_tool(
+        db_session,
+        "create_account",
+        {
+            "username": "ignored",
+            "proxy_label": "mob-studio",
+            "platform": "youtube",
+            "vendor_line": "ytuser\tpw\ta@b.co\tmailpw",
+            "imap_host": "imap.example",
+        },
+    )
+    assert created["username"] == "ytuser"
+    assert created["imap_host"] == "imap.example"
+    assert created["email"] == "a@b.co"
+
+
 def test_create_accounts_two_usernames(db_session):
     from app.assistant.tools import create_accounts, create_proxy
     from app.db.models import Account
@@ -514,7 +548,7 @@ def test_create_accounts_partial_bad_proxy(db_session):
     out = create_accounts(
         db_session,
         [
-            {"username": "ann", "proxy_label": "mob-bulk"},
+            {"username": "ann", "proxy_label": "mob-bulk", "password": "p1"},
             {"username": "bob", "proxy_label": "missing-px"},
         ],
     )

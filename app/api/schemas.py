@@ -353,6 +353,7 @@ class JobOut(BaseModel):
 
 class EnqueueIn(BaseModel):
     username: str = Field(min_length=1)
+    account_id: Optional[int] = None
     media_filename: Optional[str] = Field(default=None, min_length=1)
     video_filename: Optional[str] = Field(default=None, min_length=1)
     post_type: Literal["reel", "feed_photo", "feed_video", "youtube_short", "tiktok"] = "reel"
@@ -525,6 +526,7 @@ class GpuOut(BaseModel):
     wan_ok: Optional[bool] = None
     detail: str = ""
     idle_stop_minutes: int = 0
+    deploy_started_at: Optional[datetime] = None
 
 
 class AdminNotesOut(BaseModel):

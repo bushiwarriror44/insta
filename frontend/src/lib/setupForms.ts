@@ -11,7 +11,7 @@ export const ACCOUNT_FORM_FIELDS: AskField[] = [
     options: ["instagram", "youtube", "tiktok"],
     required: true,
   },
-  { id: "password", label: "Пароль Instagram", kind: "password", required: true },
+  { id: "password", label: "Пароль Instagram", kind: "password", required: false },
   { id: "email", label: "Эл. почта", kind: "text", required: false },
   { id: "email_password", label: "Пароль email", kind: "password", required: false },
   { id: "imap_host", label: "IMAP хост (если не авто)", kind: "text", required: false },
@@ -31,10 +31,14 @@ export const PROXY_FORM_FIELDS: AskField[] = [
   { id: "country", label: "Страна", kind: "text", required: false },
 ];
 
-export function fieldIsRequired(field: AskField): boolean {
+export function fieldIsRequired(field: AskField, answers: Record<string, string> = {}): boolean {
+  if (field.id === "password") {
+    const platform = (answers.platform ?? "").trim();
+    return platform === "" || platform === "instagram";
+  }
   return field.required !== false;
 }
 
 export function askFormIncomplete(fields: AskField[], answers: Record<string, string>): boolean {
-  return fields.some((field) => fieldIsRequired(field) && !(answers[field.id] ?? "").trim());
+  return fields.some((field) => fieldIsRequired(field, answers) && !(answers[field.id] ?? "").trim());
 }

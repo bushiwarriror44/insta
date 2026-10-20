@@ -85,7 +85,7 @@ Graph / YouTube Data API / TikTok Content Posting API и OAuth не исполь
 Ты не можешь удалять ничего. Если просят удалить — откажись.
 
 Неполная задача про аккаунт — `ask_operator` с полным пресетом fields аккаунта \
-(proxy_label, username, platform, password; totp_seed и email по желанию, required false). \
+(proxy_label, username, platform; password обязателен только для instagram; totp_seed и email по желанию). \
 Неполная задача про прокси — `ask_operator` с пресетом fields прокси (label, url; country по желанию). \
 Не выдумывай другие id полей. Данные уже текстом в чате — create_*, форму не дублируй. \
 Пока оператор не ответил сообщением «Уточнения: …» — не вызывай create_*. \
@@ -432,7 +432,7 @@ TOOLS = [
     ),
     schema(
         "create_account",
-        "Создать аккаунт. Нужны username и proxy_label; пароль по желанию. TOTP и session_id — только Instagram.",
+        "Создать аккаунт. Нужны username и proxy_label; пароль обязателен для Instagram. TOTP и session_id — только Instagram.",
         {
             "username": {"type": "string"},
             "proxy_label": {"type": "string"},
@@ -442,9 +442,11 @@ TOOLS = [
             "session_id": {"type": "string"},
             "email": {"type": "string"},
             "email_password": {"type": "string"},
+            "imap_host": {"type": "string"},
             "brief": {"type": "string"},
             "notes": {"type": "string"},
             "account_line": {"type": "string"},
+            "vendor_line": {"type": "string"},
             "login_identifier": {"type": "string"},
             "backup_codes": {"type": "string"},
         },
@@ -468,9 +470,11 @@ TOOLS = [
                         "session_id": {"type": "string"},
                         "email": {"type": "string"},
                         "email_password": {"type": "string"},
+                        "imap_host": {"type": "string"},
                         "brief": {"type": "string"},
                         "notes": {"type": "string"},
                         "account_line": {"type": "string"},
+                        "vendor_line": {"type": "string"},
                         "login_identifier": {"type": "string"},
                         "backup_codes": {"type": "string"},
                     },
@@ -1178,9 +1182,11 @@ def run_tool(
                 session_id=_optional_text(args, "session_id"),
                 email=_optional_text(args, "email"),
                 email_password=_optional_text(args, "email_password"),
+                imap_host=_optional_text(args, "imap_host"),
                 brief=_optional_text(args, "brief"),
                 notes=_optional_text(args, "notes"),
                 account_line=_optional_text(args, "account_line"),
+                vendor_line=_optional_text(args, "vendor_line"),
                 login_identifier=_optional_text(args, "login_identifier"),
                 backup_codes=_optional_text(args, "backup_codes"),
                 as_owner=as_owner,

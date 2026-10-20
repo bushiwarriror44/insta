@@ -13,7 +13,7 @@ const apiMock = vi.hoisted(() => ({
   accounts: { list: vi.fn() },
   videos: { upload: vi.fn() },
   factory: { getGeneration: vi.fn() },
-  gpu: { logs: vi.fn() },
+  gpu: { logs: vi.fn(), status: vi.fn() },
 }));
 
 vi.mock("../../context/AuthContext", () => ({
@@ -58,6 +58,20 @@ beforeEach(() => {
   });
   askMock.mockReset();
   askMock.mockResolvedValue(undefined);
+  apiMock.gpu.status.mockReset();
+  apiMock.gpu.status.mockResolvedValue({
+    configured: true,
+    status: "stopped",
+    billing: false,
+    allocating_count: 0,
+    creating_count: 0,
+    running_count: 0,
+    stopping_count: 0,
+    chat_ok: false,
+    wan_ok: null,
+    detail: "",
+    deploy_started_at: null,
+  });
   apiMock.gpu.logs.mockReset();
   apiMock.gpu.logs.mockResolvedValue({
     docker: [{ name: "reels-api", available: true, reason: "", lines: ["api ok"] }],
@@ -72,6 +86,27 @@ describe("Assistant", () => {
     expect(screen.getByRole("button", { name: /^спросить$/i })).toBeInTheDocument();
   });
 
+  it("shows the image pull clock after a refresh without a new message", async () => {
+    const started = new Date(Date.now() - (47 * 60 + 12) * 1000).toISOString();
+    apiMock.gpu.status.mockResolvedValue({
+      configured: true,
+      status: "deploying",
+      billing: false,
+      allocating_count: 0,
+      creating_count: 1,
+      running_count: 0,
+      stopping_count: 0,
+      chat_ok: false,
+      wan_ok: null,
+      detail: "",
+      deploy_started_at: started,
+    });
+    renderDock();
+    expect(await screen.findByText("Качается образ на узел")).toBeInTheDocument();
+    expect(screen.getByText(/deploying · 47 мин/)).toBeInTheDocument();
+    expect(askMock).not.toHaveBeenCalled();
+  });
+
   it("opens docker and gpu logs from the corner", async () => {
     const user = userEvent.setup();
     renderDock();
@@ -81,8 +116,27 @@ describe("Assistant", () => {
     expect(screen.getByText("ollama")).toBeInTheDocument();
     expect(screen.getByText("Видеокарта")).toBeInTheDocument();
     expect(apiMock.gpu.logs).toHaveBeenCalledWith("1h");
+    expect(screen.getByLabelText("Следить за хвостом")).toBeChecked();
+    expect(screen.getByText(/Обновлено:/)).toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("Период логов"), "15m");
     await waitFor(() => expect(apiMock.gpu.logs).toHaveBeenCalledWith("15m"));
+  });
+
+  it("keeps requesting logs while the window stays open", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const user = userEvent.setup();
+    try {
+      renderDock();
+      await user.click(await screen.findByRole("button", { name: "Логи" }));
+      await waitFor(() => expect(apiMock.gpu.logs).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        vi.advanceTimersByTime(5000);
+      });
+      await waitFor(() => expect(apiMock.gpu.logs).toHaveBeenCalledTimes(2));
+      expect(apiMock.gpu.logs).toHaveBeenLastCalledWith("1h");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows Salad requests in a connection block", async () => {

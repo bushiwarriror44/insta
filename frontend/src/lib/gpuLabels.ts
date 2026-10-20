@@ -49,6 +49,21 @@ export function chatLine(gpu: GpuOut): string {
   return gpu.chat_ok ? "отвечает" : "не отвечает";
 }
 
+export function formatDeployClock(startedAt: string, now = Date.now()): string {
+  const start = Date.parse(startedAt);
+  if (!Number.isFinite(start)) return "";
+  const total = Math.max(0, Math.floor((now - start) / 1000));
+  if (total < 60) return `${total} с`;
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes} мин ${String(seconds).padStart(2, "0")} с`;
+}
+
+export function isImagePull(gpu: GpuOut): boolean {
+  if (!gpu.deploy_started_at) return false;
+  return gpu.status === "pending" || gpu.status === "deploying" || gpu.creating_count > 0;
+}
+
 export function wanLine(gpu: GpuOut): string {
   if (gpu.wan_ok == null) return "не задан";
   return gpu.wan_ok ? "отвечает" : "не отвечает";

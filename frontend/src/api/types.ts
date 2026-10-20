@@ -360,6 +360,7 @@ export interface JobOut {
 
 export interface EnqueueIn {
   username: string;
+  account_id?: number | null;
   media_filename?: string;
   video_filename?: string;
   post_type?: PostType;
@@ -463,6 +464,7 @@ export interface GpuOut {
   wan_ok: boolean | null;
   detail: string;
   idle_stop_minutes?: number;
+  deploy_started_at?: string | null;
 }
 
 export interface RenderBackendOut {

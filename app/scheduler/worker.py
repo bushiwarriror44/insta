@@ -480,7 +480,9 @@ def _process_job(db: Session, job: PostJob) -> None:
                 out_path,
                 params=random_params(
                     allow_mirror=True,
-                    assume_tiktok_watermark=(post_type == PostType.tiktok.value),
+                    assume_tiktok_watermark=(
+                        post_type == PostType.tiktok.value or platform == Platform.tiktok
+                    ),
                 ),
                 allow_mirror=True,
                 on_log=on_log,

@@ -235,8 +235,8 @@ describe("Publishing page", () => {
     await waitFor(() => expect(apiMock.videos.upload).toHaveBeenCalledTimes(2));
     expect(await screen.findByLabelText(/очередь загрузки/i)).toBeInTheDocument();
     expect(await screen.findByText(/загружено 1 из 2/i)).toBeInTheDocument();
-    expect(screen.getByText("bad.mp4")).toBeInTheDocument();
-    expect(screen.getByText("ok.mp4")).toBeInTheDocument();
+    expect(screen.getAllByText("bad.mp4").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("ok.mp4").length).toBeGreaterThan(0);
   });
 
   it("downloads ZIP for checked media files", async () => {
@@ -310,7 +310,7 @@ describe("Publishing page", () => {
     renderPublishing();
     await screen.findAllByText("clip.mp4");
 
-    fireEvent.change(byLabel(/аккаунт/i), { target: { value: "bob" } });
+    fireEvent.change(byLabel(/аккаунт/i), { target: { value: "2" } });
     fireEvent.click(screen.getByRole("button", { name: /быстрая публикация clip\.mp4/i }));
 
     await waitFor(() =>
@@ -386,7 +386,7 @@ describe("Publishing page", () => {
   it("reads library tab and media from the URL", async () => {
     renderPublishing("/publishing?tab=image&media=photo.jpg&username=alice");
     expect((await screen.findAllByText("photo.jpg")).length).toBeGreaterThan(0);
-    expect(byLabel(/аккаунт/i)).toHaveValue("alice");
+    expect(byLabel(/аккаунт/i)).toHaveValue("1");
     expect(screen.getByRole("button", { name: /вкладка фото/i })).toHaveClass("bg-slate-800");
   });
 
@@ -410,6 +410,47 @@ describe("Publishing page", () => {
     const open = await screen.findByRole("link", { name: /открыть/i });
     expect(open).toHaveAttribute("href", "/activity?job=77");
     expect(screen.getByText(/публикация запланирована/i)).toBeInTheDocument();
+  });
+
+  it("quick-publishes a YouTube account as a Short", async () => {
+    apiMock.accounts.list.mockResolvedValue([{ ...account, platform: "youtube" }]);
+    apiMock.jobs.enqueue.mockResolvedValue({});
+    renderPublishing();
+    await screen.findAllByText("clip.mp4");
+    fireEvent.click(screen.getByRole("button", { name: /быстрая публикация clip\.mp4/i }));
+    await waitFor(() =>
+      expect(apiMock.jobs.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          username: "alice",
+          account_id: 1,
+          media_filename: "clip.mp4",
+          post_type: "youtube_short",
+        })
+      )
+    );
+  });
+
+  it("keeps two accounts with the same username apart by id", async () => {
+    apiMock.accounts.list.mockResolvedValue([
+      { ...account, id: 1, username: "same", platform: "instagram" },
+      { ...account, id: 2, username: "same", platform: "youtube" },
+    ]);
+    apiMock.jobs.enqueue.mockResolvedValue({});
+    renderPublishing();
+    await screen.findAllByText("clip.mp4");
+    const select = byLabel(/аккаунт/i);
+    expect(select.querySelectorAll("option")).toHaveLength(2);
+    fireEvent.change(select, { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: /быстрая публикация clip\.mp4/i }));
+    await waitFor(() =>
+      expect(apiMock.jobs.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          username: "same",
+          account_id: 2,
+          post_type: "youtube_short",
+        })
+      )
+    );
   });
 
   it("queues a render and links the toast to renders", async () => {

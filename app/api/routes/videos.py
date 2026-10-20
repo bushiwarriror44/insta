@@ -52,16 +52,29 @@ def media_type_for_name(name: str) -> str:
     raise ValueError(f"Неподдерживаемое расширение: {suffix}")
 
 
-def _resolve_source_file(filename: str) -> Path:
+def _named_file(directory: Path, filename: str) -> Path | None:
     safe = _safe_name(filename)
     if safe != filename:
-        raise HTTPException(status_code=404, detail="Файл не найден")
-    target = settings.video_source_dir / safe
-    if not target.exists() or not target.is_file():
-        raise HTTPException(status_code=404, detail="Файл не найден")
+        return None
+    root = directory.resolve()
+    target = (directory / safe).resolve()
+    if target.parent != root:
+        return None
+    if not target.is_file():
+        return None
     if target.suffix.lower() not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=404, detail="Файл не найден")
+        return None
     return target
+
+
+def _resolve_source_file(filename: str) -> Path:
+    upload = _named_file(settings.video_source_dir, filename)
+    if upload is not None:
+        return upload
+    generated = _named_file(settings.media_dir, filename)
+    if generated is not None:
+        return generated
+    raise HTTPException(status_code=404, detail="Файл не найден")
 
 
 def _duration_for_path(path: Path, media_type: str) -> Optional[float]:
@@ -230,7 +243,14 @@ def upload_video(
 
 @router.delete("/{filename}")
 def delete_video(filename: str) -> dict[str, bool]:
-    target = _resolve_source_file(filename)
+    target = _named_file(settings.video_source_dir, filename)
+    if target is None:
+        if _named_file(settings.media_dir, filename) is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Сгенерированный файл удаляется со страницы рендеров",
+            )
+        raise HTTPException(status_code=404, detail="Файл не найден")
     try:
         target.unlink()
     except OSError as exc:

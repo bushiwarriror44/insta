@@ -16,6 +16,7 @@ from contextvars import ContextVar
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -115,6 +116,7 @@ class GroupState:
     dns: str = ""
     port: int = 0
     command: tuple[str, ...] = ()
+    start_time: datetime | None = None
 
     @property
     def billing(self) -> bool:
@@ -238,6 +240,7 @@ def _parse_state(payload: dict[str, Any]) -> GroupState:
         dns=str(networking.get("dns") or "").strip(),
         port=port,
         command=tuple(str(part) for part in raw_command if str(part).strip()),
+        start_time=_parse_time(state.get("start_time")),
     )
 
 
@@ -424,6 +427,75 @@ def _model_loaded(origin: str, settings: Settings, model: str) -> bool:
     return False
 
 
+PULL_STAMP = "gpu_pull_started.txt"
+
+
+def _parse_time(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _pull_path(settings: Settings) -> Path:
+    return Path(settings.data_dir) / PULL_STAMP
+
+
+def clear_pull_stamp(settings: Settings) -> None:
+    try:
+        _pull_path(settings).unlink(missing_ok=True)
+    except OSError:
+        return
+
+
+def _read_pull_stamp(settings: Settings) -> datetime | None:
+    try:
+        text = _pull_path(settings).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return _parse_time(text)
+
+
+def _write_pull_stamp(settings: Settings, when: datetime) -> None:
+    path = _pull_path(settings)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), encoding="utf-8")
+    except OSError:
+        return
+
+
+def pull_started_at(
+    state: GroupState,
+    settings: Settings | None = None,
+    *,
+    now: datetime | None = None,
+) -> datetime | None:
+    """Wall clock when the current image pull began. None once the replica is up or the group is down."""
+    settings = settings or get_settings()
+    if not state.still_pulling:
+        clear_pull_stamp(settings)
+        return None
+    if state.start_time is not None:
+        _write_pull_stamp(settings, state.start_time)
+        return state.start_time
+    remembered = _read_pull_stamp(settings)
+    if remembered is not None:
+        return remembered
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    current = current.astimezone(timezone.utc).replace(microsecond=0)
+    _write_pull_stamp(settings, current)
+    return current
+
+
 def _format_elapsed(seconds: float) -> str:
     total = max(0, int(seconds))
     if total < 60:
@@ -463,10 +535,11 @@ def _prep(
     soft_s: float,
     milestone: bool = False,
     extra: str = "",
+    elapsed: float | None = None,
 ) -> PrepStatus:
     now = clock()
-    elapsed = now - started
-    detail = _format_elapsed(elapsed)
+    shown = elapsed if elapsed is not None else now - started
+    detail = _format_elapsed(shown)
     if extra:
         detail = f"{extra} · {detail}"
     return PrepStatus(
@@ -507,6 +580,7 @@ def prepare_for_chat(
         soft_s: float,
         extra: str = "",
         force_milestone: bool = False,
+        elapsed: float | None = None,
     ) -> PrepStatus:
         nonlocal last_title, phase_started
         milestone = force_milestone or title != last_title
@@ -522,6 +596,7 @@ def prepare_for_chat(
             soft_s=soft_s,
             milestone=milestone,
             extra=extra,
+            elapsed=elapsed,
         )
 
     seen_wire: set[str] = set()
@@ -656,7 +731,17 @@ def prepare_for_chat(
                     raise SaladProblem(
                         "Образ всё ещё качается на узел. Подождите и спросите ещё раз — Start уже идёт."
                     )
-                yield emit(_launch_title(state), 2, soft_s=PULL_WAIT_S, extra=state.status)
+                anchor = pull_started_at(state, settings)
+                pull_for = None
+                if anchor is not None:
+                    pull_for = max(0.0, (datetime.now(timezone.utc) - anchor).total_seconds())
+                yield emit(
+                    _launch_title(state),
+                    2,
+                    soft_s=PULL_WAIT_S,
+                    extra=state.status,
+                    elapsed=pull_for,
+                )
             else:
                 if non_pull_started is None:
                     non_pull_started = clock()
@@ -710,8 +795,9 @@ def container_logs(
     settings: Settings | None = None,
     *,
     since: timedelta | None = None,
+    empty_reason: str | None = None,
 ) -> dict[str, Any]:
-    """Stdout/stderr of the GPU group. Never includes the API key."""
+    """Stdout/stderr of the GPU group, plus instance start/probe events. Never includes the API key."""
     settings = settings or get_settings()
     if not configured(settings):
         return {"available": False, "reason": "Salad не настроен", "lines": []}
@@ -719,7 +805,7 @@ def container_logs(
     end = datetime.now(timezone.utc)
     start = end - (since if since is not None else timedelta(hours=1))
     query = (
-        'resource.type = "container"'
+        '(resource.type = "container" or resource.type = "instance_controller")'
         f' and resource.labels.project_name = "{_label(project)}"'
         f' and resource.labels.container_group_name = "{_label(group)}"'
     )
@@ -728,7 +814,8 @@ def container_logs(
         "sort_order": "desc",
         "start_time": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "end_time": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "page_size": 50,
+        # Log query pages are 1–100 entries.
+        "page_size": 100,
         "query": query,
     }
     try:
@@ -764,7 +851,11 @@ def container_logs(
             raw = blob if isinstance(blob, str) else json.dumps(blob, ensure_ascii=False)
             lines.append(raw[:500])
     if not lines:
-        return {"available": True, "reason": "за последний час логов нет", "lines": []}
+        return {
+            "available": True,
+            "reason": empty_reason or "за последний час логов нет",
+            "lines": [],
+        }
     return {"available": True, "reason": "", "lines": lines}
 
 

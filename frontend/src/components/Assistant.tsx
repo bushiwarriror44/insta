@@ -12,7 +12,8 @@ import clsx from "clsx";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { api, formatApiError } from "../api/client";
-import type { GpuLogsOut } from "../api/types";
+import type { GpuLogsOut, GpuOut } from "../api/types";
+import { formatDeployClock, isImagePull } from "../lib/gpuLabels";
 import { ask, type AskField, type AssistantMessageAttachment } from "../api/assistant";
 import { mediaApiPath } from "../api/media";
 import {
@@ -36,6 +37,7 @@ import {
 } from "../lib/setupForms";
 import { SHOW_ASSISTANT } from "../lib/uiEvents";
 import { retryGenerationOnLocal } from "../lib/pollGeneration";
+import { usePollWhenVisible } from "../hooks/usePollWhenVisible";
 import { RenderLocalSwitchModal, type LocalSwitchOffer } from "./RenderLocalSwitchModal";
 import { Modal } from "./Modal";
 
@@ -435,6 +437,55 @@ interface AssistantProps {
   onHiddenChange?: (hidden: boolean) => void;
 }
 
+const LOGS_POLL_MS = 5000;
+
+function formatLogClock(when: Date): string {
+  return when.toLocaleTimeString("ru-RU", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function LogTailPre({
+  text,
+  follow,
+  onLeaveTail,
+  className,
+}: {
+  text: string;
+  follow: boolean;
+  onLeaveTail: () => void;
+  className: string;
+}) {
+  const ref = useRef<HTMLPreElement>(null);
+  const jumping = useRef(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !follow) return;
+    jumping.current = true;
+    el.scrollTop = el.scrollHeight;
+    jumping.current = false;
+  }, [text, follow]);
+
+  return (
+    <pre
+      ref={ref}
+      onScroll={() => {
+        if (jumping.current || !follow) return;
+        const el = ref.current;
+        if (!el) return;
+        const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+        if (gap > 24) onLeaveTail();
+      }}
+      className={className}
+    >
+      {text}
+    </pre>
+  );
+}
+
 export function Assistant({ onHiddenChange }: AssistantProps) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -478,26 +529,57 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const [logsError, setLogsError] = useState("");
   const [logsBusy, setLogsBusy] = useState(false);
   const [logsSince, setLogsSince] = useState("1h");
+  const [logsFetchedAt, setLogsFetchedAt] = useState<Date | null>(null);
+  const [followTail, setFollowTail] = useState(true);
+  const [gpuPull, setGpuPull] = useState<GpuOut | null>(null);
+  const [deployNow, setDeployNow] = useState(() => Date.now());
+  const logsReq = useRef(0);
 
   const box = useRef<HTMLTextAreaElement>(null);
   const tail = useRef<HTMLDivElement>(null);
 
-  const loadLogs = useCallback(async (since = "1h") => {
-    setLogsBusy(true);
-    setLogsError("");
+  const loadLogs = useCallback(async (since = "1h", opts?: { quiet?: boolean }) => {
+    const id = ++logsReq.current;
+    if (!opts?.quiet) {
+      setLogsBusy(true);
+      setLogsError("");
+    }
     try {
-      setLogs(await api.gpu.logs(since));
+      const next = await api.gpu.logs(since);
+      if (id !== logsReq.current) return;
+      setLogs(next);
+      setLogsFetchedAt(new Date());
+      setLogsError("");
     } catch (err) {
+      if (id !== logsReq.current) return;
       setLogsError(formatApiError(err));
     } finally {
-      setLogsBusy(false);
+      if (id === logsReq.current) setLogsBusy(false);
     }
   }, []);
 
+  usePollWhenVisible(
+    () => loadLogs(logsSince, { quiet: true }),
+    LOGS_POLL_MS,
+    logsOpen,
+    logsSince,
+  );
+
   const openLogs = () => {
     setLogsOpen(true);
-    void loadLogs(logsSince);
   };
+
+  const reloadGpu = useCallback(async () => {
+    try {
+      setGpuPull(await api.gpu.status());
+    } catch {
+      setGpuPull(null);
+    }
+  }, []);
+
+  const leaveTail = useCallback(() => {
+    setFollowTail(false);
+  }, []);
 
   useEffect(() => {
     onHiddenChange?.(hidden);
@@ -875,6 +957,14 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const thread = chat?.messages ?? [];
   const view = (chat && live[chat.id]) || emptyLive();
   const busy = view.busy;
+
+  usePollWhenVisible(reloadGpu, 5000, !hidden && !busy);
+  useEffect(() => {
+    if (!gpuPull?.deploy_started_at || busy) return;
+    const id = window.setInterval(() => setDeployNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [gpuPull?.deploy_started_at, busy]);
+
   const writing = view.writing;
   const draftThink = view.think;
   const doing = view.doing;
@@ -890,6 +980,12 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const progressDetail = view.progressDetail;
   const progressRatio = view.progressRatio;
   const activeGeneration = view.activeGeneration;
+  const resumeDeploy = !busy && !progressText && !activeGeneration && gpuPull != null && isImagePull(gpuPull);
+  const resumeTitle = gpuPull?.status === "pending" ? "Жду узел" : "Качается образ на узел";
+  const resumeDetail =
+    resumeDeploy && gpuPull?.deploy_started_at
+      ? `${gpuPull.status} · ${formatDeployClock(gpuPull.deploy_started_at, deployNow)}`
+      : "";
   const anyBusy = Object.values(live).some((item) => item.busy);
 
   useEffect(() => {
@@ -1246,7 +1342,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                       <label key={field.id} className="block space-y-1">
                         <span className="text-xs text-slate-300">
                           {field.label}
-                          {!fieldIsRequired(field) ? (
+                          {!fieldIsRequired(field, askAnswers) ? (
                             <span className="text-slate-500"> (необязательно)</span>
                           ) : null}
                         </span>
@@ -1378,6 +1474,15 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
               )
             )}
           </div>
+          {resumeDeploy ? (
+            <div role="status" className="mb-2 space-y-2 rounded-lg border border-slate-800 bg-slate-900/70 p-3">
+              <div className="flex items-center gap-2 text-sm text-slate-200">
+                <ThinkingSparkle quiet />
+                <span>{resumeTitle}</span>
+              </div>
+              <p className="text-xs text-slate-500">{resumeDetail}</p>
+            </div>
+          ) : null}
           {!busy ? (
             <p data-testid="assistant-page-hint" className="mb-2 px-1 text-xs text-slate-500">
               {pageHint(page)}
@@ -1690,26 +1795,33 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
               </button>
             }
           >
-            <label className="mb-3 flex items-center gap-2 text-xs text-slate-400">
-              За период
-              <select
-                className="input py-1 text-xs"
-                aria-label="Период логов"
-                value={logsSince}
-                onChange={(event) => {
-                  const next = event.target.value;
-                  setLogsSince(next);
-                  void loadLogs(next);
-                }}
-              >
-                <option value="15m">15 мин</option>
-                <option value="1h">1 час</option>
-                <option value="6h">6 часов</option>
-                <option value="24h">24 часа</option>
-              </select>
-            </label>
+            <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-slate-400">
+              <label className="flex items-center gap-2">
+                За период
+                <select
+                  className="input py-1 text-xs"
+                  aria-label="Период логов"
+                  value={logsSince}
+                  onChange={(event) => setLogsSince(event.target.value)}
+                >
+                  <option value="15m">15 мин</option>
+                  <option value="1h">1 час</option>
+                  <option value="6h">6 часов</option>
+                  <option value="24h">24 часа</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={followTail}
+                  onChange={(event) => setFollowTail(event.target.checked)}
+                />
+                Следить за хвостом
+              </label>
+              {logsFetchedAt ? <span>Обновлено: {formatLogClock(logsFetchedAt)}</span> : null}
+            </div>
             {logsError ? <p className="text-sm text-rose-300">{logsError}</p> : null}
-            {!logs && logsBusy ? <p className="text-sm text-slate-400">Читаю логи…</p> : null}
+            {!logs && !logsError ? <p className="text-sm text-slate-400">Читаю логи…</p> : null}
             {logs ? (
               <div className="space-y-4">
                 <section className="space-y-2">
@@ -1718,9 +1830,12 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                     <div key={row.name}>
                       <p className="text-[11px] text-slate-500">{row.name}</p>
                       {row.available ? (
-                        <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-3 font-mono text-[11px] leading-relaxed text-slate-300">
-                          {row.lines.length ? row.lines.join("\n") : row.reason || "пусто"}
-                        </pre>
+                        <LogTailPre
+                          text={row.lines.length ? row.lines.join("\n") : row.reason || "пусто"}
+                          follow={followTail}
+                          onLeaveTail={leaveTail}
+                          className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-3 font-mono text-[11px] leading-relaxed text-slate-300"
+                        />
                       ) : (
                         <p className="mt-1 text-xs text-slate-400">{row.reason || "логи недоступны"}</p>
                       )}
@@ -1730,9 +1845,12 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                 <section>
                   <h4 className="text-xs font-medium text-slate-300">Видеокарта</h4>
                   {logs.gpu.available ? (
-                    <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-3 font-mono text-[11px] leading-relaxed text-slate-300">
-                      {logs.gpu.lines.length ? logs.gpu.lines.join("\n") : logs.gpu.reason || "пусто"}
-                    </pre>
+                    <LogTailPre
+                      text={logs.gpu.lines.length ? logs.gpu.lines.join("\n") : logs.gpu.reason || "пусто"}
+                      follow={followTail}
+                      onLeaveTail={leaveTail}
+                      className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-3 font-mono text-[11px] leading-relaxed text-slate-300"
+                    />
                   ) : (
                     <p className="mt-1 text-xs text-slate-400">{logs.gpu.reason || "логи недоступны"}</p>
                   )}

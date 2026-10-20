@@ -57,11 +57,11 @@ const image: VideoOut = {
 
 const baseProps = {
   accounts: [account],
-  username: "alice",
+  accountId: 1,
   whenLocal: "",
   caption: "",
   saving: false,
-  onUsernameChange: () => {},
+  onAccountChange: () => {},
   onPostTypeChange: () => {},
   onWhenChange: () => {},
   onCaptionChange: () => {},

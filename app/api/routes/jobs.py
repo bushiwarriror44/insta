@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import AuthDep, get_db
 from app.api.schemas import DiagnosticRunOut, EnqueueIn, JobOut
-from app.db import Account, DiagnosticRun, PostJob, PostJobStatus, PostType
+from app.db import Account, DiagnosticRun, Platform, PostJob, PostJobStatus, PostType
 from app.api.routes.diagnostics import _to_run_out
 from app.api.routes.videos import _resolve_source_file, media_type_for_name
 from app.services.review import initial_job_status
@@ -75,14 +75,51 @@ def list_jobs(
     return [_serialize(j, db=db) for j in rows]
 
 
-@router.post("", response_model=JobOut, status_code=status.HTTP_201_CREATED)
-def enqueue_job(payload: EnqueueIn, db: Session = Depends(get_db)) -> JobOut:
-    account = db.scalar(select(Account).where(Account.username == payload.username))
-    if account is None:
+_PLATFORM_POST_TYPES = {
+    Platform.instagram.value: frozenset({"reel", "feed_photo", "feed_video"}),
+    Platform.youtube.value: frozenset({"youtube_short"}),
+    Platform.tiktok.value: frozenset({"tiktok"}),
+}
+
+
+def _platform_value(account: Account) -> str:
+    value = account.platform
+    return value.value if hasattr(value, "value") else str(value or Platform.instagram.value)
+
+
+def _account_for_enqueue(payload: EnqueueIn, db: Session) -> Account:
+    if payload.account_id is not None:
+        account = db.get(Account, payload.account_id)
+        if account is None:
+            raise HTTPException(status_code=404, detail="Аккаунт не найден")
+        return account
+    rows = list(db.scalars(select(Account).where(Account.username == payload.username)).all())
+    if not rows:
         raise HTTPException(
             status_code=404,
             detail=f"Аккаунт «{payload.username}» не найден",
         )
+    if len(rows) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Несколько аккаунтов с этим именем — выберите площадку",
+        )
+    return rows[0]
+
+
+def _check_post_type(account: Account, post_type: str) -> None:
+    platform = _platform_value(account)
+    allowed = _PLATFORM_POST_TYPES.get(platform, _PLATFORM_POST_TYPES[Platform.instagram.value])
+    if post_type not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"для {platform} нельзя публиковать {post_type}",
+        )
+
+
+@router.post("", response_model=JobOut, status_code=status.HTTP_201_CREATED)
+def enqueue_job(payload: EnqueueIn, db: Session = Depends(get_db)) -> JobOut:
+    account = _account_for_enqueue(payload, db)
 
     filename = payload.selected_filename
     try:
@@ -101,6 +138,9 @@ def enqueue_job(payload: EnqueueIn, db: Session = Depends(get_db)) -> JobOut:
             status_code=400,
             detail=f"для {payload.post_type} нужен видеофайл",
         )
+    _check_post_type(account, payload.post_type)
+    if _platform_value(account) in {Platform.youtube.value, Platform.tiktok.value} and media_type != "video":
+        raise HTTPException(status_code=400, detail="для YouTube и TikTok нужно видео")
 
     explicit_when = payload.when is not None
     when = payload.when or datetime.now(timezone.utc)
