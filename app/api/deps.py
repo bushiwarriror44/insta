@@ -143,9 +143,55 @@ def require_docs_owner(
     return principal
 
 
+def require_owner_or_open(
+    principal: AuthPrincipal = Depends(resolve_principal),
+    db: Session = Depends(get_db),
+) -> AuthPrincipal:
+    """Owner when auth is on; anyone in open mode (synthetic owner)."""
+    if not auth_is_required(db):
+        return principal
+    if principal.role != "owner":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Только владелец может управлять LLM-шлюзом",
+        )
+    return principal
+
+
+def require_llm_gateway(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+) -> str:
+    """Bearer must match the dedicated LLM gateway key (never admin/operator)."""
+    from app.panel.settings_store import ensure_llm_gateway_token, llm_gateway_is_enabled
+
+    provided = _extract_bearer(authorization)
+    if not provided:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Требуется Authorization Bearer с ключом LLM-шлюза",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    expected = ensure_llm_gateway_token(db)
+    if not hmac.compare_digest(provided, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверный ключ LLM-шлюза",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not llm_gateway_is_enabled(db):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="LLM-шлюз выключен",
+        )
+    return provided
+
+
 AuthDep = Depends(require_token)
 OwnerDep = Depends(require_owner)
 DocsOwnerDep = Depends(require_docs_owner)
+OwnerOrOpenDep = Depends(require_owner_or_open)
+LlmGatewayDep = Depends(require_llm_gateway)
 
 
 def verify_ws_token(

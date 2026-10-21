@@ -776,6 +776,20 @@ export const api = {
       }),
   },
 
+  llmGateway: {
+    credentials: () =>
+      request<import("./types").LlmGatewayCredentialsOut>("/api/llm-gateway/credentials"),
+    rotate: () =>
+      request<import("./types").LlmGatewayCredentialsOut>("/api/llm-gateway/rotate", {
+        method: "POST",
+      }),
+    setEnabled: (enabled: boolean) =>
+      request<import("./types").LlmGatewayCredentialsOut>("/api/llm-gateway/enabled", {
+        method: "POST",
+        body: { enabled },
+      }),
+  },
+
   operators: {
     list: () => request<import("./types").PanelOperatorOut[]>("/api/operators"),
     create: (label: string) =>

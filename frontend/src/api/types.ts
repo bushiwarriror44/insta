@@ -21,6 +21,27 @@ export interface PanelSettingsOut {
   master_password_set: boolean;
 }
 
+export interface LlmGatewayActivityOut {
+  at: string;
+  channel: "llm" | "mcp";
+  method: string;
+  path: string;
+  client_ip: string;
+  user_agent: string;
+  status: number;
+}
+
+export interface LlmGatewayCredentialsOut {
+  base_url: string;
+  api_key: string;
+  mcp_url: string;
+  mcp_json: string;
+  model: string;
+  upstream_ok: boolean;
+  enabled: boolean;
+  recent: LlmGatewayActivityOut[];
+}
+
 export interface AdminNotesOut {
   content: string;
   updated_at: string | null;

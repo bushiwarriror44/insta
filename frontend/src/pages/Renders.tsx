@@ -456,16 +456,17 @@ export function Renders() {
       </Card>
       <Card>
         <h2 className="font-medium mb-3">Рендеры</h2>
+        <div className="table-scroll">
         <table className="table-base">
           <thead>
             <tr>
               <th>ID</th>
               <th>Статус</th>
-              <th>Бэкенд</th>
+              <th className="hidden md:table-cell">Бэкенд</th>
               <th>Заголовок</th>
               <th>Стадия</th>
-              <th>Ошибка</th>
-              <th>$</th>
+              <th className="hidden lg:table-cell">Ошибка</th>
+              <th className="hidden md:table-cell">$</th>
               <th />
             </tr>
           </thead>
@@ -487,11 +488,11 @@ export function Renders() {
                 <td>
                   <StatusBadge value={g.status} />
                 </td>
-                <td>{g.backend || "—"}</td>
+                <td className="hidden md:table-cell">{g.backend || "—"}</td>
                 <td className="truncate" title={g.post_title || g.prompt}>
                   {g.post_title || g.prompt.slice(0, 60)}
                 </td>
-                <td className="min-w-[8rem]">
+                <td className="min-w-[7rem] md:min-w-[8rem]">
                   <p className="truncate text-xs text-slate-300" title={generationStageLabel(g.status, g.stage, g.queue_position)}>
                     {generationStageLabel(g.status, g.stage, g.queue_position)}
                   </p>
@@ -499,14 +500,14 @@ export function Renders() {
                 </td>
                 <td
                   className={clsx(
-                    "max-w-[200px] truncate text-xs",
+                    "hidden max-w-[200px] truncate text-xs lg:table-cell",
                     ["failed", "dead"].includes(g.status) && g.last_error ? "text-rose-300" : "text-slate-500"
                   )}
                   title={["failed", "dead"].includes(g.status) ? g.last_error || undefined : undefined}
                 >
                   {["failed", "dead"].includes(g.status) ? g.last_error || "—" : "—"}
                 </td>
-                <td className="tabular-nums">{g.cost_usd}</td>
+                <td className="hidden tabular-nums md:table-cell">{g.cost_usd}</td>
                 <td className="text-right">
                   <div className="flex justify-end gap-1 flex-wrap">
                     {["queued", "failed", "dead"].includes(g.status) ? (
@@ -534,6 +535,7 @@ export function Renders() {
             ))}
           </tbody>
         </table>
+        </div>
       </Card>
       <Card>
         <h2 className="font-medium">Склейки</h2>
@@ -576,13 +578,14 @@ export function Renders() {
             Склеить
           </button>
         </div>
+        <div className="table-scroll">
         <table className="table-base">
           <thead>
             <tr>
               <th>ID</th>
               <th>Статус</th>
               <th>Пост</th>
-              <th>Клипов</th>
+              <th className="hidden sm:table-cell">Клипов</th>
               <th />
             </tr>
           </thead>
@@ -607,7 +610,7 @@ export function Renders() {
                 <td className="truncate" title={j.post_title}>
                   {j.post_title}
                 </td>
-                <td className="tabular-nums">{j.clips}</td>
+                <td className="hidden tabular-nums sm:table-cell">{j.clips}</td>
                 <td className="text-right">
                   <div className="flex justify-end gap-1 flex-wrap">
                     {["queued", "failed", "dead"].includes(j.status) ? (
@@ -635,6 +638,7 @@ export function Renders() {
             ))}
           </tbody>
         </table>
+        </div>
       </Card>
       <RenderLocalSwitchModal
         offer={localOffer}

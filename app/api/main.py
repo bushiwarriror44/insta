@@ -24,6 +24,7 @@ from app.api.routes import (
     gpu,
     health,
     jobs,
+    llm_gateway,
     maintenance,
     salad_gpu_patch,
     operators,
@@ -157,6 +158,9 @@ def create_app() -> FastAPI:
     app.include_router(admin_notes.router)
     app.include_router(worker.router)
     app.include_router(assistant.router)
+    app.include_router(llm_gateway.credentials_router)
+    app.include_router(llm_gateway.proxy_router)
+    app.include_router(llm_gateway.mcp_router)
     app.include_router(screenshots.router)
     app.include_router(maintenance.router)
 

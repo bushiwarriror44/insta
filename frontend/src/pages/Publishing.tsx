@@ -709,6 +709,7 @@ export function Publishing() {
         {publications.length === 0 ? (
           <EmptyState>Публикаций пока нет.</EmptyState>
         ) : (
+          <div className="table-scroll">
           <table className="table-base">
             <colgroup>
               <col className="w-[12%]" />
@@ -722,24 +723,24 @@ export function Publishing() {
             <thead>
               <tr>
                 <th>Аккаунт</th>
-                <th>Тип</th>
-                <th>Медиа</th>
+                <th className="hidden sm:table-cell">Тип</th>
+                <th className="hidden md:table-cell">Медиа</th>
                 <th>Статус</th>
-                <th>Ошибка</th>
-                <th>Статистика</th>
+                <th className="hidden lg:table-cell">Ошибка</th>
+                <th className="hidden md:table-cell">Статистика</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
               {publications.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-900/40">
-                  <td className="font-medium truncate" title={`@${row.account_username ?? row.account_id}`}>
+                  <td className="truncate font-medium" title={`@${row.account_username ?? row.account_id}`}>
                     @{row.account_username ?? row.account_id}
                   </td>
-                  <td className="text-slate-300 truncate">
+                  <td className="hidden truncate text-slate-300 sm:table-cell">
                     {POST_TYPE_LABELS[row.post_type ?? "reel"] ?? row.post_type ?? "reel"}
                   </td>
-                  <td className="text-[11px] text-slate-400 min-w-0">
+                  <td className="hidden min-w-0 text-[11px] text-slate-400 md:table-cell">
                     <div className="truncate" title={row.media_code ?? row.media_id ?? "-"}>
                       {row.media_code ?? row.media_id ?? "-"}
                     </div>
@@ -750,10 +751,10 @@ export function Publishing() {
                   <td className={row.success ? "text-emerald-300" : "text-rose-300"}>
                     {row.success ? "опубликовано" : "ошибка"}
                   </td>
-                  <td className="text-[11px] text-rose-300 truncate" title={row.error ?? "—"}>
+                  <td className="hidden truncate text-[11px] text-rose-300 lg:table-cell" title={row.error ?? "—"}>
                     {row.error ?? "—"}
                   </td>
-                  <td className="tabular-nums text-[11px] text-slate-300">
+                  <td className="hidden tabular-nums text-[11px] text-slate-300 md:table-cell">
                     <div>
                       {count(row.view_count)} / {count(row.play_count)}
                     </div>
@@ -788,6 +789,7 @@ export function Publishing() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </Card>
     </div>

@@ -8,9 +8,11 @@ import {
   LayoutDashboard,
   Library,
   LogOut,
+  Menu,
   Settings as SettingsIcon,
   Users,
   Wrench,
+  X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, NavLink, Outlet } from "react-router-dom";
@@ -53,12 +55,15 @@ export function Layout() {
   const [dockHidden, setDockHidden] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
   const [badges, setBadges] = useState<Badges>({
     review: 0,
     failed: 0,
     questions: 0,
     questionsAccountId: null,
   });
+
+  const closeNav = useCallback(() => setNavOpen(false), []);
 
   const loadBadges = useCallback(async () => {
     try {
@@ -80,6 +85,15 @@ export function Layout() {
     window.addEventListener(REFRESH_NAV_BADGES, loadBadges);
     return () => window.removeEventListener(REFRESH_NAV_BADGES, loadBadges);
   }, [loadBadges]);
+
+  useEffect(() => {
+    if (!navOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setNavOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [navOpen]);
 
   const hotkeys = useMemo(
     () => ({
@@ -103,16 +117,45 @@ export function Layout() {
     []
   );
 
-  useHotkeys(hotkeys, !paletteOpen && !helpOpen);
+  useHotkeys(hotkeys, !paletteOpen && !helpOpen && !navOpen);
+
+  const navClass = ({ isActive }: { isActive: boolean }) =>
+    clsx(
+      "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+      isActive
+        ? "bg-brand-500/15 text-brand-200"
+        : "text-slate-300 hover:bg-slate-800/60 hover:text-white"
+    );
 
   return (
-    <div className="min-h-screen flex bg-slate-950 text-slate-100">
-      <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col border-r border-slate-800 bg-slate-900/40">
-        <div className="px-5 py-5 border-b border-slate-800">
-          <div className="text-lg font-semibold tracking-tight">Reels Admin</div>
-          <div className="text-xs text-slate-500 mt-0.5">Instagram · YouTube · TikTok</div>
+    <div className="flex min-h-screen bg-slate-950 text-slate-100">
+      {navOpen ? (
+        <button
+          type="button"
+          className="fixed inset-0 z-30 bg-slate-950/70 md:hidden"
+          aria-label="Закрыть меню"
+          onClick={closeNav}
+        />
+      ) : null}
+
+      <aside
+        className={clsx(
+          "fixed inset-y-0 left-0 z-40 flex w-60 max-w-[85vw] flex-col border-r border-slate-800 bg-slate-950 transition-transform duration-200 md:static md:z-auto md:h-screen md:max-w-none md:shrink-0 md:translate-x-0 md:bg-slate-900/40",
+          navOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+        )}
+        aria-label="Навигация"
+      >
+        <div className="flex items-center justify-between border-b border-slate-800 px-3 py-3 md:hidden">
+          <span className="px-2 text-sm font-medium text-slate-200">Меню</span>
+          <button type="button" className="btn-ghost px-2 py-1" aria-label="Закрыть" onClick={closeNav}>
+            <X size={16} />
+          </button>
         </div>
-        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+        <div className="hidden border-b border-slate-800 px-5 py-5 md:block">
+          <div className="text-lg font-semibold tracking-tight">Reels Admin</div>
+          <div className="mt-0.5 text-xs text-slate-500">Instagram · YouTube · TikTok</div>
+        </div>
+        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4" aria-label="Основное меню">
           {NAV.map(({ to, label, icon: Icon, end, testId, badge }) => {
             const href =
               badge === "review" && badges.review > 0
@@ -121,43 +164,29 @@ export function Layout() {
                   ? `/agent?account=${badges.questionsAccountId}`
                   : to;
             return (
-            <NavLink
-              key={to}
-              to={href}
-              end={end}
-              data-testid={testId}
-              className={({ isActive }) =>
-                clsx(
-                  "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                  isActive
-                    ? "bg-brand-500/15 text-brand-200"
-                    : "text-slate-300 hover:bg-slate-800/60 hover:text-white"
-                )
-              }
-            >
-              <Icon size={18} />
-              <span className="flex-1">{label}</span>
-              {badge === "review" && badges.review > 0 ? (
-                <NavBadge count={badges.review} />
-              ) : null}
-              {badge === "questions" && badges.questions > 0 ? (
-                <NavBadge count={badges.questions} />
-              ) : null}
-            </NavLink>
+              <NavLink
+                key={to}
+                to={href}
+                end={end}
+                data-testid={testId}
+                className={navClass}
+                onClick={closeNav}
+              >
+                <Icon size={18} />
+                <span className="flex-1">{label}</span>
+                {badge === "review" && badges.review > 0 ? <NavBadge count={badges.review} /> : null}
+                {badge === "questions" && badges.questions > 0 ? (
+                  <NavBadge count={badges.questions} />
+                ) : null}
+              </NavLink>
             );
           })}
           {showAdmin ? (
             <NavLink
               to="/administration"
               data-testid="nav-administration"
-              className={({ isActive }) =>
-                clsx(
-                  "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                  isActive
-                    ? "bg-brand-500/15 text-brand-200"
-                    : "text-slate-300 hover:bg-slate-800/60 hover:text-white"
-                )
-              }
+              className={navClass}
+              onClick={closeNav}
             >
               <BookOpen size={18} />
               <span>Администрирование</span>
@@ -165,33 +194,11 @@ export function Layout() {
           ) : null}
           {isOwner ? (
             <>
-              <NavLink
-                to="/operators"
-                data-testid="nav-operators"
-                className={({ isActive }) =>
-                  clsx(
-                    "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                    isActive
-                      ? "bg-brand-500/15 text-brand-200"
-                      : "text-slate-300 hover:bg-slate-800/60 hover:text-white"
-                  )
-                }
-              >
+              <NavLink to="/operators" data-testid="nav-operators" className={navClass} onClick={closeNav}>
                 <KeyRound size={18} />
                 <span>Доступы</span>
               </NavLink>
-              <NavLink
-                to="/settings"
-                data-testid="nav-settings"
-                className={({ isActive }) =>
-                  clsx(
-                    "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                    isActive
-                      ? "bg-brand-500/15 text-brand-200"
-                      : "text-slate-300 hover:bg-slate-800/60 hover:text-white"
-                  )
-                }
-              >
+              <NavLink to="/settings" data-testid="nav-settings" className={navClass} onClick={closeNav}>
                 <SettingsIcon size={18} />
                 <span>Настройки</span>
               </NavLink>
@@ -206,29 +213,40 @@ export function Layout() {
             </button>
           )}
           {!authRequired && (
-            <div className="text-xs text-slate-500 px-3 mt-2">
-              Открытый режим (без токена)
-            </div>
+            <div className="mt-2 px-3 text-xs text-slate-500">Открытый режим (без токена)</div>
           )}
           {isAuthed && role === "operator" ? (
-            <div className="text-xs text-slate-500 px-3 mt-2">Роль: оператор</div>
+            <div className="mt-2 px-3 text-xs text-slate-500">Роль: оператор</div>
           ) : null}
         </div>
       </aside>
-      <main className="flex-1 min-w-0">
-        <header className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950/80 backdrop-blur">
-          <div className="text-sm text-slate-400">
-            Reels Publisher · админ-консоль
-            {badges.failed > 0 ? (
-              <Link to="/activity?status=errors" className="ml-2 text-rose-300 hover:text-rose-200">
-                ошибки 24ч: {badges.failed}
-              </Link>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-2">
+
+      <main className="min-w-0 flex-1">
+        <header className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-slate-800 bg-slate-950/80 px-3 py-3 backdrop-blur sm:px-6 sm:py-4">
+          <div className="flex min-w-0 items-center gap-2">
             <button
               type="button"
-              className="btn-ghost text-xs py-1 px-2"
+              className="btn-ghost shrink-0 px-2 py-1 md:hidden"
+              aria-label="Меню"
+              aria-expanded={navOpen}
+              onClick={() => setNavOpen(true)}
+            >
+              <Menu size={18} />
+            </button>
+            <div className="truncate text-sm text-slate-400">
+              <span className="hidden sm:inline">Reels Publisher · админ-консоль</span>
+              <span className="sm:hidden">Reels Admin</span>
+              {badges.failed > 0 ? (
+                <Link to="/activity?status=errors" className="ml-2 text-rose-300 hover:text-rose-200">
+                  ошибки 24ч: {badges.failed}
+                </Link>
+              ) : null}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              className="btn-ghost px-2 py-1 text-xs"
               onClick={() => setPaletteOpen(true)}
               title="Ctrl+K"
             >
@@ -238,7 +256,7 @@ export function Layout() {
             <AgentToggle compact />
           </div>
         </header>
-        <div className={clsx("p-6", dockHidden ? "pb-16" : "pb-40")}>
+        <div className={clsx("p-3 sm:p-6", dockHidden ? "pb-16" : "pb-40")}>
           <Outlet />
         </div>
       </main>
@@ -246,12 +264,25 @@ export function Layout() {
       {paletteOpen ? <CommandPalette onClose={() => setPaletteOpen(false)} /> : null}
       <Modal open={helpOpen} onClose={() => setHelpOpen(false)} title="Клавиши">
         <ul className="space-y-2 text-sm text-slate-300">
-          <li><kbd className="font-mono text-xs">Ctrl</kbd>+<kbd className="font-mono text-xs">K</kbd> — палитра</li>
-          <li><kbd className="font-mono text-xs">/</kbd> — поиск на странице</li>
-          <li><kbd className="font-mono text-xs">C</kbd> — чат агента</li>
-          <li><kbd className="font-mono text-xs">J</kbd> / <kbd className="font-mono text-xs">K</kbd> — строка в очереди и библиотеке</li>
-          <li><kbd className="font-mono text-xs">Enter</kbd> — открыть выделенное</li>
-          <li><kbd className="font-mono text-xs">?</kbd> — эта шпаргалка</li>
+          <li>
+            <kbd className="font-mono text-xs">Ctrl</kbd>+<kbd className="font-mono text-xs">K</kbd> — палитра
+          </li>
+          <li>
+            <kbd className="font-mono text-xs">/</kbd> — поиск на странице
+          </li>
+          <li>
+            <kbd className="font-mono text-xs">C</kbd> — чат агента
+          </li>
+          <li>
+            <kbd className="font-mono text-xs">J</kbd> / <kbd className="font-mono text-xs">K</kbd> — строка в очереди и
+            библиотеке
+          </li>
+          <li>
+            <kbd className="font-mono text-xs">Enter</kbd> — открыть выделенное
+          </li>
+          <li>
+            <kbd className="font-mono text-xs">?</kbd> — эта шпаргалка
+          </li>
         </ul>
       </Modal>
     </div>

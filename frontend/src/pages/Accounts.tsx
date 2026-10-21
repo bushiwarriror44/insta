@@ -501,6 +501,7 @@ export function Accounts() {
             {proxyFilter === "bad" ? "Недоступных прокси нет." : "Нет прокси с этим фильтром."}
           </EmptyState>
         ) : (
+          <div className="table-scroll">
           <table className="table-base">
             <colgroup>
               <col className="w-[16%]" />
@@ -512,8 +513,8 @@ export function Accounts() {
             <thead>
               <tr>
                 <th>Метка</th>
-                <th>URL</th>
-                <th>Страна / IP</th>
+                <th className="hidden md:table-cell">URL</th>
+                <th className="hidden sm:table-cell">Страна / IP</th>
                 <th>Статус</th>
                 <th></th>
               </tr>
@@ -533,11 +534,11 @@ export function Accounts() {
                       {p.accounts_count ?? 0} акк.
                     </div>
                   </td>
-                  <td className="min-w-0 truncate font-mono text-[11px] text-slate-400" title={p.url}>
+                  <td className="hidden min-w-0 truncate font-mono text-[11px] text-slate-400 md:table-cell" title={p.url}>
                     {p.url}
                   </td>
                   <td
-                    className="min-w-0 text-slate-400"
+                    className="hidden min-w-0 text-slate-400 sm:table-cell"
                     title={
                       p.geo_mismatch_warning
                         ? `Не совпадает с заявленной страной (${p.country})`
@@ -624,6 +625,7 @@ export function Accounts() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </Card>
 
@@ -688,6 +690,7 @@ export function Accounts() {
             {statusFilter ? "Нет аккаунтов с этим статусом." : "Никого не нашлось."}
           </EmptyState>
         ) : (
+          <div className="table-scroll">
           <table className="table-base">
             <colgroup>
               <col className="w-[22%]" />
@@ -699,9 +702,9 @@ export function Accounts() {
             <thead>
               <tr>
                 <th>Имя</th>
-                <th>Площадка</th>
-                <th>Прокси</th>
-                <th>Активность</th>
+                <th className="hidden sm:table-cell">Площадка</th>
+                <th className="hidden md:table-cell">Прокси</th>
+                <th className="hidden lg:table-cell">Активность</th>
                 <th></th>
               </tr>
             </thead>
@@ -788,14 +791,14 @@ export function Accounts() {
                         </button>
                       </div>
                     </td>
-                    <td className="min-w-0">
+                    <td className="hidden min-w-0 sm:table-cell">
                       <div className="truncate text-[11px] uppercase text-slate-400">
                         {a.platform || "instagram"}
                       </div>
                       <StatusBadge value={a.status} />
                     </td>
                     <td
-                      className="min-w-0 text-slate-400"
+                      className="hidden min-w-0 text-slate-400 md:table-cell"
                       title={
                         a.proxy_country &&
                         a.proxy_geo_country &&
@@ -828,7 +831,7 @@ export function Accounts() {
                         {a.timezone}
                       </div>
                     </td>
-                    <td className="min-w-0 text-slate-300 tabular-nums">
+                    <td className="hidden min-w-0 tabular-nums text-slate-300 lg:table-cell">
                       <div>
                         {a.daily_post_cap} · {a.min_gap_hours}h
                         <span className="ml-1 text-emerald-300">{a.posts_today}</span>
@@ -948,6 +951,7 @@ export function Accounts() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </Card>
 

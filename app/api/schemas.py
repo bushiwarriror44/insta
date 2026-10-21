@@ -484,6 +484,31 @@ class PanelSettingsOut(BaseModel):
     master_password_set: bool
 
 
+class LlmGatewayActivityOut(BaseModel):
+    at: str
+    channel: Literal["llm", "mcp"]
+    method: str
+    path: str
+    client_ip: str
+    user_agent: str
+    status: int
+
+
+class LlmGatewayCredentialsOut(BaseModel):
+    base_url: str
+    api_key: str
+    mcp_url: str
+    mcp_json: str
+    model: str
+    upstream_ok: bool
+    enabled: bool = True
+    recent: list[LlmGatewayActivityOut] = Field(default_factory=list)
+
+
+class LlmGatewayEnabledIn(BaseModel):
+    enabled: bool
+
+
 class PanelEntryPathUpdateIn(BaseModel):
     path: str = Field(min_length=12, max_length=200)
     current_password: str = Field(min_length=1)

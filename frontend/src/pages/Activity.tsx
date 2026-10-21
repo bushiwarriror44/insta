@@ -395,6 +395,7 @@ export function Activity() {
         {jobs.length === 0 ? (
           <EmptyState>Нет задач по выбранному фильтру.</EmptyState>
         ) : (
+          <div className="table-scroll">
           <table className="table-base">
             <colgroup>
               <col className="w-[8%]" />
@@ -411,11 +412,11 @@ export function Activity() {
               <tr>
                 <th>ID</th>
                 <th>Аккаунт</th>
-                <th>Тип</th>
+                <th className="hidden sm:table-cell">Тип</th>
                 <th>Статус</th>
-                <th>Когда</th>
-                <th>Поп.</th>
-                <th>Источник</th>
+                <th className="hidden md:table-cell">Когда</th>
+                <th className="hidden lg:table-cell">Поп.</th>
+                <th className="hidden lg:table-cell">Источник</th>
                 <th>Ошибка</th>
                 <th></th>
               </tr>
@@ -432,16 +433,16 @@ export function Activity() {
                   onClick={() => openJob(j, jobs.findIndex((row) => row.id === j.id))}
                 >
                   <td className="tabular-nums text-slate-400">#{j.id}</td>
-                  <td className="font-medium truncate" title={j.account_username ? `@${j.account_username}` : `id:${j.account_id}`}>
+                  <td className="truncate font-medium" title={j.account_username ? `@${j.account_username}` : `id:${j.account_id}`}>
                     {j.account_username ? `@${j.account_username}` : `id:${j.account_id}`}
                   </td>
-                  <td className="text-[11px] text-slate-400 truncate">
+                  <td className="hidden truncate text-[11px] text-slate-400 sm:table-cell">
                     {POST_TYPE_LABELS[j.post_type] ?? j.post_type}
                   </td>
                   <td>
                     <StatusBadge value={j.status} />
                   </td>
-                  <td className="text-[11px] text-slate-400">
+                  <td className="hidden text-[11px] text-slate-400 md:table-cell">
                     <div className="truncate" title={new Date(j.scheduled_for).toLocaleString("ru-RU")}>
                       {new Date(j.scheduled_for).toLocaleString("ru-RU")}
                     </div>
@@ -449,11 +450,11 @@ export function Activity() {
                       {j.next_attempt_at ? new Date(j.next_attempt_at).toLocaleString("ru-RU") : "—"}
                     </div>
                   </td>
-                  <td className="tabular-nums text-slate-300">{j.attempts}</td>
-                  <td className="text-[11px] text-slate-400 truncate" title={basename(j.source_video_path)}>
+                  <td className="hidden tabular-nums text-slate-300 lg:table-cell">{j.attempts}</td>
+                  <td className="hidden truncate text-[11px] text-slate-400 lg:table-cell" title={basename(j.source_video_path)}>
                     {basename(j.source_video_path)}
                   </td>
-                  <td className="text-[11px] text-rose-300 truncate" title={j.last_error ?? ""}>
+                  <td className="truncate text-[11px] text-rose-300" title={j.last_error ?? ""}>
                     {j.last_error ?? ""}
                   </td>
                   <td className="text-right" onClick={(e) => e.stopPropagation()}>
@@ -517,6 +518,7 @@ export function Activity() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </Card>
       ) : lane === "renders" ? (

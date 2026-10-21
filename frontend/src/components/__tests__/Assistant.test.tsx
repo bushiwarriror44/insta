@@ -14,7 +14,38 @@ const apiMock = vi.hoisted(() => ({
   videos: { upload: vi.fn() },
   factory: { getGeneration: vi.fn() },
   gpu: { logs: vi.fn(), status: vi.fn() },
+  llmGateway: { credentials: vi.fn(), rotate: vi.fn(), setEnabled: vi.fn() },
 }));
+
+const gatewayFixture = {
+  base_url: "http://localhost/llm/v1",
+  api_key: "gw-test-key",
+  mcp_url: "http://localhost/mcp",
+  mcp_json: JSON.stringify(
+    {
+      mcpServers: {
+        "reels-salad": {
+          url: "http://localhost/mcp",
+          headers: { Authorization: "Bearer gw-test-key" },
+        },
+      },
+    },
+    null,
+    2
+  ),
+  model: "qwen3:8b",
+  upstream_ok: true,
+  enabled: true,
+  recent: [] as Array<{
+    at: string;
+    channel: "llm" | "mcp";
+    method: string;
+    path: string;
+    client_ip: string;
+    user_agent: string;
+    status: number;
+  }>,
+};
 
 vi.mock("../../context/AuthContext", () => ({
   useAuth: useAuthMock,
@@ -49,7 +80,7 @@ function renderDock(ui = <Assistant />, path = "/") {
 
 beforeEach(() => {
   window.localStorage.clear();
-  useAuthMock.mockReturnValue({ role: "owner", state: "open" });
+  useAuthMock.mockReturnValue({ role: "owner", state: "open", authRequired: true });
   apiMock.accounts.list.mockResolvedValue([{ username: "alice" }]);
   apiMock.videos.upload.mockResolvedValue({
     filename: "paste.png",
@@ -77,6 +108,20 @@ beforeEach(() => {
     docker: [{ name: "reels-api", available: true, reason: "", lines: ["api ok"] }],
     gpu: { name: "gpu", available: true, reason: "", lines: ["ollama"] },
   });
+  apiMock.llmGateway.credentials.mockReset();
+  apiMock.llmGateway.credentials.mockResolvedValue({ ...gatewayFixture, recent: [] });
+  apiMock.llmGateway.rotate.mockReset();
+  apiMock.llmGateway.rotate.mockResolvedValue({
+    ...gatewayFixture,
+    api_key: "gw-rotated",
+    recent: [],
+  });
+  apiMock.llmGateway.setEnabled.mockReset();
+  apiMock.llmGateway.setEnabled.mockImplementation(async (enabled: boolean) => ({
+    ...gatewayFixture,
+    enabled,
+    recent: [],
+  }));
 });
 
 describe("Assistant", () => {
@@ -889,5 +934,63 @@ describe("Assistant", () => {
     );
     renderDock();
     expect(screen.getAllByText("старый разговор").length).toBeGreaterThan(0);
+  });
+
+  it("switches to API and MCP tabs with copyable credentials", async () => {
+    const user = userEvent.setup();
+    renderDock();
+    expect(await screen.findByTestId("assistant-dock-tab-agent")).toBeInTheDocument();
+    await user.click(screen.getByTestId("assistant-dock-tab-api"));
+    expect(await screen.findByTestId("assistant-api-panel")).toBeInTheDocument();
+    await waitFor(() => expect(apiMock.llmGateway.credentials).toHaveBeenCalled());
+    expect(screen.getByLabelText("Base URL")).toHaveValue(gatewayFixture.base_url);
+    expect(screen.getByLabelText("API Key")).toHaveValue(gatewayFixture.api_key);
+    expect(screen.getByText(/шлюз доступен/i)).toBeInTheDocument();
+    expect(screen.getByTestId("assistant-gateway-recent-empty")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("assistant-dock-tab-mcp"));
+    expect(await screen.findByTestId("assistant-mcp-panel")).toBeInTheDocument();
+    expect(screen.getByLabelText("MCP JSON")).toHaveValue(gatewayFixture.mcp_json);
+  });
+
+  it("toggles gateway off and regenerates key after confirm", async () => {
+    const user = userEvent.setup();
+    apiMock.llmGateway.credentials.mockResolvedValue({
+      ...gatewayFixture,
+      recent: [
+        {
+          at: "2026-05-01T12:00:00Z",
+          channel: "llm",
+          method: "GET",
+          path: "/llm/v1/models",
+          client_ip: "127.0.0.1",
+          user_agent: "cursor",
+          status: 200,
+        },
+      ],
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderDock();
+    await user.click(await screen.findByTestId("assistant-dock-tab-api"));
+    expect(await screen.findByTestId("assistant-gateway-recent")).toBeInTheDocument();
+    expect(screen.getByText(/\/llm\/v1\/models/)).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText("Шлюз включён"));
+    await waitFor(() => expect(apiMock.llmGateway.setEnabled).toHaveBeenCalledWith(false));
+    expect(await screen.findByText(/выключен/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /перегенерировать ключ/i }));
+    expect(confirmSpy).toHaveBeenCalled();
+    await waitFor(() => expect(apiMock.llmGateway.rotate).toHaveBeenCalled());
+    expect(screen.getByLabelText("API Key")).toHaveValue("gw-rotated");
+    confirmSpy.mockRestore();
+  });
+
+  it("hides gateway tabs for operators", async () => {
+    useAuthMock.mockReturnValue({ role: "operator", state: "authed", authRequired: true });
+    renderDock();
+    expect(await screen.findByLabelText(/спросить агента/i)).toBeInTheDocument();
+    expect(screen.queryByTestId("assistant-dock-tab-api")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("assistant-dock-tab-mcp")).not.toBeInTheDocument();
   });
 });

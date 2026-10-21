@@ -7,12 +7,12 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
-import { Check, ChevronDown, Pencil, Plus, Send, Sparkle, Square, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, Copy, Pencil, Plus, Send, Sparkle, Square, Trash2, X } from "lucide-react";
 import clsx from "clsx";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { api, formatApiError } from "../api/client";
-import type { GpuLogsOut, GpuOut } from "../api/types";
+import type { GpuLogsOut, GpuOut, LlmGatewayCredentialsOut } from "../api/types";
 import { GpuConnectBar } from "./GpuConnectBar";
 import { ask, type AskField, type AssistantMessageAttachment } from "../api/assistant";
 import { mediaApiPath } from "../api/media";
@@ -40,6 +40,9 @@ import { retryGenerationOnLocal } from "../lib/pollGeneration";
 import { usePollWhenVisible } from "../hooks/usePollWhenVisible";
 import { RenderLocalSwitchModal, type LocalSwitchOffer } from "./RenderLocalSwitchModal";
 import { Modal } from "./Modal";
+import { copyTextToClipboard } from "./DiagnosticLogPanel";
+
+type DockTab = "agent" | "api" | "mcp";
 
 const HIDDEN_KEY = "assistant-dock:hidden";
 const ALLOW_BROWSER_KEY = "assistant-dock:allow-browser-run";
@@ -509,9 +512,15 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   chatsRef.current = chats;
   activeRef.current = activeId;
   const [groups, setGroups] = useState<PromptGroup[]>(() => library([]));
-  const { role } = useAuth();
+  const { role, authRequired } = useAuth();
   const { push: toast } = useToast();
   const owner = role === "owner";
+  const canGateway = !authRequired || owner;
+  const [dockTab, setDockTab] = useState<DockTab>("agent");
+  const [gateway, setGateway] = useState<LlmGatewayCredentialsOut | null>(null);
+  const [gatewayError, setGatewayError] = useState("");
+  const [gatewayBusy, setGatewayBusy] = useState(false);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
   const [browsing, setBrowsing] = useState(false);
   const [readingManual, setReadingManual] = useState(false);
   const [allowBrowserRun, setAllowBrowserRun] = useState(readAllowBrowserRun);
@@ -1156,6 +1165,118 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
     setPlusOpen(false);
   };
 
+  const loadGateway = async (opts?: { rotate?: boolean; enabled?: boolean }) => {
+    if (!canGateway) return;
+    setGatewayBusy(true);
+    setGatewayError("");
+    try {
+      let next: LlmGatewayCredentialsOut;
+      if (typeof opts?.enabled === "boolean") {
+        next = await api.llmGateway.setEnabled(opts.enabled);
+      } else if (opts?.rotate) {
+        next = await api.llmGateway.rotate();
+      } else {
+        next = await api.llmGateway.credentials();
+      }
+      setGateway(next);
+    } catch (err) {
+      setGatewayError(formatApiError(err));
+    } finally {
+      setGatewayBusy(false);
+    }
+  };
+
+  const selectDockTab = (tab: DockTab) => {
+    setDockTab(tab);
+    if ((tab === "api" || tab === "mcp") && canGateway) {
+      void loadGateway();
+    }
+  };
+
+  const copyField = async (field: string, value: string) => {
+    const ok = await copyTextToClipboard(value);
+    if (!ok) {
+      toast("Не удалось скопировать", "error");
+      return;
+    }
+    setCopiedField(field);
+    window.setTimeout(() => setCopiedField((cur) => (cur === field ? null : cur)), 1500);
+  };
+
+  const regenerateGatewayKey = () => {
+    if (
+      !window.confirm(
+        "Перегенерировать ключ? Старые клиенты (Cursor и др.) сразу перестанут подключаться."
+      )
+    ) {
+      return;
+    }
+    void loadGateway({ rotate: true });
+  };
+
+  const formatActivityAt = (iso: string) => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleString();
+  };
+
+  const gatewayControls = gateway ? (
+    <div className="space-y-3" data-testid="assistant-gateway-controls">
+      <label className="flex items-center gap-2 text-sm text-slate-200">
+        <input
+          type="checkbox"
+          className="rounded border-slate-600"
+          checked={gateway.enabled}
+          disabled={gatewayBusy}
+          aria-label="Шлюз включён"
+          onChange={(e) => void loadGateway({ enabled: e.target.checked })}
+        />
+        Шлюз включён
+      </label>
+      <p className="text-xs text-slate-500">
+        Модель: <span className="text-slate-300">{gateway.model}</span>
+        {" · "}
+        {!gateway.enabled ? (
+          <span className="text-amber-400">выключен</span>
+        ) : gateway.upstream_ok ? (
+          <span className="text-emerald-400">шлюз доступен</span>
+        ) : (
+          <span className="text-amber-400">upstream не отвечает</span>
+        )}
+      </p>
+      <div>
+        <p className="mb-1 text-[11px] uppercase tracking-wide text-slate-500">
+          Недавние подключения
+        </p>
+        {gateway.recent.length === 0 ? (
+          <p className="text-xs text-slate-500" data-testid="assistant-gateway-recent-empty">
+            Пока никто не подключался
+          </p>
+        ) : (
+          <ul
+            className="max-h-36 space-y-1 overflow-y-auto text-[11px] text-slate-400"
+            data-testid="assistant-gateway-recent"
+          >
+            {gateway.recent.map((row, i) => (
+              <li key={`${row.at}-${row.path}-${i}`} className="font-mono leading-relaxed">
+                <span className="text-slate-500">{formatActivityAt(row.at)}</span>
+                {" · "}
+                <span className="text-slate-300">{row.channel}</span>
+                {" · "}
+                {row.method} {row.path}
+                {row.client_ip ? ` · ${row.client_ip}` : ""}
+                {" · "}
+                <span className={row.status >= 400 ? "text-rose-300" : "text-emerald-400"}>
+                  {row.status}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  ) : null;
+
   if (hidden) {
     return (
       <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 md:left-60">
@@ -1178,6 +1299,177 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
     <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 md:left-60">
       <div className="pointer-events-auto mx-auto w-full max-w-3xl px-3 pb-3 sm:px-4 sm:pb-4">
         <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950/95 shadow-xl backdrop-blur">
+        {canGateway ? (
+          <div
+            className="flex items-center gap-1 border-b border-slate-800/80 px-2 pt-2"
+            role="tablist"
+            aria-label="Режим дока"
+          >
+            {(
+              [
+                ["agent", "Агент"],
+                ["api", "API"],
+                ["mcp", "MCP"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={dockTab === id}
+                data-testid={`assistant-dock-tab-${id}`}
+                onClick={() => selectDockTab(id)}
+                className={clsx(
+                  "rounded-t-lg px-3 py-1.5 text-xs transition",
+                  dockTab === id
+                    ? "bg-slate-900 text-slate-100 ring-1 ring-slate-700/80"
+                    : "text-slate-500 hover:bg-slate-900/60 hover:text-slate-300"
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {dockTab === "api" && canGateway ? (
+          <div className="space-y-3 p-4" data-testid="assistant-api-panel" role="tabpanel">
+            <p className="text-xs text-slate-400">
+              OpenAI-совместимый прокси через панель. В Cursor: Models → OpenAI Compatible.
+            </p>
+            {gatewayError ? <p className="text-sm text-rose-300">{gatewayError}</p> : null}
+            {gatewayBusy && !gateway ? (
+              <p className="text-sm text-slate-400">Загружаю…</p>
+            ) : gateway ? (
+              <>
+                {gatewayControls}
+                <label className="block space-y-1">
+                  <span className="text-[11px] uppercase tracking-wide text-slate-500">Base URL</span>
+                  <div className="flex gap-2">
+                    <input
+                      className="input flex-1 font-mono text-xs"
+                      readOnly
+                      value={gateway.base_url}
+                      aria-label="Base URL"
+                    />
+                    <button
+                      type="button"
+                      className="btn-ghost shrink-0 text-xs"
+                      onClick={() => void copyField("base_url", gateway.base_url)}
+                    >
+                      <Copy className="mr-1 inline h-3.5 w-3.5" />
+                      {copiedField === "base_url" ? "Скопировано" : "Копировать"}
+                    </button>
+                  </div>
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-[11px] uppercase tracking-wide text-slate-500">API Key</span>
+                  <div className="flex gap-2">
+                    <input
+                      className="input flex-1 font-mono text-xs"
+                      readOnly
+                      value={gateway.api_key}
+                      aria-label="API Key"
+                    />
+                    <button
+                      type="button"
+                      className="btn-ghost shrink-0 text-xs"
+                      onClick={() => void copyField("api_key", gateway.api_key)}
+                    >
+                      <Copy className="mr-1 inline h-3.5 w-3.5" />
+                      {copiedField === "api_key" ? "Скопировано" : "Копировать"}
+                    </button>
+                  </div>
+                </label>
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    className="btn-ghost text-xs"
+                    disabled={gatewayBusy}
+                    onClick={regenerateGatewayKey}
+                  >
+                    {gatewayBusy ? "…" : "Перегенерировать ключ"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost text-xs"
+                    disabled={gatewayBusy}
+                    onClick={() => void loadGateway()}
+                  >
+                    Обновить
+                  </button>
+                  <button
+                    type="button"
+                    className="ml-auto text-xs text-slate-500 hover:text-slate-300"
+                    onClick={hide}
+                  >
+                    Скрыть
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </div>
+        ) : null}
+
+        {dockTab === "mcp" && canGateway ? (
+          <div className="space-y-3 p-4" data-testid="assistant-mcp-panel" role="tabpanel">
+            <p className="text-xs text-slate-400">
+              Вставьте в Cursor → Settings → MCP (или{" "}
+              <code className="text-slate-300">~/.cursor/mcp.json</code>). Инструмент{" "}
+              <code className="text-slate-300">chat</code> ходит в ту же модель.
+            </p>
+            {gatewayError ? <p className="text-sm text-rose-300">{gatewayError}</p> : null}
+            {gatewayBusy && !gateway ? (
+              <p className="text-sm text-slate-400">Загружаю…</p>
+            ) : gateway ? (
+              <>
+                {gatewayControls}
+                <textarea
+                  className="input min-h-[10rem] w-full resize-y font-mono text-[11px] leading-relaxed"
+                  readOnly
+                  value={gateway.mcp_json}
+                  aria-label="MCP JSON"
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className="btn-ghost text-xs"
+                    onClick={() => void copyField("mcp_json", gateway.mcp_json)}
+                  >
+                    <Copy className="mr-1 inline h-3.5 w-3.5" />
+                    {copiedField === "mcp_json" ? "Скопировано" : "Копировать JSON"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost text-xs"
+                    disabled={gatewayBusy}
+                    onClick={regenerateGatewayKey}
+                  >
+                    Перегенерировать ключ
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost text-xs"
+                    disabled={gatewayBusy}
+                    onClick={() => void loadGateway()}
+                  >
+                    Обновить
+                  </button>
+                  <button
+                    type="button"
+                    className="ml-auto text-xs text-slate-500 hover:text-slate-300"
+                    onClick={hide}
+                  >
+                    Скрыть
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </div>
+        ) : null}
+
+        {dockTab === "agent" || !canGateway ? (
+          <>
         {open && (
           <div
             className="max-h-[55vh] space-y-3 overflow-y-auto p-4"
@@ -1759,6 +2051,8 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
             </div>
           )}
         </div>
+          </>
+        ) : null}
         </div>
       </div>
       <RenderLocalSwitchModal

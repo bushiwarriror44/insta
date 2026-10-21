@@ -1304,11 +1304,11 @@ describe("Accounts page", () => {
     );
   });
 
-  it("does not wrap tables in overflow-x-auto and keeps compact actions", async () => {
+  it("wraps tables for horizontal scroll and keeps compact actions", async () => {
     renderAccounts();
     await screen.findByText("@alice");
     for (const table of screen.getAllByRole("table")) {
-      expect(table.closest(".overflow-x-auto")).toBeNull();
+      expect(table.closest(".table-scroll")).not.toBeNull();
     }
     expect(screen.getByRole("button", { name: /^пауза$/i })).toBeInTheDocument();
     expect(

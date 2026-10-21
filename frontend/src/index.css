@@ -57,18 +57,25 @@
   .card {
     @apply bg-slate-900/60 border border-slate-800 rounded-2xl shadow-lg shadow-black/20;
   }
+  .table-scroll {
+    @apply -mx-1 overflow-x-auto px-1;
+  }
   .table-base {
-    @apply w-full table-fixed text-xs;
+    @apply w-full min-w-[36rem] table-fixed text-xs md:min-w-0;
   }
   .table-base th {
-    @apply px-3 py-2 text-left font-semibold text-slate-400 text-[11px]
-           border-b border-slate-800;
+    @apply border-b border-slate-800 px-2 py-1.5 text-left text-[10px] font-semibold
+           text-slate-400 md:px-3 md:py-2 md:text-[11px];
   }
   .table-base tbody tr {
     @apply transition-colors hover:bg-slate-900/50;
   }
   .table-base td {
-    @apply px-3 py-2 border-b border-slate-800/60 align-middle;
+    @apply border-b border-slate-800/60 px-2 py-1.5 align-middle md:px-3 md:py-2;
+  }
+  .table-base td.truncate,
+  .table-base th.truncate {
+    @apply max-w-0 overflow-hidden text-ellipsis whitespace-nowrap;
   }
 }
 

@@ -112,13 +112,14 @@ export function Operators() {
       </form>
 
       <div className="card overflow-hidden">
+        <div className="table-scroll">
         <table className="table-base">
           <thead>
             <tr>
               <th>Метка</th>
-              <th>Создан</th>
+              <th className="hidden sm:table-cell">Создан</th>
               <th>Статус</th>
-              <th>Последний вход</th>
+              <th className="hidden md:table-cell">Последний вход</th>
               <th className="text-right">Действия</th>
             </tr>
           </thead>
@@ -138,10 +139,10 @@ export function Operators() {
             ) : (
               rows.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-900/40">
-                  <td className="font-medium truncate" title={row.label}>
+                  <td className="truncate font-medium" title={row.label}>
                     {row.label}
                   </td>
-                  <td className="text-slate-400 truncate" title={new Date(row.created_at).toLocaleString()}>
+                  <td className="hidden truncate text-slate-400 sm:table-cell" title={new Date(row.created_at).toLocaleString()}>
                     {new Date(row.created_at).toLocaleString()}
                   </td>
                   <td>
@@ -151,7 +152,7 @@ export function Operators() {
                       <span className="text-slate-500">отозван</span>
                     )}
                   </td>
-                  <td className="text-slate-400 truncate">
+                  <td className="hidden truncate text-slate-400 md:table-cell">
                     {row.last_used_at
                       ? new Date(row.last_used_at).toLocaleString()
                       : "—"}
@@ -173,6 +174,7 @@ export function Operators() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       <Modal

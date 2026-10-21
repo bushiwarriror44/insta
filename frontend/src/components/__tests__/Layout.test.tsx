@@ -307,4 +307,21 @@ describe("Layout", () => {
     expect(screen.getByLabelText("Поиск аккаунтов")).toHaveFocus();
     expect(screen.queryByTestId("palette-backdrop")).not.toBeInTheDocument();
   });
+
+  it("opens the mobile nav drawer and closes it from a link", () => {
+    useAuthMock.mockReturnValue({
+      state: { state: "open" },
+      role: null,
+      authRequired: false,
+      logout: vi.fn(),
+      login: vi.fn(),
+      retryBootstrap: vi.fn(),
+    });
+    renderAt();
+    expect(screen.getByRole("button", { name: /^меню$/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^меню$/i }));
+    expect(screen.getByRole("button", { name: /закрыть меню/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("nav-accounts"));
+    expect(screen.queryByRole("button", { name: /закрыть меню/i })).not.toBeInTheDocument();
+  });
 });

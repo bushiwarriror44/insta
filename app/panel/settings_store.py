@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db import PanelSettings
 
-_RESERVED_PREFIXES = ("/api", "/novnc", "/assets")
+_RESERVED_PREFIXES = ("/api", "/novnc", "/assets", "/llm", "/mcp")
 _PATH_RE = re.compile(r"^/[A-Za-z0-9_-]{11,198}$")
 
 
@@ -51,6 +51,10 @@ def path_matches_entry(request_path: str, entry_path: str) -> bool:
     return req == entry or req.startswith(entry + "/")
 
 
+def generate_llm_gateway_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
 def get_or_create_panel_settings(db: Session) -> PanelSettings:
     row = db.get(PanelSettings, 1)
     if row is not None:
@@ -60,11 +64,48 @@ def get_or_create_panel_settings(db: Session) -> PanelSettings:
         entry_path=generate_entry_path(),
         master_password_hash=None,
         admin_notes="",
+        llm_gateway_token=None,
+        llm_gateway_enabled=True,
     )
     db.add(row)
     db.commit()
     db.refresh(row)
     return row
+
+
+def ensure_llm_gateway_token(db: Session) -> str:
+    """Return the gateway API key, creating one on first use."""
+    row = get_or_create_panel_settings(db)
+    token = (row.llm_gateway_token or "").strip()
+    if token:
+        return token
+    token = generate_llm_gateway_token()
+    row.llm_gateway_token = token
+    db.commit()
+    db.refresh(row)
+    return token
+
+
+def rotate_llm_gateway_token(db: Session) -> str:
+    row = get_or_create_panel_settings(db)
+    token = generate_llm_gateway_token()
+    row.llm_gateway_token = token
+    db.commit()
+    db.refresh(row)
+    return token
+
+
+def llm_gateway_is_enabled(db: Session) -> bool:
+    row = get_or_create_panel_settings(db)
+    return bool(getattr(row, "llm_gateway_enabled", True))
+
+
+def set_llm_gateway_enabled(db: Session, enabled: bool) -> bool:
+    row = get_or_create_panel_settings(db)
+    row.llm_gateway_enabled = bool(enabled)
+    db.commit()
+    db.refresh(row)
+    return bool(row.llm_gateway_enabled)
 
 
 def auth_is_required(db: Optional[Session] = None) -> bool:

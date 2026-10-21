@@ -89,6 +89,8 @@ _PENDING_COLUMNS: list[tuple[str, str, str]] = [
     ("post_logs", "share_count", "INTEGER"),
     ("post_logs", "raw_stats_json", "TEXT"),
     ("panel_settings", "admin_notes", "TEXT DEFAULT ''"),
+    ("panel_settings", "llm_gateway_token", "VARCHAR(120)"),
+    ("panel_settings", "llm_gateway_enabled", "BOOLEAN DEFAULT 1"),
     ("generation_jobs", "input_mode", "VARCHAR(32) DEFAULT 'text_only'"),
     ("generation_jobs", "reference_json", "TEXT"),
 ]

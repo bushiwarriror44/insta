@@ -458,14 +458,15 @@ export function Agent() {
       <Card>
         <h2 className="font-medium mb-3">Прогоны</h2>
         {busy ? <Loader label="Загрузка..." /> : null}
+        <div className="table-scroll">
         <table className="table-base">
           <thead>
             <tr>
-              <th>Когда</th>
+              <th className="hidden sm:table-cell">Когда</th>
               <th>Аккаунт</th>
-              <th>Модель</th>
+              <th className="hidden md:table-cell">Модель</th>
               <th>Идеи</th>
-              <th>$</th>
+              <th className="hidden md:table-cell">$</th>
               <th>Статус</th>
             </tr>
           </thead>
@@ -489,17 +490,17 @@ export function Agent() {
                   }
                 }}
               >
-                <td className="truncate text-[11px] text-slate-400" title={r.created_at}>
+                <td className="hidden truncate text-[11px] text-slate-400 sm:table-cell" title={r.created_at}>
                   {r.created_at}
                 </td>
                 <td className="truncate">{r.account_username}</td>
-                <td className="truncate" title={r.model}>
+                <td className="hidden truncate md:table-cell" title={r.model}>
                   {r.model}
                 </td>
                 <td>
                   {r.returned}/{r.requested}
                 </td>
-                <td className="tabular-nums">{r.cost_usd}</td>
+                <td className="hidden tabular-nums md:table-cell">{r.cost_usd}</td>
                 <td className="truncate" title={r.ok ? "ok" : r.error ?? ""}>
                   {r.ok ? "ok" : r.error}
                 </td>
@@ -507,6 +508,7 @@ export function Agent() {
             ))}
           </tbody>
         </table>
+        </div>
       </Card>
       {runDetail ? (
         <Modal open title={`Прогон #${runDetail.id}`} onClose={() => setRunDetail(null)}>
