@@ -63,6 +63,10 @@ def test_warmup_script_marks_itself_and_names_the_model():
     assert "[::]:8080" in script
     assert "qwen3:32b" in script
     assert "127.0.0.1:11434" in script
+    assert "tee /tmp/warmup.log" in script
+    assert "gpu-warmup: generate attempt" in script
+    assert "gpu-warmup: model in memory" in script
+    assert "/api/ps" in script
 
 
 def test_prepare_starts_stopped_group_and_waits_until_the_model_is_loaded(app_env, monkeypatch):
@@ -316,9 +320,64 @@ def test_prepare_times_out_when_the_model_never_loads(app_env, monkeypatch):
 
     with respx.mock:
         respx.get(f"{ORIGIN}/").mock(return_value=httpx.Response(200, text="Ollama is running"))
+        respx.get(f"{ORIGIN}/api/tags").mock(
+            return_value=httpx.Response(200, json={"models": [{"name": "qwen3:32b"}]})
+        )
         respx.get(f"{ORIGIN}/api/ps").mock(return_value=httpx.Response(200, json={"models": []}))
+        respx.post(f"{ORIGIN}/api/generate").mock(
+            return_value=httpx.Response(200, json={"response": "hi"})
+        )
         gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None, clock=jump)
         with pytest.raises(SaladProblem, match="не успела прогреться"):
+            while True:
+                next(gen)
+
+
+def test_prepare_kicks_generate_when_model_is_on_disk_but_not_loaded(app_env, monkeypatch):
+    _enable(monkeypatch)
+    monkeypatch.setattr(salad_gpu, "get_group", lambda settings=None: _group("running"))
+    ps = {"n": 0}
+
+    def ps_side_effect(request):
+        ps["n"] += 1
+        if ps["n"] < 2:
+            return httpx.Response(200, json={"models": []})
+        return httpx.Response(200, json={"models": [{"name": "qwen3:32b"}]})
+
+    with respx.mock:
+        respx.get(f"{ORIGIN}/").mock(return_value=httpx.Response(200, text="Ollama is running"))
+        respx.get(f"{ORIGIN}/api/tags").mock(
+            return_value=httpx.Response(200, json={"models": [{"name": "qwen3:32b"}]})
+        )
+        respx.get(f"{ORIGIN}/api/ps").mock(side_effect=ps_side_effect)
+        kick = respx.post(f"{ORIGIN}/api/generate").mock(
+            return_value=httpx.Response(200, json={"response": "hi"})
+        )
+        lines = []
+        gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None)
+        try:
+            while True:
+                lines.append(next(gen))
+        except StopIteration as stop:
+            base = stop.value
+    assert kick.called
+    assert PHASE_MODEL in _titles(lines)
+    wires = [line for line in lines if isinstance(line, salad_gpu.WireTrace)]
+    assert any(line.method == "POST" and "/api/generate" in line.path for line in wires)
+    assert base == f"{ORIGIN}/v1"
+
+
+def test_prepare_fails_when_model_missing_from_tags(app_env, monkeypatch):
+    _enable(monkeypatch)
+    monkeypatch.setattr(salad_gpu, "get_group", lambda settings=None: _group("running"))
+    with respx.mock:
+        respx.get(f"{ORIGIN}/").mock(return_value=httpx.Response(200, text="Ollama is running"))
+        respx.get(f"{ORIGIN}/api/tags").mock(
+            return_value=httpx.Response(200, json={"models": [{"name": "other:7b"}]})
+        )
+        respx.get(f"{ORIGIN}/api/ps").mock(return_value=httpx.Response(200, json={"models": []}))
+        gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None)
+        with pytest.raises(SaladProblem, match="нет на узле"):
             while True:
                 next(gen)
 
@@ -396,7 +455,13 @@ def test_prepare_reports_deploying_and_model_phases(app_env, monkeypatch):
     monkeypatch.setattr(salad_gpu, "request_start", lambda settings=None: None)
     with respx.mock:
         respx.get(f"{ORIGIN}/").mock(return_value=httpx.Response(200, text="Ollama is running"))
+        respx.get(f"{ORIGIN}/api/tags").mock(
+            return_value=httpx.Response(200, json={"models": [{"name": "qwen3:32b"}]})
+        )
         respx.get(f"{ORIGIN}/api/ps").mock(side_effect=ps_side_effect)
+        respx.post(f"{ORIGIN}/api/generate").mock(
+            return_value=httpx.Response(200, json={"response": "hi"})
+        )
         lines = []
         gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None)
         try:

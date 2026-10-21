@@ -75,6 +75,34 @@ def test_idle_warmup_proxy_unhealthy(app_env, db_session, make_account, fake_log
     assert idle_module.idle_warmup(account.username) is False
 
 
+def test_idle_warmup_marks_proxy_unhealthy_on_407(app_env, db_session, make_account, monkeypatch):
+    from app.db import Proxy
+
+    account = make_account()
+    proxy = db_session.get(Proxy, account.proxy_id)
+    assert proxy is not None
+    proxy.is_healthy = True
+    db_session.commit()
+
+    monkeypatch.setattr(idle_module, "health_check_cached", lambda url, **kwargs: None)
+    monkeypatch.setattr(
+        idle_module,
+        "ensure_fingerprint_and_proxy",
+        lambda username, country="US", **kwargs: object(),
+    )
+
+    def _boom(**_):
+        raise OSError("Tunnel connection failed: 407 Proxy Authentication Required")
+
+    monkeypatch.setattr(idle_module, "login_or_resume", _boom)
+    assert idle_module.idle_warmup(account.username) is False
+
+    db_session.expire_all()
+    refreshed = db_session.get(Proxy, account.proxy_id)
+    assert refreshed is not None
+    assert refreshed.is_healthy is False
+
+
 def test_pick_idle_account_excludes_recently_warmed(app_env, db_session, make_account):
     """Account warmed in the last MIN_IDLE_HOURS hours must not be chosen."""
     fresh = make_account(username="fresh")

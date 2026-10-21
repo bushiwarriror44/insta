@@ -51,7 +51,9 @@ def _pick_idle_account(db: Session) -> Optional[Account]:
 
     stmt = (
         select(Account)
+        .join(Proxy, Account.proxy_id == Proxy.id)
         .where(Account.status == AccountStatus.active)
+        .where(Proxy.is_healthy.is_not(False))
         .where(
             (Account.cooldown_until.is_(None)) | (Account.cooldown_until <= now)
         )
@@ -70,6 +72,33 @@ def _proxy_for(db: Session, account: Account) -> Optional[Proxy]:
     if account.proxy_id is None:
         return None
     return db.get(Proxy, account.proxy_id)
+
+
+def _is_proxy_auth_error(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return (
+        "407" in text
+        or "proxy authentication" in text
+        or "authentication required" in text
+    )
+
+
+def _mark_proxy_unhealthy(proxy_id: int, *, reason: str) -> None:
+    from app.db import SessionLocal
+
+    with SessionLocal() as db:
+        proxy = db.get(Proxy, proxy_id)
+        if proxy is None:
+            return
+        proxy.is_healthy = False
+        proxy.last_checked_at = datetime.now(timezone.utc)
+        db.commit()
+        logger.warning(
+            "idle.proxy_marked_unhealthy",
+            proxy_id=proxy_id,
+            label=proxy.label,
+            reason=reason[:160],
+        )
 
 
 def idle_warmup(username: str) -> bool:
@@ -94,6 +123,7 @@ def idle_warmup(username: str) -> bool:
         if proxy is None:
             log.info("idle.no_proxy")
             return False
+        proxy_id = proxy.id
         proxy_url = normalize_proxy_url(proxy.url)
         proxy_country = proxy.country or "US"
         proxy_timezone_id = timezone_from_proxy(proxy.timezone, proxy.country)
@@ -108,6 +138,8 @@ def idle_warmup(username: str) -> bool:
         health_check_cached(proxy_url, scope=HealthCheckScope.MINIMAL)
     except ProxyError as exc:
         log.warning("idle.proxy_unhealthy", error=str(exc))
+        if _is_proxy_auth_error(exc):
+            _mark_proxy_unhealthy(proxy_id, reason=str(exc))
         return False
 
     fingerprint = ensure_fingerprint_and_proxy(
@@ -127,9 +159,13 @@ def idle_warmup(username: str) -> bool:
         )
     except (HardCheckpoint, AuthenticationError) as exc:
         log.warning("idle.auth_failed", error=str(exc))
+        if _is_proxy_auth_error(exc):
+            _mark_proxy_unhealthy(proxy_id, reason=str(exc))
         return False
     except Exception as exc:  # noqa: BLE001 - never escalate from idle path
         log.warning("idle.auth_unexpected", error=str(exc))
+        if _is_proxy_auth_error(exc):
+            _mark_proxy_unhealthy(proxy_id, reason=str(exc))
         return False
 
     intensity = random.choice(["light", "normal", "normal", "heavy"])

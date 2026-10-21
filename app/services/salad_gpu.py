@@ -69,6 +69,8 @@ POLL_S = 5.0
 START_WAIT_S = 25 * 60
 PULL_WAIT_S = 90 * 60
 WARM_WAIT_S = 20 * 60
+KICK_TIMEOUT_S = 20.0
+KICK_INTERVAL_S = 30.0
 PREP_PHASES = 4
 _MODEL_NAME = re.compile(r"[A-Za-z0-9_.:-]{1,80}")
 
@@ -302,6 +304,7 @@ def warmup_script(model: str, settings: Settings | None = None) -> str:
     body = json.dumps(
         {"model": model, "prompt": "hi", "stream": False, "keep_alive": "30m"}
     )
+    # Single-quoted python -c; body is JSON so it has no single quotes.
     py = (
         "import urllib.request; urllib.request.urlopen(urllib.request.Request("
         '"http://127.0.0.1:11434/api/generate", data='
@@ -317,6 +320,33 @@ def warmup_script(model: str, settings: Settings | None = None) -> str:
         )
     else:
         install = "python -m pip install -q dashscope\n"
+    # Retry generate until /api/ps lists the model; tee so Salad container logs see it.
+    warm_loop = (
+        "(\n"
+        "  i=0\n"
+        '  while [ "$i" -lt 90 ]; do\n'
+        "    curl -sf http://127.0.0.1:11434/ >/dev/null && break\n"
+        "    i=$((i+1))\n"
+        "    sleep 2\n"
+        "  done\n"
+        '  echo "gpu-warmup: ollama up, loading '
+        + model
+        + '"\n'
+        "  attempt=0\n"
+        '  while [ "$attempt" -lt 40 ]; do\n'
+        "    if curl -sf http://127.0.0.1:11434/api/ps | grep -Fq "
+        + json.dumps(model)
+        + "; then\n"
+        '      echo "gpu-warmup: model in memory"\n'
+        "      break\n"
+        "    fi\n"
+        '    echo "gpu-warmup: generate attempt $attempt"\n'
+        f"    python -c '{py}' || echo \"gpu-warmup: generate failed\"\n"
+        "    attempt=$((attempt+1))\n"
+        "    sleep 15\n"
+        "  done\n"
+        ") 2>&1 | tee /tmp/warmup.log &\n"
+    )
     return (
         f"{header}\n"
         "set -eu\n"
@@ -328,15 +358,7 @@ def warmup_script(model: str, settings: Settings | None = None) -> str:
         f"{_wan_sdpa_shell()}"
         "/opt/gpu/start.sh &\n"
         "spid=$!\n"
-        "(\n"
-        "  i=0\n"
-        '  while [ "$i" -lt 90 ]; do\n'
-        "    curl -sf http://127.0.0.1:11434/ >/dev/null && break\n"
-        "    i=$((i+1))\n"
-        "    sleep 2\n"
-        "  done\n"
-        f"  python -c '{py}'\n"
-        ") >/tmp/warmup.log 2>&1 &\n"
+        f"{warm_loop}"
         'wait "$spid"\n'
     )
 
@@ -421,6 +443,24 @@ def _ollama_up(origin: str, settings: Settings) -> bool:
     return "Ollama" in response.text
 
 
+def _model_name_matches(name: str, model: str) -> bool:
+    return name == model or name.startswith(f"{model}:")
+
+
+def _models_in_payload(payload: Any) -> list[str]:
+    rows = payload.get("models") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return []
+    names: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or row.get("model") or "").strip()
+        if name:
+            names.append(name)
+    return names
+
+
 def _model_loaded(origin: str, settings: Settings, model: str) -> bool:
     response = _get(origin, "/api/ps", settings)
     if response is None or response.status_code >= 400:
@@ -429,16 +469,34 @@ def _model_loaded(origin: str, settings: Settings, model: str) -> bool:
         payload = response.json()
     except ValueError:
         return False
-    rows = payload.get("models") if isinstance(payload, dict) else None
-    if not isinstance(rows, list):
-        return False
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        name = str(row.get("name") or row.get("model") or "")
-        if name == model or name.startswith(f"{model}:"):
-            return True
-    return False
+    return any(_model_name_matches(name, model) for name in _models_in_payload(payload))
+
+
+def _model_present(origin: str, settings: Settings, model: str) -> bool | None:
+    """True/False when /api/tags answers; None when tags is unreachable."""
+    response = _get(origin, "/api/tags", settings)
+    if response is None or response.status_code >= 400:
+        return None
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    return any(_model_name_matches(name, model) for name in _models_in_payload(payload))
+
+
+def _kick_model_load(origin: str, settings: Settings, model: str) -> str:
+    """Ask Ollama to load the model. Short timeout: Salad gateway cuts ~100s."""
+    body = {"model": model, "prompt": "hi", "stream": False, "keep_alive": "30m"}
+    try:
+        with http_client(settings, timeout=KICK_TIMEOUT_S) as client:
+            response = client.post(f"{origin}/api/generate", json=body)
+    except httpx.TimeoutException:
+        return "timeout, загрузка могла начаться"
+    except httpx.RequestError:
+        return "нет связи"
+    if response.status_code >= 400:
+        return f"{response.status_code}"
+    return "200, kick"
 
 
 PULL_STAMP = "gpu_pull_started.txt"
@@ -772,6 +830,7 @@ def prepare_for_chat(
         raise SaladProblem("Salad не вернул адрес группы")
     model = _model_name(settings)
     deadline = clock() + START_WAIT_S + WARM_WAIT_S
+    last_kick = 0.0
     while True:
         up = _ollama_up(origin, settings)
         loaded = _model_loaded(origin, settings, model) if up else False
@@ -788,6 +847,18 @@ def prepare_for_chat(
                 "Модель не успела прогреться" if up else "Видеокарта не успела запуститься"
             )
         if up:
+            present = _model_present(origin, settings, model)
+            if present is False:
+                raise SaladProblem(
+                    f"Модели {model} нет на узле — проверьте образ GPU / AGENT_MODEL"
+                )
+            now = clock()
+            if last_kick == 0.0 or now - last_kick >= KICK_INTERVAL_S:
+                kick_result = _kick_model_load(origin, settings, model)
+                last_kick = now
+                kicked = wire("POST", f"{origin}/api/generate", kick_result)
+                if kicked:
+                    yield kicked
             yield emit(PHASE_MODEL, 4, soft_s=WARM_WAIT_S)
         else:
             yield emit(PHASE_OLLAMA, 3, soft_s=START_WAIT_S, extra=state.status or "")
