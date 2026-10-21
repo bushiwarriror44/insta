@@ -1164,7 +1164,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
             type="button"
             onClick={show}
             aria-label="Показать агента"
-            className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-950/95 px-3 py-2 text-sm text-slate-200 shadow-xl backdrop-blur hover:border-slate-500"
+            className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-950/95 px-3 py-2 text-sm text-slate-200 shadow-xl backdrop-blur transition hover:border-sky-500/50 hover:ring-2 hover:ring-sky-500/20"
           >
             {anyBusy ? <ThinkingSparkle quiet /> : <Sparkle size={16} className="text-sky-300" />}
             <span>Агент</span>
@@ -1177,14 +1177,29 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 md:left-60">
       <div className="pointer-events-auto mx-auto w-full max-w-3xl px-3 pb-3 sm:px-4 sm:pb-4">
+        <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950/95 shadow-xl backdrop-blur">
         {open && (
           <div
-            className="mb-2 max-h-[55vh] space-y-3 overflow-y-auto rounded-t-xl border border-slate-800 bg-slate-950/95 p-4 shadow-xl backdrop-blur"
+            className="max-h-[55vh] space-y-3 overflow-y-auto p-4"
             role="log"
             aria-label="Разговор"
           >
             {thread.map((message, n) => (
-              <div key={n}>
+              <div
+                key={n}
+                className={clsx(
+                  "assistant-msg-in",
+                  message.role === "user" ? "flex justify-end" : "flex justify-start"
+                )}
+              >
+                <div
+                  className={clsx(
+                    "max-w-[92%] space-y-1",
+                    message.role === "user"
+                      ? "rounded-2xl rounded-br-md bg-slate-800/70 px-3 py-2"
+                      : "rounded-2xl rounded-bl-md bg-slate-900/80 px-3 py-2 ring-1 ring-slate-800/80"
+                  )}
+                >
                 {message.role === "assistant" && message.wires?.length ? (
                   <WireList lines={message.wires} />
                 ) : null}
@@ -1192,8 +1207,16 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                   <Reason text={message.thinking} live={false} />
                 ) : null}
                 {message.content ? (
-                  <p className={message.role === "user" ? "text-sm text-slate-400" : "whitespace-pre-wrap text-sm text-slate-100"}>
-                    {message.role === "user" && <span className="mr-2 text-xs text-slate-600">вы</span>}
+                  <p
+                    className={
+                      message.role === "user"
+                        ? "text-sm text-slate-300"
+                        : "whitespace-pre-wrap text-sm text-slate-100"
+                    }
+                  >
+                    {message.role === "user" && (
+                      <span className="mr-2 text-[10px] uppercase tracking-wide text-slate-500">вы</span>
+                    )}
                     {message.content}
                   </p>
                 ) : null}
@@ -1238,6 +1261,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                     ))}
                   </div>
                 )}
+                </div>
               </div>
             ))}
             {activeGeneration ? (
@@ -1362,9 +1386,13 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
           </div>
         )}
 
-        <div className={`card bg-slate-950/95 p-3 shadow-xl backdrop-blur ${open ? "rounded-t-none border-t-0" : ""}`}>
+        <div className={clsx("p-3", open && "border-t border-slate-800/80")}>
           <div className="mb-2 flex items-center gap-1 overflow-x-auto" role="tablist" aria-label="Чаты">
-            <button type="button" onClick={startChat} className="btn-ghost shrink-0 text-xs">
+            <button
+              type="button"
+              onClick={startChat}
+              className="btn-ghost shrink-0 text-xs transition hover:bg-slate-800/80"
+            >
               Новый
             </button>
             {chats.map((item) =>
@@ -1385,7 +1413,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                   autoFocus
                 />
               ) : (
-                <span key={item.id} className="flex shrink-0 items-center">
+                <span key={item.id} className="group flex shrink-0 items-center">
                   <button
                     type="button"
                     role="tab"
@@ -1395,8 +1423,10 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                       setRenaming(null);
                     }}
                     className={clsx(
-                      "rounded-full px-2 py-1 text-xs",
-                      item.id === activeId ? "bg-slate-800 text-slate-100" : "text-slate-400 hover:text-slate-200"
+                      "rounded-full px-2.5 py-1 text-xs transition",
+                      item.id === activeId
+                        ? "bg-slate-800 text-slate-100 ring-1 ring-slate-600/60"
+                        : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-200"
                     )}
                   >
                     {item.title}
@@ -1408,7 +1438,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                         type="button"
                         aria-label="Переименовать чат"
                         onClick={() => beginRename(item)}
-                        className="btn-ghost px-1 py-1"
+                        className="btn-ghost px-1 py-1 opacity-60 transition group-hover:opacity-100"
                       >
                         <Pencil className="h-3 w-3" />
                       </button>
@@ -1416,7 +1446,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                         type="button"
                         aria-label="Удалить чат"
                         onClick={deleteActive}
-                        className="btn-ghost px-1 py-1"
+                        className="btn-ghost px-1 py-1 opacity-60 transition group-hover:opacity-100"
                       >
                         <Trash2 className="h-3 w-3" />
                       </button>
@@ -1447,7 +1477,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
           )}
           <form
             onSubmit={onSubmit}
-            className="flex items-end gap-1 rounded-full border border-slate-700 bg-slate-900 px-1.5 py-1.5"
+            className="flex items-end gap-1 rounded-full border border-slate-700 bg-slate-900 px-1.5 py-1.5 transition focus-within:border-sky-500/40 focus-within:ring-2 focus-within:ring-sky-500/20"
           >
             <div className="relative">
               <button
@@ -1646,7 +1676,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                 type="button"
                 aria-label="Остановить"
                 onClick={() => stops.current[activeId]?.abort()}
-                className="rounded-full bg-slate-100 p-2 text-slate-900 hover:bg-white"
+                className="rounded-full bg-slate-100 p-2 text-slate-900 transition hover:bg-white active:scale-95"
               >
                 <Square className="h-4 w-4" />
               </button>
@@ -1655,17 +1685,25 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                 type="submit"
                 aria-label="Спросить"
                 disabled={!draft.trim()}
-                className="rounded-full bg-slate-100 p-2 text-slate-900 hover:bg-white disabled:opacity-40"
+                className="rounded-full bg-slate-100 p-2 text-slate-900 transition hover:bg-white active:scale-95 disabled:opacity-40 disabled:active:scale-100"
               >
                 <Send className="h-4 w-4" />
               </button>
             )}
           </form>
           <div className="mt-1 flex justify-end gap-3 px-2">
-            <button type="button" onClick={openLogs} className="text-xs text-slate-500 hover:text-slate-300">
+            <button
+              type="button"
+              onClick={openLogs}
+              className="text-xs text-slate-500 transition hover:text-slate-300"
+            >
               Логи
             </button>
-            <button type="button" onClick={hide} className="text-xs text-slate-500 hover:text-slate-300">
+            <button
+              type="button"
+              onClick={hide}
+              className="text-xs text-slate-500 transition hover:text-slate-300"
+            >
               Скрыть
             </button>
           </div>
@@ -1709,7 +1747,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                           type="button"
                           title={prompt.text}
                           onClick={() => void send(prompt.text)}
-                          className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-400 hover:text-slate-100"
+                          className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-400 transition hover:border-sky-500/40 hover:bg-slate-800/60 hover:text-slate-100"
                         >
                           {prompt.label}
                         </button>
@@ -1720,6 +1758,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
               )}
             </div>
           )}
+        </div>
         </div>
       </div>
       <RenderLocalSwitchModal
