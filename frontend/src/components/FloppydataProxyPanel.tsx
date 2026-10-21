@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Copy, ExternalLink, Minus, Plus, RefreshCw } from "lucide-react";
 
 import { api, formatApiError } from "../api/client";
 import type {
   FloppydataConnectionOut,
+  FloppydataFormState,
   FloppydataProtocol,
   FloppydataProxyType,
   FloppydataStatusOut,
@@ -90,9 +91,23 @@ function formatExpiringHint(status: FloppydataStatusOut): string | null {
   return `из них ${amt} до ${label}`;
 }
 
+function isFloppyProxy(p: ProxyOut): boolean {
+  if ((p.notes || "").trim().toLowerCase() === "floppydata") return true;
+  return /^floppy-/i.test(p.label || "");
+}
+
+function formatCreatedAt(value: string | null | undefined): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("ru-RU");
+}
+
 export function FloppydataProxyPanel({
+  proxies = [],
   onImported,
 }: {
+  proxies?: ProxyOut[];
   onImported: (proxies: ProxyOut[]) => void;
 }) {
   const { push } = useToast();
@@ -112,17 +127,73 @@ export function FloppydataProxyPanel({
   const [subusers, setSubusers] = useState<Subuser[]>([]);
   const [items, setItems] = useState<FloppydataConnectionOut[]>([]);
   const [copied, setCopied] = useState<string | null>(null);
+  const skipCountryClear = useRef(false);
+  const formHydrated = useRef(false);
 
   const selectedLoc = useMemo(
     () => locations.find((c) => c.code === country) ?? null,
     [locations, country]
   );
 
+  const savedFloppy = useMemo(() => {
+    return proxies
+      .filter(isFloppyProxy)
+      .slice()
+      .sort((a, b) => {
+        const ta = a.created_at ? Date.parse(a.created_at) : 0;
+        const tb = b.created_at ? Date.parse(b.created_at) : 0;
+        return tb - ta;
+      });
+  }, [proxies]);
+
+  const currentForm = useCallback((): FloppydataFormState => {
+    return {
+      type: proxyType,
+      country,
+      city: state ? null : city || null,
+      state: state || null,
+      protocol,
+      rotation,
+      udp: udp && protocol === "socks5",
+      subuser_id: subuserId === "" ? null : subuserId,
+      count,
+    };
+  }, [proxyType, country, city, state, protocol, rotation, udp, subuserId, count]);
+
+  const applyLastForm = useCallback((form: FloppydataFormState | null | undefined) => {
+    if (!form || formHydrated.current) return;
+    formHydrated.current = true;
+    skipCountryClear.current = true;
+    if (form.type === "residential" || form.type === "mobile" || form.type === "datacenter") {
+      setProxyType(form.type);
+    }
+    if (form.protocol === "http" || form.protocol === "https" || form.protocol === "socks5") {
+      setProtocol(form.protocol);
+    }
+    if (typeof form.rotation === "number" && form.rotation >= -1 && form.rotation <= 60) {
+      setRotation(form.rotation);
+    }
+    if (typeof form.udp === "boolean") setUdp(form.udp);
+    if (typeof form.country === "string" && form.country.length === 2) {
+      setCountry(form.country.toUpperCase());
+    }
+    setCity(typeof form.city === "string" ? form.city : "");
+    setState(typeof form.state === "string" ? form.state : "");
+    if (typeof form.count === "number" && form.count >= 1 && form.count <= 20) {
+      setCount(form.count);
+    }
+    if (form.subuser_id == null) setSubuserId("");
+    else if (typeof form.subuser_id === "number" && form.subuser_id >= 1) {
+      setSubuserId(form.subuser_id);
+    }
+  }, []);
+
   const loadStatus = useCallback(async () => {
     const next = await api.floppydata.status();
     setStatus(next);
+    applyLastForm(next.last_form);
     return next;
-  }, []);
+  }, [applyLastForm]);
 
   const loadMeta = useCallback(async (type: FloppydataProxyType) => {
     const [locs, subs] = await Promise.all([
@@ -132,10 +203,13 @@ export function FloppydataProxyPanel({
     const parsed = parseLocations(locs);
     setLocations(parsed);
     setSubusers(parseSubusers(subs));
-    if (parsed.length && !parsed.some((c) => c.code === country)) {
-      setCountry(parsed[0].code);
-    }
-  }, [country]);
+    setCountry((cur) => {
+      if (parsed.length && !parsed.some((c) => c.code === cur)) {
+        return parsed[0].code;
+      }
+      return cur;
+    });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -143,7 +217,13 @@ export function FloppydataProxyPanel({
       try {
         const st = await loadStatus();
         if (cancelled || !st.configured || st.error) return;
-        await loadMeta(proxyType);
+        const type =
+          st.last_form?.type === "mobile" || st.last_form?.type === "datacenter"
+            ? st.last_form.type
+            : st.last_form?.type === "residential"
+              ? "residential"
+              : proxyType;
+        await loadMeta(type);
       } catch (err) {
         if (!cancelled) push(formatApiError(err), "error");
       }
@@ -171,6 +251,10 @@ export function FloppydataProxyPanel({
   }, [proxyType]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (skipCountryClear.current) {
+      skipCountryClear.current = false;
+      return;
+    }
     setCity("");
     setState("");
   }, [country]);
@@ -237,8 +321,10 @@ export function FloppydataProxyPanel({
     setBusy(true);
     try {
       const cc = country.toLowerCase();
+      const form = currentForm();
       const imported = await api.floppydata.importProxies({
         run_health_check: true,
+        form,
         items: items.map((row, i) => ({
           label: `floppy-${cc}-${i + 1}`,
           url: row.connection_string,
@@ -590,6 +676,66 @@ export function FloppydataProxyPanel({
           </div>
         </>
       )}
+
+      <section
+        className="rounded-xl border border-slate-800 bg-slate-950/50 p-4"
+        data-testid="floppy-saved-list"
+        aria-label="Прокси Floppydata в пуле"
+      >
+        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+          <h3 className="text-sm font-semibold text-slate-100">В пуле панели</h3>
+          <p className="text-xs text-slate-500">
+            {savedFloppy.length
+              ? `${savedFloppy.length} · сохраняются в data/app.db`
+              : "После «Добавить в пул» появятся здесь"}
+          </p>
+        </div>
+        {savedFloppy.length === 0 ? (
+          <EmptyState>Пока нет импортированных Floppydata-прокси.</EmptyState>
+        ) : (
+          <ul className="max-h-80 space-y-2 overflow-y-auto">
+            {savedFloppy.map((p) => (
+              <li
+                key={p.id}
+                className="rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2"
+                data-testid={`floppy-saved-${p.id}`}
+              >
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className="font-medium text-slate-100">{p.label}</span>
+                  {p.country ? (
+                    <span className="text-xs uppercase text-slate-500">{p.country}</span>
+                  ) : null}
+                  <span
+                    className={
+                      p.is_healthy
+                        ? "text-[11px] text-emerald-400"
+                        : "text-[11px] text-amber-400"
+                    }
+                  >
+                    {p.is_healthy ? "healthy" : "check failed"}
+                  </span>
+                  <span className="ml-auto text-[11px] text-slate-500">
+                    {formatCreatedAt(p.created_at)}
+                  </span>
+                </div>
+                <div className="mt-1 flex items-start gap-2">
+                  <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-slate-400">
+                    {p.url}
+                  </code>
+                  <button
+                    type="button"
+                    className="btn-ghost shrink-0 px-1"
+                    aria-label={`Копировать ${p.label}`}
+                    onClick={() => void copyOne(p.url, `saved-${p.id}`)}
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }

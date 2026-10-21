@@ -683,6 +683,7 @@ export function Accounts() {
       {mainTab === "floppydata" ? (
         <div className="card p-5">
           <FloppydataProxyPanel
+            proxies={proxies}
             onImported={(imported) => {
               setProxies((arr) => {
                 const byId = new Map(arr.map((p) => [p.id, p]));

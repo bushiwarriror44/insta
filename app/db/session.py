@@ -92,6 +92,7 @@ _PENDING_COLUMNS: list[tuple[str, str, str]] = [
     ("panel_settings", "llm_gateway_token", "VARCHAR(120)"),
     ("panel_settings", "llm_gateway_enabled", "BOOLEAN DEFAULT 1"),
     ("panel_settings", "floppydata_api_key", "VARCHAR(500)"),
+    ("panel_settings", "floppydata_last_form", "TEXT"),
     ("generation_jobs", "input_mode", "VARCHAR(32) DEFAULT 'text_only'"),
     ("generation_jobs", "reference_json", "TEXT"),
 ]

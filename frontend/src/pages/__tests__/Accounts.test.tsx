@@ -161,6 +161,13 @@ beforeEach(() => {
     balance_bytes: 16106127360,
     expiring_gb: 10,
     expiring_at: "2026-01-25T08:33:30Z",
+    last_form: {
+      type: "mobile",
+      country: "AM",
+      protocol: "http",
+      rotation: 0,
+      count: 2,
+    },
   });
   apiMock.floppydata.locations.mockResolvedValue([
     { code: "AM", name: "Armenia", cities: ["Yerevan"], states: [] },
@@ -180,7 +187,14 @@ beforeEach(() => {
     ],
   });
   apiMock.floppydata.importProxies.mockResolvedValue([
-    { ...proxy, id: 9, label: "floppy-am-1", url: "http://user:pass@geo.g-w.info:10080" },
+    {
+      ...proxy,
+      id: 9,
+      label: "floppy-am-1",
+      url: "http://user:pass@geo.g-w.info:10080",
+      notes: "floppydata",
+      created_at: "2026-10-21T12:00:00Z",
+    },
   ]);
   window.history.replaceState(null, "", "/");
 });
@@ -1374,6 +1388,19 @@ describe("Accounts page", () => {
   });
 
   it("opens Floppydata tab, generates and imports proxies", async () => {
+    apiMock.proxies.list.mockResolvedValue([
+      proxy,
+      {
+        ...proxy,
+        id: 8,
+        label: "floppy-us-1",
+        url: "http://saved@geo.g-w.info:10080",
+        country: "US",
+        notes: "floppydata",
+        created_at: "2026-10-20T10:00:00Z",
+        accounts_count: 0,
+      },
+    ]);
     renderAccounts();
     await screen.findByText("@alice");
     fireEvent.click(screen.getByTestId("accounts-tab-floppydata"));
@@ -1381,11 +1408,22 @@ describe("Accounts page", () => {
     await waitFor(() => expect(apiMock.floppydata.status).toHaveBeenCalled());
     expect(await screen.findByTestId("floppy-balance")).toHaveTextContent("15 GB");
     expect(screen.queryByText(/\[object Object\]/i)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Proxy type")).toHaveValue("mobile"));
+    await waitFor(() => expect(screen.getByLabelText("Country")).toHaveValue("AM"));
+    expect(screen.getByTestId("floppy-count")).toHaveTextContent("2");
+    expect(await screen.findByTestId("floppy-saved-list")).toBeInTheDocument();
+    expect(screen.getByTestId("floppy-saved-8")).toHaveTextContent("floppy-us-1");
     fireEvent.click(screen.getByRole("button", { name: /^сгенерировать$/i }));
     await waitFor(() => expect(apiMock.floppydata.generate).toHaveBeenCalled());
     expect(await screen.findByTestId("floppy-proxy-list")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /добавить в пул/i }));
-    await waitFor(() => expect(apiMock.floppydata.importProxies).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(apiMock.floppydata.importProxies).toHaveBeenCalledWith(
+        expect.objectContaining({
+          form: expect.objectContaining({ type: "mobile", country: "AM" }),
+        })
+      )
+    );
   });
 
   it("highlights and scrolls to the account from ?username=", async () => {

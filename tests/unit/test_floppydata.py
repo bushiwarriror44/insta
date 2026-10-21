@@ -135,6 +135,12 @@ def test_generate_calls_n_times(auth_client):
     assert calls["n"] == 3
     assert items[0]["connection_string"].startswith("http://")
 
+    status = auth_client.get("/api/floppydata/status", headers=_h())
+    assert status.status_code == 200
+    assert status.json()["last_form"]["type"] == "mobile"
+    assert status.json()["last_form"]["country"] == "AM"
+    assert status.json()["last_form"]["count"] == 3
+
 
 def test_import_creates_proxies(auth_client, app_env, monkeypatch):
     monkeypatch.setattr(
@@ -146,6 +152,13 @@ def test_import_creates_proxies(auth_client, app_env, monkeypatch):
         headers=_h(),
         json={
             "run_health_check": True,
+            "form": {
+                "type": "residential",
+                "country": "US",
+                "protocol": "http",
+                "rotation": 0,
+                "count": 1,
+            },
             "items": [
                 {
                     "label": "floppy-am-1",
@@ -160,9 +173,15 @@ def test_import_creates_proxies(auth_client, app_env, monkeypatch):
     assert len(body) == 1
     assert body[0]["label"] == "floppy-am-1"
     assert body[0]["url"].startswith("http://")
+    assert body[0].get("created_at")
 
     with app_env.SessionLocal() as db:
         from app.db import Proxy
+        from app.panel.settings_store import get_floppydata_last_form
 
         row = db.query(Proxy).filter(Proxy.label == "floppy-am-1").one()
         assert row.notes == "floppydata"
+        form = get_floppydata_last_form(db)
+        assert form is not None
+        assert form["country"] == "US"
+        assert form["type"] == "residential"

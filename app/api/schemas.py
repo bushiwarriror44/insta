@@ -37,6 +37,7 @@ class ProxyOut(BaseModel):
     last_geo_country: Optional[str] = None
     last_checked_at: Optional[datetime] = None
     notes: Optional[str] = None
+    created_at: Optional[datetime] = None
     accounts_count: int = 0
     instagram_reachable: Optional[bool] = None
     geo_mismatch_warning: bool = False
@@ -511,6 +512,18 @@ class LlmGatewayEnabledIn(BaseModel):
     enabled: bool
 
 
+class FloppydataFormState(BaseModel):
+    type: Literal["residential", "mobile", "datacenter"] = "residential"
+    country: str = Field(default="US", min_length=2, max_length=2)
+    city: Optional[str] = Field(default=None, max_length=120)
+    state: Optional[str] = Field(default=None, max_length=120)
+    protocol: Literal["http", "https", "socks5"] = "http"
+    rotation: int = Field(default=0, ge=-1, le=60)
+    udp: bool = False
+    subuser_id: Optional[int] = Field(default=None, ge=1)
+    count: int = Field(default=1, ge=1, le=20)
+
+
 class FloppydataStatusOut(BaseModel):
     configured: bool
     key_from_env: bool
@@ -518,6 +531,7 @@ class FloppydataStatusOut(BaseModel):
     balance_bytes: Optional[int] = None
     expiring_gb: Optional[float] = None
     expiring_at: Optional[str] = None
+    last_form: Optional[FloppydataFormState] = None
     error: Optional[str] = None
 
 
@@ -559,6 +573,7 @@ class FloppydataImportItemIn(BaseModel):
 class FloppydataImportIn(BaseModel):
     items: list[FloppydataImportItemIn] = Field(min_length=1, max_length=20)
     run_health_check: bool = True
+    form: Optional[FloppydataFormState] = None
 
 
 class PanelEntryPathUpdateIn(BaseModel):

@@ -72,6 +72,7 @@ export interface ProxyOut {
   last_geo_country: string | null;
   last_checked_at: string | null;
   notes: string | null;
+  created_at?: string | null;
   accounts_count: number;
   instagram_reachable?: boolean | null;
   geo_mismatch_warning?: boolean;
@@ -81,6 +82,18 @@ export interface ProxyOut {
 export type FloppydataProxyType = "residential" | "mobile" | "datacenter";
 export type FloppydataProtocol = "http" | "https" | "socks5";
 
+export interface FloppydataFormState {
+  type?: FloppydataProxyType;
+  country?: string;
+  city?: string | null;
+  state?: string | null;
+  protocol?: FloppydataProtocol;
+  rotation?: number;
+  udp?: boolean;
+  subuser_id?: number | null;
+  count?: number;
+}
+
 export interface FloppydataStatusOut {
   configured: boolean;
   key_from_env: boolean;
@@ -88,6 +101,7 @@ export interface FloppydataStatusOut {
   balance_bytes?: number | null;
   expiring_gb?: number | null;
   expiring_at?: string | null;
+  last_form?: FloppydataFormState | null;
   error?: string | null;
 }
 
@@ -125,6 +139,7 @@ export interface FloppydataImportItemIn {
 export interface FloppydataImportIn {
   items: FloppydataImportItemIn[];
   run_health_check?: boolean;
+  form?: FloppydataFormState | null;
 }
 
 export interface FloppydataLocationCountry {

@@ -10,6 +10,7 @@ from app.api.deps import AuthDep, OwnerOrOpenDep, get_db
 from app.api.routes.proxies import _proxy_account_counts, _to_proxy_out
 from app.api.schemas import (
     FloppydataApiKeyIn,
+    FloppydataFormState,
     FloppydataGenerateIn,
     FloppydataGenerateOut,
     FloppydataImportIn,
@@ -18,8 +19,10 @@ from app.api.schemas import (
 )
 from app.panel.settings_store import (
     floppydata_key_from_env,
+    get_floppydata_last_form,
     resolve_floppydata_api_key,
     set_floppydata_api_key,
+    set_floppydata_last_form,
 )
 from app.proxies.pool import health_check_record, upsert_proxy
 from app.services import floppydata as fd
@@ -46,11 +49,22 @@ def _raise_fd(exc: fd.FloppydataError) -> None:
     raise HTTPException(status_code=code, detail=str(exc)) from exc
 
 
+def _last_form_out(db: Session) -> FloppydataFormState | None:
+    raw = get_floppydata_last_form(db)
+    if not raw:
+        return None
+    try:
+        return FloppydataFormState.model_validate(raw)
+    except Exception:
+        return None
+
+
 @router.get("/status", response_model=FloppydataStatusOut)
 def status(db: Session = Depends(get_db)) -> FloppydataStatusOut:
+    last_form = _last_form_out(db)
     key = resolve_floppydata_api_key(db)
     if not key:
-        return FloppydataStatusOut(configured=False, key_from_env=False)
+        return FloppydataStatusOut(configured=False, key_from_env=False, last_form=last_form)
     try:
         raw = fd.rotating_balance(key)
         flat = fd.normalize_rotating_balance(raw if isinstance(raw, dict) else {})
@@ -61,11 +75,13 @@ def status(db: Session = Depends(get_db)) -> FloppydataStatusOut:
             balance_bytes=flat.get("balance_bytes"),
             expiring_gb=flat.get("expiring_gb"),
             expiring_at=flat.get("expiring_at"),
+            last_form=last_form,
         )
     except fd.FloppydataError as exc:
         return FloppydataStatusOut(
             configured=True,
             key_from_env=floppydata_key_from_env(),
+            last_form=last_form,
             error=str(exc),
         )
 
@@ -131,6 +147,20 @@ def generate(
     missing = [i for i in items if not i.get("connection_string")]
     if missing:
         raise HTTPException(status_code=502, detail="Floppydata не вернул connectionString")
+    set_floppydata_last_form(
+        db,
+        {
+            "type": payload.type,
+            "country": payload.country,
+            "city": payload.city,
+            "state": payload.state,
+            "protocol": payload.protocol,
+            "rotation": payload.rotation,
+            "udp": payload.udp,
+            "count": payload.count,
+            "subuser_id": payload.subuser_id,
+        },
+    )
     return FloppydataGenerateOut(items=items)  # type: ignore[arg-type]
 
 
@@ -168,4 +198,6 @@ def import_proxies(
         )
     if not out:
         raise HTTPException(status_code=400, detail="Нет URL для импорта")
+    if payload.form is not None:
+        set_floppydata_last_form(db, payload.form.model_dump())
     return out

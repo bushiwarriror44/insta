@@ -1,9 +1,10 @@
 """Panel settings store: secret entry path + optional master password hash."""
 from __future__ import annotations
 
+import json
 import re
 import secrets
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
@@ -67,6 +68,7 @@ def get_or_create_panel_settings(db: Session) -> PanelSettings:
         llm_gateway_token=None,
         llm_gateway_enabled=True,
         floppydata_api_key=None,
+        floppydata_last_form=None,
     )
     db.add(row)
     db.commit()
@@ -129,6 +131,45 @@ def set_floppydata_api_key(db: Session, api_key: str) -> str:
 
 def floppydata_key_from_env() -> bool:
     return bool((settings.floppydata_api_key or "").strip())
+
+
+def get_floppydata_last_form(db: Session) -> dict[str, Any] | None:
+    row = get_or_create_panel_settings(db)
+    raw = getattr(row, "floppydata_last_form", None)
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def set_floppydata_last_form(db: Session, form: dict[str, Any] | None) -> dict[str, Any] | None:
+    row = get_or_create_panel_settings(db)
+    if not form:
+        row.floppydata_last_form = None
+        db.commit()
+        db.refresh(row)
+        return None
+    cleaned: dict[str, Any] = {}
+    for key in (
+        "type",
+        "country",
+        "city",
+        "state",
+        "protocol",
+        "rotation",
+        "udp",
+        "count",
+        "subuser_id",
+    ):
+        if key in form and form[key] is not None:
+            cleaned[key] = form[key]
+    row.floppydata_last_form = json.dumps(cleaned, ensure_ascii=False) if cleaned else None
+    db.commit()
+    db.refresh(row)
+    return cleaned or None
 
 
 def auth_is_required(db: Optional[Session] = None) -> bool:
