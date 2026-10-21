@@ -37,6 +37,11 @@ import {
 } from "../components/SessionSetupModal";
 import { FloppydataProxyPanel } from "../components/FloppydataProxyPanel";
 import { InstagramBrowserPanel } from "../components/InstagramBrowserPanel";
+import {
+  PlatformIcon,
+  platformLabel,
+  type PanelPlatform,
+} from "../components/PlatformIcon";
 import { StatusBadge } from "../components/StatusBadge";
 import { useAuth } from "../context/AuthContext";
 
@@ -862,8 +867,9 @@ export function Accounts() {
                       </div>
                     </td>
                     <td className="hidden min-w-0 sm:table-cell">
-                      <div className="truncate text-[11px] uppercase text-slate-400">
-                        {a.platform || "instagram"}
+                      <div className="flex items-center gap-1.5 truncate text-[11px] text-slate-300">
+                        <PlatformIcon platform={a.platform} size={14} />
+                        <span>{platformLabel(a.platform)}</span>
                       </div>
                       <StatusBadge value={a.status} />
                     </td>
@@ -1238,12 +1244,18 @@ function AddAccountModal({
   }
 
   const isIg = (form.platform || "instagram") === "instagram";
+  const platforms: { id: PanelPlatform; title: string; hint: string }[] = [
+    { id: "instagram", title: "Instagram", hint: "Пароль + сессия" },
+    { id: "youtube", title: "YouTube", hint: "Shorts · cookies" },
+    { id: "tiktok", title: "TikTok", hint: "Studio · cookies" },
+  ];
 
   return (
     <Modal
       open={open}
       onClose={onClose}
       title="Добавить аккаунт"
+      widthClass="max-w-2xl"
       footer={
         <>
           <button onClick={onClose} className="btn-ghost">
@@ -1257,268 +1269,292 @@ function AddAccountModal({
       }
     >
       <form id="add-account-form" onSubmit={submit} className="space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label className="label">Площадка</label>
-            <select
-              className="input"
-              value={form.platform || "instagram"}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  platform: e.target.value as AccountIn["platform"],
-                })
-              }
-            >
-              <option value="instagram">Instagram</option>
-              <option value="youtube">YouTube Shorts</option>
-              <option value="tiktok">TikTok</option>
-            </select>
-          </div>
-          <div>
-            <label className="label">Имя пользователя</label>
-            <input
-              className="input"
-              value={form.username}
-              onChange={(e) => setForm({ ...form, username: e.target.value })}
-              autoComplete="off"
-            />
-          </div>
-          <div>
-            <label className="label">{isIg ? "Пароль" : "Пароль (не нужен)"}</label>
-            <input
-              className="input"
-              type="password"
-              value={form.password}
-              onChange={(e) => setForm({ ...form, password: e.target.value })}
-              autoComplete="new-password"
-            />
-            {!isIg ? (
-              <p className="text-xs text-slate-500 mt-1">
-                YouTube и TikTok входят через браузер и cookies.
-              </p>
-            ) : null}
-          </div>
-        </div>
-        {isIg ? (
-        <>
-        <div>
-          <label className="label">Логин Instagram (необязательно)</label>
-          <input
-            className="input"
-            value={form.login_identifier ?? ""}
-            onChange={(e) => setForm({ ...form, login_identifier: e.target.value })}
-            placeholder="email, +1234567890 или username"
-            autoComplete="off"
-          />
-          <p className="text-xs text-slate-500 mt-1">
-            Если входите по email или телефону, а не по @username выше — укажите здесь.
+        <section className="space-y-2">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+            Площадка
           </p>
-        </div>
-        <div>
-          <label className="label">Строка аккаунта (необязательно)</label>
-          <textarea
-            className="input min-h-[72px] font-mono text-xs"
-            value={form.account_line ?? ""}
-            onChange={(e) => setForm({ ...form, account_line: e.target.value })}
-            placeholder="user:pass:BACKUP CODES:url"
-          />
-        </div>
-        <div>
-          <label className="label">Резервные коды 2FA (необязательно)</label>
-          <textarea
-            className="input min-h-[56px] font-mono text-xs"
-            value={form.backup_codes ?? ""}
-            onChange={(e) => setForm({ ...form, backup_codes: e.target.value })}
-            placeholder="JUJW WLWP QGPU …"
-          />
-        </div>
-        </>
-        ) : null}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label className="label">Прокси</label>
-            {proxies.length === 0 ? (
-              <div className="flex items-center gap-2 text-sm text-amber-300">
-                <ShieldOff size={16} />
-                <span>Нет прокси. Сначала добавьте.</span>
-              </div>
-            ) : (
-              <select
-                className="input"
-                value={form.proxy_label}
-                onChange={(e) => selectProxy(e.target.value)}
-              >
-                {proxies.map((p) => (
-                  <option key={p.id} value={p.label}>
-                    {p.label} {p.country ? `(${p.country})` : ""}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-          <div>
-            <label className="label">Часовой пояс</label>
-            <input
-              className="input"
-              value={form.timezone}
-              onChange={(e) => setForm({ ...form, timezone: e.target.value })}
-              placeholder="Europe/Berlin"
-            />
-            <p className="text-xs text-slate-500 mt-1">
-              Как у прокси (подставляется при выборе)
-            </p>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div>
-            <label className="label">Дневной лимит</label>
-            <input
-              type="number"
-              className="input"
-              min={1}
-              max={20}
-              value={form.daily_post_cap ?? 3}
-              onChange={(e) => setForm({ ...form, daily_post_cap: Number(e.target.value) })}
-            />
-          </div>
-          <div>
-            <label className="label">Мин. пауза (ч)</label>
-            <input
-              type="number"
-              step="0.5"
-              className="input"
-              min={0.5}
-              max={24}
-              value={form.min_gap_hours ?? 4}
-              onChange={(e) => setForm({ ...form, min_gap_hours: Number(e.target.value) })}
-            />
-          </div>
-          <div>
-            <label className="label">Начало активности</label>
-            <input
-              type="number"
-              className="input"
-              min={0}
-              max={23}
-              value={form.active_hour_start ?? 10}
-              onChange={(e) => setForm({ ...form, active_hour_start: Number(e.target.value) })}
-            />
-          </div>
-          <div>
-            <label className="label">Конец активности</label>
-            <input
-              type="number"
-              className="input"
-              min={1}
-              max={23}
-              value={form.active_hour_end ?? 22}
-              onChange={(e) => setForm({ ...form, active_hour_end: Number(e.target.value) })}
-            />
-          </div>
-        </div>
-        {isIg ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label className="label">Профиль подписей</label>
-            <select
-              className="input"
-              value={form.caption_profile ?? ""}
-              onChange={(e) => setForm({ ...form, caption_profile: e.target.value })}
-            >
-              <option value="">— по умолчанию —</option>
-              {CAPTION_PROFILE_OPTIONS.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-            <p className="text-xs text-slate-500 mt-1">
-              Настраивает пул подписей и уровни хештегов по теме.
-            </p>
-          </div>
-          <div>
-            <label className="label">Секрет TOTP (необязательно)</label>
-            <input
-              className="input"
-              value={form.totp_seed ?? ""}
-              onChange={(e) => setForm({ ...form, totp_seed: e.target.value })}
-              placeholder="JBSWY3DPEHPK3PXP"
-              autoComplete="off"
-            />
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                className="btn-ghost text-xs"
-                disabled={!(form.totp_seed ?? "").trim()}
-                title={
-                  (form.totp_seed ?? "").trim()
-                    ? "Скопировать Base32-секрет в буфер обмена"
-                    : "Сначала введите секрет TOTP в поле выше"
-                }
-                onClick={async () => {
-                  const seed = (form.totp_seed ?? "").trim();
-                  if (!seed) return;
-                  const ok = await copyTextToClipboard(seed);
-                  push(
-                    ok ? "Секретный ключ TOTP скопирован" : "Не удалось скопировать ключ TOTP",
-                    ok ? "success" : "error"
-                  );
-                  if (ok) {
-                    setTotpCopied(true);
-                    window.setTimeout(() => setTotpCopied(false), 2000);
+          <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Площадка">
+            {platforms.map((p) => {
+              const selected = (form.platform || "instagram") === p.id;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  data-testid={`platform-card-${p.id}`}
+                  onClick={() => setForm({ ...form, platform: p.id })}
+                  className={
+                    selected
+                      ? "flex flex-col items-center gap-1.5 rounded-xl border border-brand-500/50 bg-brand-500/10 px-2 py-3 text-center shadow-[inset_0_0_0_1px_rgba(56,189,248,0.15)]"
+                      : "flex flex-col items-center gap-1.5 rounded-xl border border-slate-800 bg-slate-950/60 px-2 py-3 text-center hover:border-slate-600 hover:bg-slate-900/80"
                   }
-                }}
-              >
-                <Copy size={14} />{" "}
-                {totpCopied ? "Скопировано" : "Копировать секретный ключ TOTP"}
-              </button>
+                >
+                  <PlatformIcon platform={p.id} size={22} />
+                  <span className="text-xs font-semibold text-slate-100">{p.title}</span>
+                  <span className="text-[10px] leading-tight text-slate-500">{p.hint}</span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 p-3 sm:p-4">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Аккаунт
+          </h4>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="md:col-span-2">
+              <label className="label">Имя пользователя</label>
+              <input
+                className="input"
+                value={form.username}
+                onChange={(e) => setForm({ ...form, username: e.target.value })}
+                autoComplete="off"
+                placeholder="@username"
+              />
             </div>
-            <p className="text-xs text-slate-500 mt-1">
-              Base32-секрет для авто 2FA. Хранится локально.
-            </p>
+            <div className="md:col-span-2">
+              <label className="label">{isIg ? "Пароль" : "Пароль (не нужен)"}</label>
+              <input
+                className="input"
+                type="password"
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                autoComplete="new-password"
+                disabled={!isIg}
+              />
+              {!isIg ? (
+                <p className="mt-1 text-xs text-slate-500">
+                  YouTube и TikTok входят через браузер и cookies.
+                </p>
+              ) : null}
+            </div>
           </div>
-        </div>
+        </section>
+
+        {isIg ? (
+          <section className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 p-3 sm:p-4">
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Instagram · вход и 2FA
+            </h4>
+            <div>
+              <label className="label">Логин Instagram (необязательно)</label>
+              <input
+                className="input"
+                value={form.login_identifier ?? ""}
+                onChange={(e) => setForm({ ...form, login_identifier: e.target.value })}
+                placeholder="email, +1234567890 или username"
+                autoComplete="off"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Если входите по email или телефону, а не по @username выше — укажите здесь.
+              </p>
+            </div>
+            <div>
+              <label className="label">Строка аккаунта (необязательно)</label>
+              <textarea
+                className="input min-h-[72px] font-mono text-xs"
+                value={form.account_line ?? ""}
+                onChange={(e) => setForm({ ...form, account_line: e.target.value })}
+                placeholder="user:pass:BACKUP CODES:url"
+              />
+            </div>
+            <div>
+              <label className="label">Резервные коды 2FA (необязательно)</label>
+              <textarea
+                className="input min-h-[56px] font-mono text-xs"
+                value={form.backup_codes ?? ""}
+                onChange={(e) => setForm({ ...form, backup_codes: e.target.value })}
+                placeholder="JUJW WLWP QGPU …"
+              />
+            </div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div>
+                <label className="label">Профиль подписей</label>
+                <select
+                  className="input"
+                  value={form.caption_profile ?? ""}
+                  onChange={(e) => setForm({ ...form, caption_profile: e.target.value })}
+                >
+                  <option value="">— по умолчанию —</option>
+                  {CAPTION_PROFILE_OPTIONS.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-slate-500">
+                  Настраивает пул подписей и уровни хештегов по теме.
+                </p>
+              </div>
+              <div>
+                <label className="label">Секрет TOTP (необязательно)</label>
+                <input
+                  className="input"
+                  value={form.totp_seed ?? ""}
+                  onChange={(e) => setForm({ ...form, totp_seed: e.target.value })}
+                  placeholder="JBSWY3DPEHPK3PXP"
+                  autoComplete="off"
+                />
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className="btn-ghost text-xs"
+                    disabled={!(form.totp_seed ?? "").trim()}
+                    title={
+                      (form.totp_seed ?? "").trim()
+                        ? "Скопировать Base32-секрет в буфер обмена"
+                        : "Сначала введите секрет TOTP в поле выше"
+                    }
+                    onClick={async () => {
+                      const seed = (form.totp_seed ?? "").trim();
+                      if (!seed) return;
+                      const ok = await copyTextToClipboard(seed);
+                      push(
+                        ok ? "Секретный ключ TOTP скопирован" : "Не удалось скопировать ключ TOTP",
+                        ok ? "success" : "error"
+                      );
+                      if (ok) {
+                        setTotpCopied(true);
+                        window.setTimeout(() => setTotpCopied(false), 2000);
+                      }
+                    }}
+                  >
+                    <Copy size={14} />{" "}
+                    {totpCopied ? "Скопировано" : "Копировать секретный ключ TOTP"}
+                  </button>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">
+                  Base32-секрет для авто 2FA. Хранится локально.
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div>
+                <label className="label">Резервный email (необязательно)</label>
+                <input
+                  className="input"
+                  type="email"
+                  value={form.email ?? ""}
+                  onChange={(e) => setForm({ ...form, email: e.target.value })}
+                  autoComplete="off"
+                />
+              </div>
+              <div>
+                <label className="label">Пароль почты / пароль приложения</label>
+                <input
+                  className="input"
+                  type="password"
+                  value={form.email_password ?? ""}
+                  onChange={(e) => setForm({ ...form, email_password: e.target.value })}
+                  autoComplete="new-password"
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  Используется для получения кода подтверждения через IMAP.
+                </p>
+              </div>
+              <div className="md:col-span-2">
+                <label className="label">IMAP хост (если домен не распознан)</label>
+                <input
+                  className="input"
+                  type="text"
+                  value={form.imap_host ?? ""}
+                  onChange={(e) => setForm({ ...form, imap_host: e.target.value })}
+                  placeholder="imap.poczta.onet.pl"
+                  autoComplete="off"
+                />
+              </div>
+            </div>
+          </section>
         ) : null}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {isIg ? (
-          <>
-          <div>
-            <label className="label">Резервный email (необязательно)</label>
-            <input
-              className="input"
-              type="email"
-              value={form.email ?? ""}
-              onChange={(e) => setForm({ ...form, email: e.target.value })}
-              autoComplete="off"
-            />
+
+        <section className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 p-3 sm:p-4">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Прокси и расписание
+          </h4>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <label className="label">Прокси</label>
+              {proxies.length === 0 ? (
+                <div className="flex items-center gap-2 text-sm text-amber-300">
+                  <ShieldOff size={16} />
+                  <span>Нет прокси. Сначала добавьте.</span>
+                </div>
+              ) : (
+                <select
+                  className="input"
+                  value={form.proxy_label}
+                  onChange={(e) => selectProxy(e.target.value)}
+                >
+                  {proxies.map((p) => (
+                    <option key={p.id} value={p.label}>
+                      {p.label} {p.country ? `(${p.country})` : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div>
+              <label className="label">Часовой пояс</label>
+              <input
+                className="input"
+                value={form.timezone}
+                onChange={(e) => setForm({ ...form, timezone: e.target.value })}
+                placeholder="Europe/Berlin"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Как у прокси (подставляется при выборе)
+              </p>
+            </div>
           </div>
-          <div>
-            <label className="label">Пароль почты / пароль приложения</label>
-            <input
-              className="input"
-              type="password"
-              value={form.email_password ?? ""}
-              onChange={(e) => setForm({ ...form, email_password: e.target.value })}
-              autoComplete="new-password"
-            />
-            <p className="text-xs text-slate-500 mt-1">
-              Используется для получения кода подтверждения через IMAP.
-            </p>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div>
+              <label className="label">Дневной лимит</label>
+              <input
+                type="number"
+                className="input"
+                min={1}
+                max={20}
+                value={form.daily_post_cap ?? 3}
+                onChange={(e) => setForm({ ...form, daily_post_cap: Number(e.target.value) })}
+              />
+            </div>
+            <div>
+              <label className="label">Мин. пауза (ч)</label>
+              <input
+                type="number"
+                step="0.5"
+                className="input"
+                min={0.5}
+                max={24}
+                value={form.min_gap_hours ?? 4}
+                onChange={(e) => setForm({ ...form, min_gap_hours: Number(e.target.value) })}
+              />
+            </div>
+            <div>
+              <label className="label">Начало активности</label>
+              <input
+                type="number"
+                className="input"
+                min={0}
+                max={23}
+                value={form.active_hour_start ?? 10}
+                onChange={(e) => setForm({ ...form, active_hour_start: Number(e.target.value) })}
+              />
+            </div>
+            <div>
+              <label className="label">Конец активности</label>
+              <input
+                type="number"
+                className="input"
+                min={1}
+                max={23}
+                value={form.active_hour_end ?? 22}
+                onChange={(e) => setForm({ ...form, active_hour_end: Number(e.target.value) })}
+              />
+            </div>
           </div>
-          <div className="md:col-span-2">
-            <label className="label">IMAP хост (если домен не распознан)</label>
-            <input
-              className="input"
-              type="text"
-              value={form.imap_host ?? ""}
-              onChange={(e) => setForm({ ...form, imap_host: e.target.value })}
-              placeholder="imap.poczta.onet.pl"
-              autoComplete="off"
-            />
-          </div>
-          </>
-          ) : null}
           <div>
             <label className="label">Заметки</label>
             <textarea
@@ -1528,7 +1564,7 @@ function AddAccountModal({
               placeholder="Заметки администратора по аккаунту"
             />
           </div>
-        </div>
+        </section>
       </form>
     </Modal>
   );

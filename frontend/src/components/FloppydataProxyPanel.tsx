@@ -103,6 +103,15 @@ function formatCreatedAt(value: string | null | undefined): string {
   return d.toLocaleString("ru-RU");
 }
 
+/** Compact UTC stamp so repeated generates never overwrite floppy-us-1. */
+function floppyLabelStamp(now = new Date()): string {
+  const p = (n: number, w = 2) => String(n).padStart(w, "0");
+  return (
+    `${now.getUTCFullYear()}${p(now.getUTCMonth() + 1)}${p(now.getUTCDate())}` +
+    `${p(now.getUTCHours())}${p(now.getUTCMinutes())}${p(now.getUTCSeconds())}`
+  );
+}
+
 export function FloppydataProxyPanel({
   proxies = [],
   onImported,
@@ -281,6 +290,7 @@ export function FloppydataProxyPanel({
   const generate = async () => {
     setBusy(true);
     try {
+      const form = currentForm();
       const out = await api.floppydata.generate({
         type: proxyType,
         country,
@@ -293,7 +303,19 @@ export function FloppydataProxyPanel({
         count,
       });
       setItems(out.items);
-      push(`Сгенерировано: ${out.items.length}`, "success");
+      const cc = country.toLowerCase();
+      const stamp = floppyLabelStamp();
+      const imported = await api.floppydata.importProxies({
+        run_health_check: true,
+        form,
+        items: out.items.map((row, i) => ({
+          label: `floppy-${cc}-${stamp}-${i + 1}`,
+          url: row.connection_string,
+          country,
+        })),
+      });
+      onImported(imported);
+      push(`Сгенерировано и добавлено в пул: ${imported.length}`, "success");
     } catch (err) {
       push(formatApiError(err), "error");
     } finally {
@@ -316,30 +338,6 @@ export function FloppydataProxyPanel({
     await copyOne(text, "all");
   };
 
-  const importToPool = async () => {
-    if (!items.length) return;
-    setBusy(true);
-    try {
-      const cc = country.toLowerCase();
-      const form = currentForm();
-      const imported = await api.floppydata.importProxies({
-        run_health_check: true,
-        form,
-        items: items.map((row, i) => ({
-          label: `floppy-${cc}-${i + 1}`,
-          url: row.connection_string,
-          country,
-        })),
-      });
-      onImported(imported);
-      push(`Добавлено в пул: ${imported.length}`, "success");
-    } catch (err) {
-      push(formatApiError(err), "error");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const udpAllowed =
     protocol === "socks5" && (proxyType === "residential" || proxyType === "mobile");
 
@@ -354,7 +352,7 @@ export function FloppydataProxyPanel({
         <div>
           <h2 className="text-lg font-semibold text-slate-100">Get proxy credentials</h2>
           <p className="mt-1 text-sm text-slate-400">
-            Параметры как в кабинете Floppydata: сгенерируйте строки и добавьте в пул панели.
+            Параметры как в кабинете Floppydata: генерация сразу сохраняет прокси в пул панели.
           </p>
         </div>
       </div>
@@ -626,14 +624,6 @@ export function FloppydataProxyPanel({
             >
               Сгенерировать
             </button>
-            <button
-              type="button"
-              className="btn-ghost text-sm"
-              disabled={busy || !items.length}
-              onClick={() => void importToPool()}
-            >
-              Добавить в пул
-            </button>
           </div>
 
           <div className="rounded-lg border border-slate-800 bg-slate-950/80 p-3">
@@ -650,7 +640,9 @@ export function FloppydataProxyPanel({
               </button>
             </div>
             {items.length === 0 ? (
-              <p className="text-xs text-slate-500">Пока пусто — нажмите «Сгенерировать».</p>
+              <p className="text-xs text-slate-500">
+                Пока пусто — «Сгенерировать» создаст строки и сохранит их в пул.
+              </p>
             ) : (
               <ul className="max-h-64 space-y-1 overflow-y-auto" data-testid="floppy-proxy-list">
                 {items.map((row, i) => (
@@ -687,11 +679,11 @@ export function FloppydataProxyPanel({
           <p className="text-xs text-slate-500">
             {savedFloppy.length
               ? `${savedFloppy.length} · сохраняются в data/app.db`
-              : "После «Добавить в пул» появятся здесь"}
+              : "После «Сгенерировать» появятся здесь"}
           </p>
         </div>
         {savedFloppy.length === 0 ? (
-          <EmptyState>Пока нет импортированных Floppydata-прокси.</EmptyState>
+          <EmptyState>Пока нет сохранённых Floppydata-прокси.</EmptyState>
         ) : (
           <ul className="max-h-80 space-y-2 overflow-y-auto">
             {savedFloppy.map((p) => (

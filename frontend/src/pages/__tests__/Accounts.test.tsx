@@ -1415,15 +1415,22 @@ describe("Accounts page", () => {
     expect(screen.getByTestId("floppy-saved-8")).toHaveTextContent("floppy-us-1");
     fireEvent.click(screen.getByRole("button", { name: /^сгенерировать$/i }));
     await waitFor(() => expect(apiMock.floppydata.generate).toHaveBeenCalled());
-    expect(await screen.findByTestId("floppy-proxy-list")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /добавить в пул/i }));
     await waitFor(() =>
       expect(apiMock.floppydata.importProxies).toHaveBeenCalledWith(
         expect.objectContaining({
           form: expect.objectContaining({ type: "mobile", country: "AM" }),
+          items: [
+            expect.objectContaining({
+              label: expect.stringMatching(/^floppy-am-\d{14}-1$/),
+              url: "http://user:pass@geo.g-w.info:10080",
+            }),
+          ],
         })
       )
     );
+    expect(await screen.findByTestId("floppy-proxy-list")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /добавить в пул/i })).not.toBeInTheDocument();
+    expect(await screen.findByTestId("floppy-saved-9")).toHaveTextContent("floppy-am-1");
   });
 
   it("highlights and scrolls to the account from ?username=", async () => {
@@ -1577,6 +1584,19 @@ describe("Accounts page", () => {
       expect(copySpy).toHaveBeenCalledWith("JBSWY3DPEHPK3PXP");
     });
     expect(await screen.findByText(/Секретный ключ TOTP скопирован/i)).toBeInTheDocument();
+  });
+
+  it("hides Instagram-only fields when YouTube platform card is selected", async () => {
+    renderAccounts();
+    await screen.findByText("@alice");
+    fireEvent.click(screen.getByRole("button", { name: /добавить аккаунт/i }));
+    await screen.findByRole("heading", { name: /добавить аккаунт/i });
+    expect(screen.getByText(/instagram · вход и 2fa/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("JBSWY3DPEHPK3PXP")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("platform-card-youtube"));
+    expect(screen.queryByText(/instagram · вход и 2fa/i)).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("JBSWY3DPEHPK3PXP")).not.toBeInTheDocument();
+    expect(screen.getByText(/входят через браузер и cookies/i)).toBeInTheDocument();
   });
 
   it("submits full add-account payload including optional fields", async () => {
