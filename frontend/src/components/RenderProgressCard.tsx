@@ -97,7 +97,6 @@ export function GenerationStagePulse() {
 
 export function RenderProgressCard({ job }: { job: ActiveGeneration }) {
   const done = job.status === "done";
-  const failed = ["failed", "dead"].includes(job.status);
   const stage = generationStageLabel(job.status, job.stage);
   const live = !isTerminalGeneration(job.status);
 
