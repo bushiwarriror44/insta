@@ -514,7 +514,10 @@ class LlmGatewayEnabledIn(BaseModel):
 class FloppydataStatusOut(BaseModel):
     configured: bool
     key_from_env: bool
-    balance: Optional[dict] = None
+    balance_gb: Optional[float] = None
+    balance_bytes: Optional[int] = None
+    expiring_gb: Optional[float] = None
+    expiring_at: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -605,6 +608,15 @@ class GpuOut(BaseModel):
     connect_label: str = ""
     connect_detail: str = ""
     connect_ratio: float = 0.0
+
+
+class GpuPresenceIn(BaseModel):
+    client_id: str = Field(min_length=8, max_length=80)
+
+
+class GpuPresenceOut(BaseModel):
+    ok: bool = True
+    viewers: int = 0
 
 
 class AdminNotesOut(BaseModel):

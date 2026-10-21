@@ -73,18 +73,35 @@ export function AgentToggle({ compact = false }: { compact?: boolean }) {
 
   const canStop = current.ours;
   const canStart = !current.ours && !current.running;
+  const foreign = current.running && !current.ours;
 
   const statusLabel = current.running
     ? current.ours
       ? current.pid
         ? `Агент работает · pid ${current.pid}`
         : "Агент работает"
-      : "Агент работает (не из панели)"
+      : compact
+        ? "Воркер снаружи"
+        : "Воркер Docker / терминал"
     : "Агент остановлен";
+
+  const seenLabel = current.seen_at
+    ? `Последний цикл ${new Date(current.seen_at).toLocaleString("ru-RU")}`
+    : null;
+  const foreignHint =
+    "Compose поднимает reels-worker сам. Стоп в панели — только для процесса, который запустила панель.";
+  const compactTitle = [
+    statusLabel,
+    seenLabel,
+    current.note || null,
+    foreign ? foreignHint : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   if (compact) {
     return (
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2" title={compactTitle}>
         <span
           className={clsx(
             "h-2 w-2 rounded-full",
@@ -126,8 +143,8 @@ export function AgentToggle({ compact = false }: { compact?: boolean }) {
       <div className="flex-1 min-w-[12rem]">
         <div className="text-sm">{statusLabel}</div>
         <div className="text-xs text-slate-500">
-          {current.seen_at
-            ? `Последний цикл ${new Date(current.seen_at).toLocaleString("ru-RU")}`
+          {seenLabel
+            ? seenLabel
             : "Ещё не отмечался в этой базе. Без агента план, fal и публикация не идут."}
         </div>
       </div>
@@ -147,10 +164,8 @@ export function AgentToggle({ compact = false }: { compact?: boolean }) {
           {busy ? "Запускаем…" : "Запустить"}
         </button>
       )}
-      {current.running && !current.ours ? (
-        <p className="w-full text-xs text-slate-500">
-          Панель останавливает только процесс, который запустила сама. Этот запущен из терминала или Docker.
-        </p>
+      {foreign ? (
+        <p className="w-full text-xs text-slate-500">{foreignHint}</p>
       ) : null}
     </div>
   );

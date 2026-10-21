@@ -157,7 +157,10 @@ beforeEach(() => {
   apiMock.floppydata.status.mockResolvedValue({
     configured: true,
     key_from_env: true,
-    balance: { total: 1_000_000_000 },
+    balance_gb: 15,
+    balance_bytes: 16106127360,
+    expiring_gb: 10,
+    expiring_at: "2026-01-25T08:33:30Z",
   });
   apiMock.floppydata.locations.mockResolvedValue([
     { code: "AM", name: "Armenia", cities: ["Yerevan"], states: [] },
@@ -1376,6 +1379,8 @@ describe("Accounts page", () => {
     fireEvent.click(screen.getByTestId("accounts-tab-floppydata"));
     expect(await screen.findByTestId("floppydata-proxy-panel")).toBeInTheDocument();
     await waitFor(() => expect(apiMock.floppydata.status).toHaveBeenCalled());
+    expect(await screen.findByTestId("floppy-balance")).toHaveTextContent("15 GB");
+    expect(screen.queryByText(/\[object Object\]/i)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^сгенерировать$/i }));
     await waitFor(() => expect(apiMock.floppydata.generate).toHaveBeenCalled());
     expect(await screen.findByTestId("floppy-proxy-list")).toBeInTheDocument();

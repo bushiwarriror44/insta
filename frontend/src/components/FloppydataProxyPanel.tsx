@@ -62,27 +62,32 @@ function parseSubusers(raw: unknown): Subuser[] {
   return out;
 }
 
-function formatBalance(balance: Record<string, unknown> | null | undefined): string {
-  if (!balance) return "—";
-  const total =
-    balance.total ??
-    balance.bytes ??
-    (balance as { nonExpiring?: unknown }).nonExpiring ??
-    (typeof balance.traffic === "object" && balance.traffic
-      ? (balance.traffic as Record<string, unknown>).total
-      : null);
-  if (total == null) {
-    try {
-      return JSON.stringify(balance).slice(0, 80);
-    } catch {
-      return "—";
+function formatGb(gb: number | null | undefined, bytes?: number | null): string {
+  if (gb != null && Number.isFinite(gb)) {
+    const n = Number(gb);
+    if (Number.isInteger(n) || Math.abs(n - Math.round(n)) < 1e-9) {
+      return `${Math.round(n)} GB`;
     }
+    if (n >= 10) return `${n.toFixed(1)} GB`;
+    return `${n.toFixed(2)} GB`;
   }
-  const n = Number(total);
-  if (!Number.isFinite(n)) return String(total);
-  if (n >= 1e9) return `${(n / 1e9).toFixed(2)} GB`;
-  if (n >= 1e6) return `${(n / 1e6).toFixed(1)} MB`;
-  return `${n} B`;
+  if (bytes != null && Number.isFinite(bytes)) {
+    const n = Number(bytes);
+    if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(2)} GB`;
+    if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(1)} MB`;
+    return `${n} B`;
+  }
+  return "—";
+}
+
+function formatExpiringHint(status: FloppydataStatusOut): string | null {
+  if (status.expiring_gb == null || status.expiring_gb <= 0) return null;
+  const amt = formatGb(status.expiring_gb);
+  if (!status.expiring_at) return `из них ${amt} с сроком`;
+  const d = new Date(status.expiring_at);
+  if (Number.isNaN(d.getTime())) return `из них ${amt} с сроком`;
+  const label = d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+  return `из них ${amt} до ${label}`;
 }
 
 export function FloppydataProxyPanel({
@@ -252,6 +257,11 @@ export function FloppydataProxyPanel({
   const udpAllowed =
     protocol === "socks5" && (proxyType === "residential" || proxyType === "mobile");
 
+  const balanceLabel = status?.configured
+    ? formatGb(status.balance_gb, status.balance_bytes)
+    : "—";
+  const expiringHint = status ? formatExpiringHint(status) : null;
+
   return (
     <div className="space-y-4" data-testid="floppydata-proxy-panel">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -261,75 +271,109 @@ export function FloppydataProxyPanel({
             Параметры как в кабинете Floppydata: сгенерируйте строки и добавьте в пул панели.
           </p>
         </div>
-        <a
-          href="https://app.floppydata.com"
-          target="_blank"
-          rel="noreferrer"
-          className="btn-ghost text-xs"
-        >
-          <ExternalLink className="mr-1 inline h-3.5 w-3.5" />
-          Пополнить баланс
-        </a>
       </div>
 
-      <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-4 space-y-3">
-        <div className="flex flex-wrap items-center gap-3 text-sm text-slate-300">
-          <span>
-            Ключ:{" "}
-            {status?.configured ? (
-              <span className="text-emerald-400">
-                задан{status.key_from_env ? " (env)" : ""}
+      <section
+        className="rounded-xl border border-slate-800 bg-gradient-to-br from-slate-900/90 to-slate-950 p-4 sm:p-5"
+        aria-label="Статус Floppydata"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={
+                  status?.configured
+                    ? "inline-flex items-center rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-300"
+                    : "inline-flex items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-300"
+                }
+              >
+                {status?.configured
+                  ? status.key_from_env
+                    ? "Ключ из env"
+                    : "Ключ сохранён"
+                  : "Ключ не задан"}
               </span>
-            ) : (
-              <span className="text-amber-400">не задан</span>
-            )}
-          </span>
-          {status?.configured ? (
-            <span className="text-slate-500">
-              Rotating:{" "}
-              <span className="text-slate-300">{formatBalance(status.balance ?? null)}</span>
-            </span>
-          ) : null}
-          <button
-            type="button"
-            className="btn-ghost text-xs"
-            disabled={busy}
-            onClick={() =>
-              void loadStatus().then((next) => {
-                if (next.configured) return loadMeta(proxyType);
-              })
-            }
-          >
-            <RefreshCw className="mr-1 inline h-3.5 w-3.5" />
-            Обновить
-          </button>
-        </div>
-        {status?.error ? <p className="text-sm text-rose-300">{status.error}</p> : null}
-        {!status?.key_from_env ? (
-          <div className="flex flex-wrap gap-2">
-            <input
-              className="input min-w-[16rem] flex-1 font-mono text-xs"
-              type="password"
-              placeholder="X-Api-Key Floppydata"
-              value={apiKeyDraft}
-              onChange={(e) => setApiKeyDraft(e.target.value)}
-              aria-label="API-ключ Floppydata"
-            />
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                Rotating traffic
+              </p>
+              <p
+                className="mt-0.5 text-2xl font-semibold tracking-tight text-slate-100"
+                data-testid="floppy-balance"
+              >
+                {balanceLabel}
+              </p>
+              {expiringHint ? (
+                <p className="mt-1 text-xs text-slate-500">{expiringHint}</p>
+              ) : null}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              className="btn-primary text-xs"
-              disabled={busy || !apiKeyDraft.trim()}
-              onClick={() => void saveKey()}
+              className="btn-ghost text-xs"
+              disabled={busy}
+              onClick={() =>
+                void loadStatus().then((next) => {
+                  if (next.configured) return loadMeta(proxyType);
+                })
+              }
             >
-              Сохранить ключ
+              <RefreshCw className="mr-1 inline h-3.5 w-3.5" />
+              Обновить
             </button>
+            <a
+              href="https://app.floppydata.com"
+              target="_blank"
+              rel="noreferrer"
+              className="btn-ghost text-xs"
+            >
+              <ExternalLink className="mr-1 inline h-3.5 w-3.5" />
+              Пополнить
+            </a>
+          </div>
+        </div>
+
+        {status?.error ? (
+          <p className="mt-3 rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+            {status.error}
+          </p>
+        ) : null}
+
+        {!status?.key_from_env ? (
+          <div className="mt-4 border-t border-slate-800 pt-4">
+            <label className="block space-y-1.5" htmlFor="floppy-api-key">
+              <span className="text-[11px] uppercase tracking-wide text-slate-500">
+                {status?.configured ? "Заменить API-ключ" : "API-ключ"}
+              </span>
+              <div className="flex flex-wrap gap-2">
+                <input
+                  id="floppy-api-key"
+                  className="input min-w-[16rem] flex-1 font-mono text-xs"
+                  type="password"
+                  placeholder={status?.configured ? "••••••••••••" : "X-Api-Key Floppydata"}
+                  value={apiKeyDraft}
+                  onChange={(e) => setApiKeyDraft(e.target.value)}
+                  autoComplete="off"
+                />
+                <button
+                  type="button"
+                  className="btn-primary text-xs"
+                  disabled={busy || !apiKeyDraft.trim()}
+                  onClick={() => void saveKey()}
+                >
+                  Сохранить
+                </button>
+              </div>
+            </label>
           </div>
         ) : (
-          <p className="text-xs text-slate-500">
-            Ключ берётся из FLOPPYDATA_API_KEY на сервере.
+          <p className="mt-4 border-t border-slate-800 pt-3 text-xs text-slate-500">
+            Ключ задан через FLOPPYDATA_API_KEY на сервере — смена только в окружении.
           </p>
         )}
-      </div>
+      </section>
 
       {!status?.configured ? (
         <EmptyState>Сначала укажите API-ключ Floppydata.</EmptyState>

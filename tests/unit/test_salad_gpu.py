@@ -204,6 +204,14 @@ def test_operator_forbidden(auth_client):
     assert auth_client.get("/api/gpu/logs", headers=op_headers).status_code == 403
     assert auth_client.post("/api/gpu/start", headers=op_headers).status_code == 403
     assert auth_client.post("/api/gpu/stop", headers=op_headers).status_code == 403
+    # Presence is for every signed-in tab (shared account / multi-user).
+    presence = auth_client.post(
+        "/api/gpu/presence",
+        headers=op_headers,
+        json={"client_id": "operator-tab-1"},
+    )
+    assert presence.status_code == 200
+    assert presence.json()["viewers"] >= 1
 
 
 def test_start_unconfigured_is_503(auth_client):

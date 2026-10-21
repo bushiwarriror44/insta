@@ -86,6 +86,60 @@ def rotating_balance(api_key: str) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _traffic_bucket(node: Any) -> tuple[float | None, int | None]:
+    """Extract (availableGb, availableBytes) from a balance bucket."""
+    if not isinstance(node, dict):
+        return None, None
+    traffic = node.get("traffic") if isinstance(node.get("traffic"), dict) else node
+    if not isinstance(traffic, dict):
+        return None, None
+    gb_raw = traffic.get("availableGb")
+    bytes_raw = traffic.get("availableBytes")
+    gb = float(gb_raw) if gb_raw is not None and str(gb_raw).strip() != "" else None
+    try:
+        nbytes = int(bytes_raw) if bytes_raw is not None else None
+    except (TypeError, ValueError):
+        nbytes = None
+    if gb is None and nbytes is not None:
+        gb = round(nbytes / (1024**3), 3)
+    if nbytes is None and gb is not None:
+        nbytes = int(gb * (1024**3))
+    return gb, nbytes
+
+
+def normalize_rotating_balance(raw: dict[str, Any]) -> dict[str, Any]:
+    """Flatten Floppydata rotating balance into UI-friendly fields."""
+    total_gb, total_bytes = _traffic_bucket(raw.get("total"))
+    if total_gb is None and total_bytes is None:
+        # Legacy / unexpected shapes
+        for key in ("total", "bytes", "nonExpiring"):
+            val = raw.get(key)
+            if isinstance(val, (int, float)):
+                total_bytes = int(val)
+                total_gb = round(total_bytes / (1024**3), 3)
+                break
+            gb, nbytes = _traffic_bucket(val)
+            if gb is not None or nbytes is not None:
+                total_gb, total_bytes = gb, nbytes
+                break
+
+    exp = raw.get("expiring") if isinstance(raw.get("expiring"), dict) else {}
+    exp_gb, _ = _traffic_bucket(exp)
+    expires_at = exp.get("expiresAt") if isinstance(exp, dict) else None
+    if not isinstance(expires_at, str):
+        expires_at = None
+    if exp_gb is not None and exp_gb <= 0:
+        exp_gb = None
+        expires_at = None
+
+    return {
+        "balance_gb": total_gb,
+        "balance_bytes": total_bytes,
+        "expiring_gb": exp_gb,
+        "expiring_at": expires_at,
+    }
+
+
 def account_balances(api_key: str) -> dict[str, Any]:
     data = _request("GET", "/v2/account/balances", api_key=api_key)
     return data if isinstance(data, dict) else {}

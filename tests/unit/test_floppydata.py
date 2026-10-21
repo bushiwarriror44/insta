@@ -59,6 +59,31 @@ def test_status_without_key(no_key_client):
     assert res.json()["configured"] is False
 
 
+def test_status_normalizes_nested_balance(auth_client):
+    nested = {
+        "expiring": {
+            "expiresAt": "2026-01-25T08:33:30Z",
+            "traffic": {"availableBytes": 10737418240, "availableGb": 10},
+        },
+        "nonExpiring": {
+            "traffic": {"availableBytes": 5368709120, "availableGb": 5},
+        },
+        "total": {
+            "traffic": {"availableBytes": 16106127360, "availableGb": 15},
+        },
+    }
+    with patch("app.services.floppydata.rotating_balance", return_value=nested):
+        res = auth_client.get("/api/floppydata/status", headers=_h())
+    assert res.status_code == 200
+    body = res.json()
+    assert body["configured"] is True
+    assert body["balance_gb"] == 15
+    assert body["balance_bytes"] == 16106127360
+    assert body["expiring_gb"] == 10
+    assert body["expiring_at"] == "2026-01-25T08:33:30Z"
+    assert "balance" not in body or body.get("balance") is None
+
+
 def test_generate_requires_key(no_key_client):
     res = no_key_client.post(
         "/api/floppydata/generate",

@@ -7,13 +7,13 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
-from app.api.deps import DocsOwnerDep
-from app.api.schemas import GpuLogsOut, GpuOut, LogTailOut
+from app.api.deps import AuthDep, DocsOwnerDep
+from app.api.schemas import GpuLogsOut, GpuOut, GpuPresenceIn, GpuPresenceOut, LogTailOut
 from app.config import Settings, get_settings
-from app.services import salad_gpu
+from app.services import salad_gpu, salad_idle
 from app.services.gateway_probe import ollama_reachable, wan_reachable
 
-router = APIRouter(prefix="/api/gpu", tags=["gpu"], dependencies=[DocsOwnerDep])
+router = APIRouter(prefix="/api/gpu", tags=["gpu"])
 
 # Group is down — probes must not claim Ollama/Wan are live.
 _DOWN = frozenset({"stopped", "succeeded", "failed"})
@@ -152,7 +152,17 @@ def _tail(name: str, row: Mapping[str, object], settings: Settings) -> LogTailOu
     )
 
 
-@router.get("/logs", response_model=GpuLogsOut)
+@router.post("/presence", response_model=GpuPresenceOut, dependencies=[AuthDep])
+def post_gpu_presence(payload: GpuPresenceIn) -> GpuPresenceOut:
+    """Keep Salad GPU awake while any panel tab is open (multi-client)."""
+    try:
+        viewers = salad_idle.touch_presence(payload.client_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return GpuPresenceOut(ok=True, viewers=viewers)
+
+
+@router.get("/logs", response_model=GpuLogsOut, dependencies=[DocsOwnerDep])
 def read_gpu_logs(response: Response, since: str = Query(default="1h")) -> GpuLogsOut:
     """Docker tails plus Salad container stdout. Does not refresh the idle clock."""
     from app.assistant.tools import docker_logs
@@ -171,7 +181,7 @@ def read_gpu_logs(response: Response, since: str = Query(default="1h")) -> GpuLo
     return GpuLogsOut(docker=docker, gpu=_tail("gpu", gpu, settings))
 
 
-@router.get("", response_model=GpuOut)
+@router.get("", response_model=GpuOut, dependencies=[DocsOwnerDep])
 def read_gpu() -> GpuOut:
     settings = get_settings()
     if not salad_gpu.configured(settings):
@@ -191,7 +201,7 @@ def read_gpu() -> GpuOut:
         )
 
 
-@router.post("/start", response_model=GpuOut)
+@router.post("/start", response_model=GpuOut, dependencies=[DocsOwnerDep])
 def start_gpu() -> GpuOut:
     settings = get_settings()
     try:
@@ -201,7 +211,7 @@ def start_gpu() -> GpuOut:
         raise _http_error(exc) from exc
 
 
-@router.post("/stop", response_model=GpuOut)
+@router.post("/stop", response_model=GpuOut, dependencies=[DocsOwnerDep])
 def stop_gpu() -> GpuOut:
     settings = get_settings()
     try:

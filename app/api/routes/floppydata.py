@@ -52,11 +52,15 @@ def status(db: Session = Depends(get_db)) -> FloppydataStatusOut:
     if not key:
         return FloppydataStatusOut(configured=False, key_from_env=False)
     try:
-        balance = fd.rotating_balance(key)
+        raw = fd.rotating_balance(key)
+        flat = fd.normalize_rotating_balance(raw if isinstance(raw, dict) else {})
         return FloppydataStatusOut(
             configured=True,
             key_from_env=floppydata_key_from_env(),
-            balance=balance if isinstance(balance, dict) else {"raw": balance},
+            balance_gb=flat.get("balance_gb"),
+            balance_bytes=flat.get("balance_bytes"),
+            expiring_gb=flat.get("expiring_gb"),
+            expiring_at=flat.get("expiring_at"),
         )
     except fd.FloppydataError as exc:
         return FloppydataStatusOut(

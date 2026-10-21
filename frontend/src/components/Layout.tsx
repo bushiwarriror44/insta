@@ -20,6 +20,7 @@ import clsx from "clsx";
 
 import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
+import { useGpuPresence } from "../hooks/useGpuPresence";
 import { useHotkeys } from "../hooks/useHotkeys";
 import { usePollWhenVisible } from "../hooks/usePollWhenVisible";
 import { focusPageSearch, REFRESH_NAV_BADGES, showAssistant } from "../lib/uiEvents";
@@ -79,6 +80,7 @@ export function Layout() {
     }
   }, []);
 
+  useGpuPresence(isAuthed || !authRequired);
   usePollWhenVisible(loadBadges, 15000);
 
   useEffect(() => {

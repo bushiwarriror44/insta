@@ -84,7 +84,10 @@ export type FloppydataProtocol = "http" | "https" | "socks5";
 export interface FloppydataStatusOut {
   configured: boolean;
   key_from_env: boolean;
-  balance?: Record<string, unknown> | null;
+  balance_gb?: number | null;
+  balance_bytes?: number | null;
+  expiring_gb?: number | null;
+  expiring_at?: string | null;
   error?: string | null;
 }
 

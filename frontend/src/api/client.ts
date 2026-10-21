@@ -835,6 +835,11 @@ export const api = {
     status: () => request<import("./types").GpuOut>("/api/gpu"),
     start: () => request<import("./types").GpuOut>("/api/gpu/start", { method: "POST" }),
     stop: () => request<import("./types").GpuOut>("/api/gpu/stop", { method: "POST" }),
+    presence: (clientId: string) =>
+      request<{ ok: boolean; viewers: number }>("/api/gpu/presence", {
+        method: "POST",
+        body: { client_id: clientId },
+      }),
     logs: (since = "1h") =>
       request<import("./types").GpuLogsOut>(`/api/gpu/logs?since=${encodeURIComponent(since)}`),
   },

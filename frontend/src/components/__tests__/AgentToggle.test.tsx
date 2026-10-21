@@ -138,7 +138,7 @@ describe("AgentToggle", () => {
       note: "idle",
     });
     render(<AgentToggle compact />);
-    expect(await screen.findByText(/не из панели/i)).toBeInTheDocument();
+    expect(await screen.findByText(/воркер снаружи/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /стоп/i })).not.toBeInTheDocument();
   });
 
@@ -151,7 +151,8 @@ describe("AgentToggle", () => {
       note: "idle",
     });
     render(<AgentToggle />);
-    expect(await screen.findByText(/не из панели/i)).toBeInTheDocument();
+    expect(await screen.findByText(/воркер docker \/ терминал/i)).toBeInTheDocument();
+    expect(screen.getByText(/compose поднимает reels-worker/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /остановить/i })).not.toBeInTheDocument();
   });
 });

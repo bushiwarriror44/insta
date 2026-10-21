@@ -50,6 +50,7 @@ vi.mock("../../api/client", () => ({
       }),
       start: vi.fn(),
       stop: vi.fn(),
+      presence: vi.fn().mockResolvedValue({ ok: true, viewers: 1 }),
     },
     jobs: { list: vi.fn().mockResolvedValue([]) },
     videos: { list: vi.fn().mockResolvedValue([]) },
@@ -93,9 +94,22 @@ beforeEach(() => {
     jobs_failed_24h: 0,
     open_questions: 0,
   } as never);
+  vi.mocked(api.gpu.presence).mockReset();
+  vi.mocked(api.gpu.presence).mockResolvedValue({ ok: true, viewers: 1 });
 });
 
 describe("Layout", () => {
+  it("pings GPU presence while the panel is open", async () => {
+    useAuthMock.mockReturnValue({
+      state: { state: "authed", token: "tok" },
+      logout: vi.fn(),
+      authRequired: true,
+      role: "owner",
+    });
+    renderAt("/");
+    await waitFor(() => expect(api.gpu.presence).toHaveBeenCalled());
+  });
+
   it("renders all sidebar links and the active outlet content", () => {
     useAuthMock.mockReturnValue({
       state: { state: "open" },
