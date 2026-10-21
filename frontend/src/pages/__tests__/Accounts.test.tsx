@@ -39,6 +39,14 @@ const apiMock = vi.hoisted(() => ({
     update: vi.fn(),
     remove: vi.fn(),
   },
+  floppydata: {
+    status: vi.fn(),
+    setApiKey: vi.fn(),
+    locations: vi.fn(),
+    subusers: vi.fn(),
+    generate: vi.fn(),
+    importProxies: vi.fn(),
+  },
   diagnostics: {
     list: vi.fn(),
     get: vi.fn(),
@@ -47,6 +55,10 @@ const apiMock = vi.hoisted(() => ({
     updateAgentSettings: vi.fn().mockResolvedValue({ hold_for_review: true }),
   },
 }));
+
+async function openProxiesTab() {
+  fireEvent.click(await screen.findByTestId("accounts-tab-proxies"));
+}
 
 vi.mock("../../api/client", async () => {
   const actual = await vi.importActual<typeof import("../../api/client")>(
@@ -135,12 +147,38 @@ const account: AccountOut = {
 beforeEach(() => {
   Object.values(apiMock.accounts).forEach((fn) => fn.mockReset());
   Object.values(apiMock.proxies).forEach((fn) => fn.mockReset());
+  Object.values(apiMock.floppydata).forEach((fn) => fn.mockReset());
   Object.values(apiMock.diagnostics).forEach((fn) => fn.mockReset());
   apiMock.factory.updateAgentSettings.mockReset();
   apiMock.accounts.list.mockResolvedValue([account]);
   apiMock.proxies.list.mockResolvedValue([proxy]);
   apiMock.diagnostics.list.mockResolvedValue([]);
   apiMock.factory.updateAgentSettings.mockResolvedValue({ hold_for_review: true });
+  apiMock.floppydata.status.mockResolvedValue({
+    configured: true,
+    key_from_env: true,
+    balance: { total: 1_000_000_000 },
+  });
+  apiMock.floppydata.locations.mockResolvedValue([
+    { code: "AM", name: "Armenia", cities: ["Yerevan"], states: [] },
+    { code: "US", name: "United States", cities: ["New York"], states: ["CA"] },
+  ]);
+  apiMock.floppydata.subusers.mockResolvedValue([]);
+  apiMock.floppydata.generate.mockResolvedValue({
+    items: [
+      {
+        connection_string: "http://user:pass@geo.g-w.info:10080",
+        protocol: "http",
+        host: "geo.g-w.info",
+        port: 10080,
+        username: "user",
+        password: "pass",
+      },
+    ],
+  });
+  apiMock.floppydata.importProxies.mockResolvedValue([
+    { ...proxy, id: 9, label: "floppy-am-1", url: "http://user:pass@geo.g-w.info:10080" },
+  ]);
   window.history.replaceState(null, "", "/");
 });
 
@@ -231,9 +269,12 @@ describe("Accounts page", () => {
   it("renders proxies and accounts tables after load", async () => {
     renderAccounts();
     await screen.findByText("@alice");
+    expect(screen.getByTestId("accounts-tab-accounts")).toHaveAttribute("aria-selected", "true");
     const matches = screen.getAllByText("res-de-1");
     expect(matches.length).toBeGreaterThanOrEqual(1);
+    await openProxiesTab();
     expect(screen.getByText("203.0.113.1")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("accounts-tab-accounts"));
     const instagramLink = screen.getByRole("link", { name: /профиль/i });
     expect(instagramLink).toHaveAttribute(
       "href",
@@ -280,7 +321,7 @@ describe("Accounts page", () => {
       })
     );
     await waitFor(() => {
-      const accountsTable = screen.getAllByRole("table")[1];
+      const accountsTable = screen.getAllByRole("table")[0];
       expect(within(accountsTable).getByText(secondProxy.label)).toBeInTheDocument();
     });
   });
@@ -1057,7 +1098,7 @@ describe("Accounts page", () => {
     renderAccounts();
     await screen.findByText("@alice");
 
-    const accountsTable = screen.getAllByRole("table")[1];
+    const accountsTable = screen.getAllByRole("table")[0];
     const pauseBtn = within(accountsTable).getByRole("button", { name: /^пауза$/i });
     fireEvent.click(pauseBtn);
 
@@ -1071,7 +1112,7 @@ describe("Accounts page", () => {
     apiMock.accounts.resume.mockResolvedValue({ ...account, status: "active" });
     renderAccounts();
     await screen.findByText("@alice");
-    const accountsTable = screen.getAllByRole("table")[1];
+    const accountsTable = screen.getAllByRole("table")[0];
     fireEvent.click(within(accountsTable).getByRole("button", { name: /возобновить/i }));
     await waitFor(() =>
       expect(apiMock.accounts.resume).toHaveBeenCalledWith("alice")
@@ -1085,7 +1126,7 @@ describe("Accounts page", () => {
     ]);
     renderAccounts();
     await screen.findByText("@alice");
-    const accountsTable = screen.getAllByRole("table")[1];
+    const accountsTable = screen.getAllByRole("table")[0];
     expect(within(accountsTable).queryByRole("button", { name: /возобновить/i })).not.toBeInTheDocument();
     expect(within(accountsTable).queryByRole("button", { name: /^пауза$/i })).not.toBeInTheDocument();
   });
@@ -1094,6 +1135,7 @@ describe("Accounts page", () => {
     apiMock.proxies.create.mockResolvedValue(proxy);
     renderAccounts();
     await screen.findByText("@alice");
+    await openProxiesTab();
 
     fireEvent.click(screen.getByRole("button", { name: /добавить прокси/i }));
     const heading = await screen.findByRole("heading", { name: /добавить прокси/i });
@@ -1119,9 +1161,14 @@ describe("Accounts page", () => {
   });
 
   it("triggers health-check on proxy row", async () => {
-    apiMock.proxies.check.mockResolvedValue({ ...proxy, is_healthy: false });
+    apiMock.proxies.check.mockResolvedValue({
+      ...proxy,
+      is_healthy: false,
+      check_detail: "Прокси http://***: таймаут соединения",
+    });
     renderAccounts();
     await screen.findByText("@alice");
+    await openProxiesTab();
     const proxiesTable = screen.getAllByRole("table")[0];
     fireEvent.click(
       within(proxiesTable).getByRole("button", {
@@ -1131,12 +1178,14 @@ describe("Accounts page", () => {
     await waitFor(() =>
       expect(apiMock.proxies.check).toHaveBeenCalledWith("res-de-1")
     );
+    expect(await screen.findByText(/таймаут соединения/i)).toBeInTheDocument();
   });
 
   it("opens Edit proxy modal and saves via API", async () => {
     apiMock.proxies.update.mockResolvedValue({ ...proxy, url: "http://new/url" });
     renderAccounts();
     await screen.findByText("@alice");
+    await openProxiesTab();
     fireEvent.click(
       screen.getByRole("button", { name: /изменить прокси res-de-1/i })
     );
@@ -1167,6 +1216,7 @@ describe("Accounts page", () => {
   it("disables Delete proxy when accounts are attached", async () => {
     renderAccounts();
     await screen.findByText("@alice");
+    await openProxiesTab();
     const delBtn = screen.getByRole("button", { name: /удалить прокси res-de-1/i });
     expect(delBtn).toBeDisabled();
   });
@@ -1183,6 +1233,7 @@ describe("Accounts page", () => {
 
     renderAccounts();
     await screen.findByText("Аккаунтов пока нет.");
+    await openProxiesTab();
 
     fireEvent.click(
       screen.getByRole("button", { name: /удалить прокси res-de-1/i })
@@ -1205,7 +1256,7 @@ describe("Accounts page", () => {
     ]);
     renderAccounts();
     await screen.findByText("@alice");
-    const accountsTable = screen.getAllByRole("table")[1];
+    const accountsTable = screen.getAllByRole("table")[0];
     expect(within(accountsTable).getByText("Пауза IG")).toBeInTheDocument();
     expect(within(accountsTable).getByText("lifestyle")).toBeInTheDocument();
     const expected = new Date(cooldownIso).toLocaleString();
@@ -1263,6 +1314,7 @@ describe("Accounts page", () => {
     ]);
     renderAccounts();
     await screen.findByText("@alice");
+    await openProxiesTab();
     const proxiesTable = screen.getAllByRole("table")[0];
     const cell = within(proxiesTable).getByText("US");
     expect(cell.className).toMatch(/amber/);
@@ -1283,6 +1335,7 @@ describe("Accounts page", () => {
     ]);
     renderAccounts();
     await screen.findByText("@alice");
+    await openProxiesTab();
     const proxiesTable = screen.getAllByRole("table")[0];
     const cell = within(proxiesTable).getByText("US");
     expect(cell.className).not.toMatch(/amber/);
@@ -1295,7 +1348,7 @@ describe("Accounts page", () => {
     ]);
     renderAccounts();
     await screen.findByText("@alice");
-    const accountsTable = screen.getAllByRole("table")[1];
+    const accountsTable = screen.getAllByRole("table")[0];
     const cell = within(accountsTable).getByText("US");
     expect(cell.className).toMatch(/amber/);
     expect(cell.closest("td")).toHaveAttribute(
@@ -1311,9 +1364,23 @@ describe("Accounts page", () => {
       expect(table.closest(".table-scroll")).not.toBeNull();
     }
     expect(screen.getByRole("button", { name: /^пауза$/i })).toBeInTheDocument();
+    await openProxiesTab();
     expect(
       screen.getByRole("button", { name: /изменить прокси res-de-1/i })
     ).toBeInTheDocument();
+  });
+
+  it("opens Floppydata tab, generates and imports proxies", async () => {
+    renderAccounts();
+    await screen.findByText("@alice");
+    fireEvent.click(screen.getByTestId("accounts-tab-floppydata"));
+    expect(await screen.findByTestId("floppydata-proxy-panel")).toBeInTheDocument();
+    await waitFor(() => expect(apiMock.floppydata.status).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: /^сгенерировать$/i }));
+    await waitFor(() => expect(apiMock.floppydata.generate).toHaveBeenCalled());
+    expect(await screen.findByTestId("floppy-proxy-list")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /добавить в пул/i }));
+    await waitFor(() => expect(apiMock.floppydata.importProxies).toHaveBeenCalled());
   });
 
   it("highlights and scrolls to the account from ?username=", async () => {

@@ -40,6 +40,7 @@ class ProxyOut(BaseModel):
     accounts_count: int = 0
     instagram_reachable: Optional[bool] = None
     geo_mismatch_warning: bool = False
+    check_detail: Optional[str] = None
 
 
 class ProxyIn(BaseModel):
@@ -492,6 +493,7 @@ class LlmGatewayActivityOut(BaseModel):
     client_ip: str
     user_agent: str
     status: int
+    detail: str = ""
 
 
 class LlmGatewayCredentialsOut(BaseModel):
@@ -507,6 +509,53 @@ class LlmGatewayCredentialsOut(BaseModel):
 
 class LlmGatewayEnabledIn(BaseModel):
     enabled: bool
+
+
+class FloppydataStatusOut(BaseModel):
+    configured: bool
+    key_from_env: bool
+    balance: Optional[dict] = None
+    error: Optional[str] = None
+
+
+class FloppydataApiKeyIn(BaseModel):
+    api_key: str = Field(default="", max_length=500)
+
+
+class FloppydataGenerateIn(BaseModel):
+    type: Literal["residential", "mobile", "datacenter"] = "residential"
+    country: str = Field(min_length=2, max_length=2)
+    city: Optional[str] = Field(default=None, max_length=120)
+    state: Optional[str] = Field(default=None, max_length=120)
+    protocol: Literal["http", "https", "socks5"] = "http"
+    rotation: int = Field(default=0, ge=-1, le=60)
+    udp: bool = False
+    subuser_id: Optional[int] = Field(default=None, ge=1)
+    count: int = Field(default=1, ge=1, le=20)
+
+
+class FloppydataConnectionOut(BaseModel):
+    connection_string: str
+    protocol: str = ""
+    host: str = ""
+    port: Optional[int] = None
+    username: str = ""
+    password: str = ""
+
+
+class FloppydataGenerateOut(BaseModel):
+    items: list[FloppydataConnectionOut]
+
+
+class FloppydataImportItemIn(BaseModel):
+    label: Optional[str] = Field(default=None, max_length=120)
+    url: str = Field(min_length=1, max_length=500)
+    country: Optional[str] = Field(default=None, max_length=8)
+
+
+class FloppydataImportIn(BaseModel):
+    items: list[FloppydataImportItemIn] = Field(min_length=1, max_length=20)
+    run_health_check: bool = True
 
 
 class PanelEntryPathUpdateIn(BaseModel):

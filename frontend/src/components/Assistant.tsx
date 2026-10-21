@@ -1269,6 +1269,11 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                 <span className={row.status >= 400 ? "text-rose-300" : "text-emerald-400"}>
                   {row.status}
                 </span>
+                {row.detail ? (
+                  <span className="block pl-0 text-slate-500 normal-case">
+                    {row.detail}
+                  </span>
+                ) : null}
               </li>
             ))}
           </ul>

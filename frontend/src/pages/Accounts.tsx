@@ -21,7 +21,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
-import { api } from "../api/client";
+import { api, formatApiError } from "../api/client";
 import { Card } from "../components/Card";
 import { CountryFlag, countryCodeToFlag } from "../components/CountryFlag";
 import { DiagnosticLogPanel, copyTextToClipboard } from "../components/DiagnosticLogPanel";
@@ -35,9 +35,12 @@ import {
   SESSION_EXPIRED_MOBILE_HINT,
   SessionSetupModal,
 } from "../components/SessionSetupModal";
+import { FloppydataProxyPanel } from "../components/FloppydataProxyPanel";
 import { InstagramBrowserPanel } from "../components/InstagramBrowserPanel";
 import { StatusBadge } from "../components/StatusBadge";
 import { useAuth } from "../context/AuthContext";
+
+type AccountsMainTab = "accounts" | "proxies" | "floppydata";
 import { useToast } from "../context/ToastContext";
 import { usePollWhenVisible } from "../hooks/usePollWhenVisible";
 import { useAssistantMutate } from "../lib/assistantMutate";
@@ -169,6 +172,9 @@ export function Accounts() {
     const raw = searchParams.get("proxy") || "";
     return raw === "bad" || raw === "ok" ? raw : "";
   })();
+  const [mainTab, setMainTab] = useState<AccountsMainTab>(() =>
+    proxyFromUrl ? "proxies" : "accounts"
+  );
   const download = searchParams.get("download");
   const downloadFormat = searchParams.get("format") === "txt" ? "txt" : "json";
 
@@ -434,17 +440,52 @@ export function Accounts() {
           description="Аккаунты Instagram, YouTube и TikTok и их прокси."
         />
         <div className="flex items-center gap-2">
-          <button className="btn-ghost" onClick={() => setOpenProxy(true)}>
-            <Server size={16} />
-            <span>Добавить прокси</span>
-          </button>
-          <button className="btn-primary" onClick={() => setOpenAccount(true)}>
-            <Plus size={16} />
-            <span>Добавить аккаунт</span>
-          </button>
+          {mainTab === "proxies" ? (
+            <button className="btn-ghost" onClick={() => setOpenProxy(true)}>
+              <Server size={16} />
+              <span>Добавить прокси</span>
+            </button>
+          ) : null}
+          {mainTab === "accounts" ? (
+            <button className="btn-primary" onClick={() => setOpenAccount(true)}>
+              <Plus size={16} />
+              <span>Добавить аккаунт</span>
+            </button>
+          ) : null}
         </div>
       </div>
 
+      <div
+        className="flex flex-wrap items-center gap-1 border-b border-slate-800 pb-1"
+        role="tablist"
+        aria-label="Разделы аккаунтов"
+      >
+        {(
+          [
+            ["accounts", "Аккаунты"],
+            ["proxies", "Прокси"],
+            ["floppydata", "Floppydata прокси"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={mainTab === id}
+            data-testid={`accounts-tab-${id}`}
+            className={
+              mainTab === id
+                ? "rounded-t-lg bg-slate-900 px-3 py-1.5 text-xs text-slate-100 ring-1 ring-slate-700/80"
+                : "rounded-t-lg px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-900/60 hover:text-slate-300"
+            }
+            onClick={() => setMainTab(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {mainTab === "proxies" ? (
       <Card
         id="proxies-card"
         title="Прокси"
@@ -608,12 +649,21 @@ export function Accounts() {
                             setProxies((arr) =>
                               arr.map((x) => (x.id === updated.id ? updated : x))
                             );
-                            push(
-                              `Прокси ${p.label}: ${updated.is_healthy ? "работает" : "недоступен"}`,
-                              updated.is_healthy ? "success" : "error"
-                            );
+                            const detail = updated.check_detail?.trim();
+                            if (updated.is_healthy && !detail) {
+                              push(`Прокси ${p.label}: работает`, "success");
+                            } else if (updated.is_healthy && detail) {
+                              push(`Прокси ${p.label}: работает · ${detail}`, "success");
+                            } else {
+                              push(
+                                detail
+                                  ? `Прокси ${p.label}: ${detail}`
+                                  : `Прокси ${p.label}: недоступен`,
+                                "error"
+                              );
+                            }
                           } catch (err) {
-                            push((err as Error).message, "error");
+                            push(formatApiError(err), "error");
                           }
                         }}
                       >
@@ -628,7 +678,26 @@ export function Accounts() {
           </div>
         )}
       </Card>
+      ) : null}
 
+      {mainTab === "floppydata" ? (
+        <div className="card p-5">
+          <FloppydataProxyPanel
+            onImported={(imported) => {
+              setProxies((arr) => {
+                const byId = new Map(arr.map((p) => [p.id, p]));
+                for (const p of imported) byId.set(p.id, p);
+                return Array.from(byId.values()).sort((a, b) =>
+                  a.label.localeCompare(b.label)
+                );
+              });
+              setFlashProxyIds(imported.map((p) => p.id));
+            }}
+          />
+        </div>
+      ) : null}
+
+      {mainTab === "accounts" ? (
       <Card
         title="Аккаунты"
         description={`${accounts.length} настроено`}
@@ -954,6 +1023,7 @@ export function Accounts() {
           </div>
         )}
       </Card>
+      ) : null}
 
       <AddAccountModal
         open={openAccount}
@@ -2599,8 +2669,13 @@ function AssignProxyModal({
     try {
       const updated = await api.proxies.check(proxyLabel);
       setTestResult(updated);
+      if (!updated.is_healthy) {
+        push(updated.check_detail?.trim() || "Прокси недоступен", "error");
+      } else if (updated.check_detail?.trim()) {
+        push(updated.check_detail.trim(), "info");
+      }
     } catch (err) {
-      push((err as Error).message, "error");
+      push(formatApiError(err), "error");
     } finally {
       setTesting(false);
     }
@@ -2614,11 +2689,17 @@ function AssignProxyModal({
       const updated = await api.proxies.check(proxyLabel);
       setTestResult(updated);
       if (!updated.is_healthy) {
-        push("Прокси недоступен — не сохранён", "error");
+        push(
+          `${updated.check_detail?.trim() || "Прокси недоступен"} — не сохранён`,
+          "error"
+        );
         return;
       }
       if (updated.instagram_reachable === false) {
-        push("Instagram недоступен через прокси — не сохранён", "error");
+        push(
+          `${updated.check_detail?.trim() || "Instagram недоступен через прокси"} — не сохранён`,
+          "error"
+        );
         return;
       }
       const payload: AccountProxyUpdate = { proxy_label: proxyLabel };

@@ -237,7 +237,7 @@ def test_disable_blocks_proxy_and_mcp(auth_client):
         headers={"Authorization": f"Bearer {key}"},
     )
     assert blocked.status_code == 503
-    assert "выключен" in blocked.json()["detail"]
+    assert "выключен" in blocked.json()["detail"].lower()
 
     mcp_blocked = auth_client.post(
         "/mcp",

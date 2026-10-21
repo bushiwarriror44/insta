@@ -165,24 +165,26 @@ def require_llm_gateway(
     """Bearer must match the dedicated LLM gateway key (never admin/operator)."""
     from app.panel.settings_store import ensure_llm_gateway_token, llm_gateway_is_enabled
 
+    from app.services.llm_gateway_errors import LLM_BAD_KEY, LLM_DISABLED, LLM_MISSING_KEY
+
     provided = _extract_bearer(authorization)
     if not provided:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Требуется Authorization Bearer с ключом LLM-шлюза",
+            detail=LLM_MISSING_KEY,
             headers={"WWW-Authenticate": "Bearer"},
         )
     expected = ensure_llm_gateway_token(db)
     if not hmac.compare_digest(provided, expected):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Неверный ключ LLM-шлюза",
+            detail=LLM_BAD_KEY,
             headers={"WWW-Authenticate": "Bearer"},
         )
     if not llm_gateway_is_enabled(db):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="LLM-шлюз выключен",
+            detail=LLM_DISABLED,
         )
     return provided
 

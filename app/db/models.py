@@ -321,6 +321,7 @@ class PanelSettings(Base):
     admin_notes: Mapped[str] = mapped_column(Text, default="")
     llm_gateway_token: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     llm_gateway_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    floppydata_api_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )

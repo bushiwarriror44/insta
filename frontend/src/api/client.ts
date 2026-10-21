@@ -790,6 +790,28 @@ export const api = {
       }),
   },
 
+  floppydata: {
+    status: () => request<import("./types").FloppydataStatusOut>("/api/floppydata/status"),
+    setApiKey: (apiKey: string) =>
+      request<import("./types").FloppydataStatusOut>("/api/floppydata/api-key", {
+        method: "PUT",
+        body: { api_key: apiKey },
+      }),
+    locations: (type: import("./types").FloppydataProxyType) =>
+      request<unknown>(`/api/floppydata/locations?type=${encodeURIComponent(type)}`),
+    subusers: () => request<unknown>("/api/floppydata/subusers"),
+    generate: (body: import("./types").FloppydataGenerateIn) =>
+      request<import("./types").FloppydataGenerateOut>("/api/floppydata/generate", {
+        method: "POST",
+        body,
+      }),
+    importProxies: (body: import("./types").FloppydataImportIn) =>
+      request<import("./types").ProxyOut[]>("/api/floppydata/import", {
+        method: "POST",
+        body,
+      }),
+  },
+
   operators: {
     list: () => request<import("./types").PanelOperatorOut[]>("/api/operators"),
     create: (label: string) =>

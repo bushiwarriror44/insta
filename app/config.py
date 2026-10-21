@@ -127,6 +127,8 @@ class Settings(BaseSettings):
     generation_timeout_seconds: float = Field(default=900.0)
     daily_spend_cap_usd: float = Field(default=0.0, ge=0)
     outbound_proxy: str = Field(default="")
+    floppydata_api_key: str = Field(default="")
+    floppydata_base_url: str = Field(default="https://api.floppydata.net")
     media_dir: Path = Field(default=Path("data/videos/source"))
 
     @property

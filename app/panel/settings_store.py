@@ -66,6 +66,7 @@ def get_or_create_panel_settings(db: Session) -> PanelSettings:
         admin_notes="",
         llm_gateway_token=None,
         llm_gateway_enabled=True,
+        floppydata_api_key=None,
     )
     db.add(row)
     db.commit()
@@ -106,6 +107,28 @@ def set_llm_gateway_enabled(db: Session, enabled: bool) -> bool:
     db.commit()
     db.refresh(row)
     return bool(row.llm_gateway_enabled)
+
+
+def resolve_floppydata_api_key(db: Session) -> str:
+    """Env FLOPPYDATA_API_KEY wins; otherwise PanelSettings.floppydata_api_key."""
+    env_key = (settings.floppydata_api_key or "").strip()
+    if env_key:
+        return env_key
+    row = get_or_create_panel_settings(db)
+    return (getattr(row, "floppydata_api_key", None) or "").strip()
+
+
+def set_floppydata_api_key(db: Session, api_key: str) -> str:
+    row = get_or_create_panel_settings(db)
+    cleaned = (api_key or "").strip()
+    row.floppydata_api_key = cleaned or None
+    db.commit()
+    db.refresh(row)
+    return (row.floppydata_api_key or "").strip()
+
+
+def floppydata_key_from_env() -> bool:
+    return bool((settings.floppydata_api_key or "").strip())
 
 
 def auth_is_required(db: Optional[Session] = None) -> bool:

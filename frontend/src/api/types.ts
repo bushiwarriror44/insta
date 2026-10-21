@@ -29,6 +29,7 @@ export interface LlmGatewayActivityOut {
   client_ip: string;
   user_agent: string;
   status: number;
+  detail?: string;
 }
 
 export interface LlmGatewayCredentialsOut {
@@ -74,6 +75,62 @@ export interface ProxyOut {
   accounts_count: number;
   instagram_reachable?: boolean | null;
   geo_mismatch_warning?: boolean;
+  check_detail?: string | null;
+}
+
+export type FloppydataProxyType = "residential" | "mobile" | "datacenter";
+export type FloppydataProtocol = "http" | "https" | "socks5";
+
+export interface FloppydataStatusOut {
+  configured: boolean;
+  key_from_env: boolean;
+  balance?: Record<string, unknown> | null;
+  error?: string | null;
+}
+
+export interface FloppydataGenerateIn {
+  type: FloppydataProxyType;
+  country: string;
+  city?: string | null;
+  state?: string | null;
+  protocol: FloppydataProtocol;
+  rotation: number;
+  udp?: boolean;
+  subuser_id?: number | null;
+  count: number;
+}
+
+export interface FloppydataConnectionOut {
+  connection_string: string;
+  protocol: string;
+  host: string;
+  port: number | null;
+  username: string;
+  password: string;
+}
+
+export interface FloppydataGenerateOut {
+  items: FloppydataConnectionOut[];
+}
+
+export interface FloppydataImportItemIn {
+  label?: string | null;
+  url: string;
+  country?: string | null;
+}
+
+export interface FloppydataImportIn {
+  items: FloppydataImportItemIn[];
+  run_health_check?: boolean;
+}
+
+export interface FloppydataLocationCountry {
+  code?: string;
+  countryCode?: string;
+  name?: string;
+  countryName?: string;
+  cities?: string[];
+  states?: string[];
 }
 
 export interface ProxyIn {

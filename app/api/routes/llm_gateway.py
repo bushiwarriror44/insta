@@ -25,6 +25,7 @@ from app.panel.settings_store import (
 from app.services.gateway_probe import ollama_reachable
 from app.services.http import client as http_client
 from app.services.llm_gateway_activity import list_activity, record_activity
+from app.services.llm_gateway_errors import explain_llm_upstream_error
 
 credentials_router = APIRouter(
     prefix="/api/llm-gateway",
@@ -64,6 +65,7 @@ def _record(
     channel: str,
     path: str,
     status: int,
+    detail: str = "",
 ) -> None:
     record_activity(
         channel=channel,  # type: ignore[arg-type]
@@ -72,6 +74,7 @@ def _record(
         client_ip=_client_ip(request),
         user_agent=request.headers.get("user-agent") or "",
         status=status,
+        detail=detail,
     )
 
 
@@ -144,7 +147,7 @@ def _upstream_url(path: str) -> str:
     return urljoin(base, path.lstrip("/"))
 
 
-async def _forward(request: Request, path: str) -> Response:
+async def _forward(request: Request, path: str) -> tuple[Response, str]:
     url = _upstream_url(path)
     body = await request.body()
     headers = _upstream_headers()
@@ -162,20 +165,36 @@ async def _forward(request: Request, path: str) -> Response:
                 headers=headers,
             )
     except httpx.RequestError as exc:
-        return JSONResponse(
-            status_code=502,
-            content={"error": {"message": f"upstream unreachable: {exc}", "type": "proxy_error"}},
+        message = explain_llm_upstream_error(exc)
+        return (
+            JSONResponse(
+                status_code=502,
+                content={
+                    "error": {
+                        "message": message,
+                        "type": "proxy_error",
+                        "code": "upstream_unreachable",
+                    }
+                },
+            ),
+            message,
         )
 
     excluded = {"content-encoding", "transfer-encoding", "content-length", "connection"}
     out_headers = {
         k: v for k, v in upstream.headers.items() if k.lower() not in excluded
     }
-    return Response(
-        content=upstream.content,
-        status_code=upstream.status_code,
-        headers=out_headers,
-        media_type=upstream.headers.get("content-type"),
+    detail = ""
+    if upstream.status_code >= 400:
+        detail = f"Модель ответила HTTP {upstream.status_code}"
+    return (
+        Response(
+            content=upstream.content,
+            status_code=upstream.status_code,
+            headers=out_headers,
+            media_type=upstream.headers.get("content-type"),
+        ),
+        detail,
     )
 
 
@@ -189,8 +208,14 @@ async def openai_proxy(
     request: Request,
     _key: str = LlmGatewayDep,
 ) -> Response:
-    response = await _forward(request, path)
-    _record(request, channel="llm", path=f"/llm/v1/{path}", status=response.status_code)
+    response, detail = await _forward(request, path)
+    _record(
+        request,
+        channel="llm",
+        path=f"/llm/v1/{path}",
+        status=response.status_code,
+        detail=detail,
+    )
     return response
 
 
@@ -201,10 +226,13 @@ def _chat_completion(messages: list[dict[str, str]]) -> dict[str, Any]:
         "messages": messages,
         "stream": False,
     }
-    with http_client(settings, timeout=settings.agent_timeout_seconds) as client:
-        response = client.post(url, json=payload, headers=_upstream_headers())
+    try:
+        with http_client(settings, timeout=settings.agent_timeout_seconds) as client:
+            response = client.post(url, json=payload, headers=_upstream_headers())
+    except httpx.RequestError as exc:
+        raise RuntimeError(explain_llm_upstream_error(exc)) from exc
     if response.status_code >= 400:
-        raise RuntimeError(f"upstream {response.status_code}: {response.text[:300]}")
+        raise RuntimeError(f"Модель ответила HTTP {response.status_code}")
     return response.json()
 
 

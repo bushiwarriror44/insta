@@ -35,12 +35,14 @@ def _to_proxy_out(
     *,
     accounts_count: int = 0,
     snapshot: HealthSnapshot | None = None,
+    check_detail: str | None = None,
 ) -> ProxyOut:
     data = ProxyOut.model_validate(proxy).model_dump()
     data["accounts_count"] = accounts_count
     data["geo_mismatch_warning"] = _geo_mismatch(proxy, snapshot)
     if snapshot is not None:
         data["instagram_reachable"] = snapshot.instagram_reachable
+    data["check_detail"] = check_detail
     return ProxyOut.model_validate(data)
 
 
@@ -61,13 +63,19 @@ def create_proxy(payload: ProxyIn, db: Session = Depends(get_db)) -> ProxyOut:
         timezone_name=payload.timezone,
         notes=payload.notes,
     )
+    check_detail: str | None = None
     if not payload.skip_health_check:
-        _ok, snapshot, _err = health_check_record(db, proxy)
+        _ok, snapshot, check_detail = health_check_record(db, proxy)
         db.refresh(proxy)
     else:
         snapshot = None
     counts = _proxy_account_counts(db)
-    return _to_proxy_out(proxy, accounts_count=counts.get(proxy.id, 0), snapshot=snapshot)
+    return _to_proxy_out(
+        proxy,
+        accounts_count=counts.get(proxy.id, 0),
+        snapshot=snapshot,
+        check_detail=check_detail,
+    )
 
 
 @router.put("/{label}", response_model=ProxyOut)
@@ -84,11 +92,17 @@ def update_proxy(label: str, payload: ProxyUpdate, db: Session = Depends(get_db)
         notes=payload.notes,
     )
     snapshot = None
+    check_detail: str | None = None
     if not payload.skip_health_check:
-        _ok, snapshot, _err = health_check_record(db, proxy)
+        _ok, snapshot, check_detail = health_check_record(db, proxy)
         db.refresh(proxy)
     counts = _proxy_account_counts(db)
-    return _to_proxy_out(proxy, accounts_count=counts.get(proxy.id, 0), snapshot=snapshot)
+    return _to_proxy_out(
+        proxy,
+        accounts_count=counts.get(proxy.id, 0),
+        snapshot=snapshot,
+        check_detail=check_detail,
+    )
 
 
 @router.delete("/{label}")
@@ -112,7 +126,12 @@ def check_proxy(label: str, db: Session = Depends(get_db)) -> ProxyOut:
     proxy = db.scalar(select(Proxy).where(Proxy.label == label))
     if proxy is None:
         raise HTTPException(status_code=404, detail=f"Прокси «{label}» не найден")
-    _ok, snapshot, _err = health_check_record(db, proxy)
+    _ok, snapshot, check_detail = health_check_record(db, proxy)
     db.refresh(proxy)
     counts = _proxy_account_counts(db)
-    return _to_proxy_out(proxy, accounts_count=counts.get(proxy.id, 0), snapshot=snapshot)
+    return _to_proxy_out(
+        proxy,
+        accounts_count=counts.get(proxy.id, 0),
+        snapshot=snapshot,
+        check_detail=check_detail,
+    )

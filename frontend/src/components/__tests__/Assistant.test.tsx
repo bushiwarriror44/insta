@@ -965,7 +965,8 @@ describe("Assistant", () => {
           path: "/llm/v1/models",
           client_ip: "127.0.0.1",
           user_agent: "cursor",
-          status: 200,
+          status: 502,
+          detail: "Не удалось достучаться до модели (AGENT_BASE_URL).",
         },
       ],
     });
@@ -974,6 +975,7 @@ describe("Assistant", () => {
     await user.click(await screen.findByTestId("assistant-dock-tab-api"));
     expect(await screen.findByTestId("assistant-gateway-recent")).toBeInTheDocument();
     expect(screen.getByText(/\/llm\/v1\/models/)).toBeInTheDocument();
+    expect(screen.getByText(/AGENT_BASE_URL/)).toBeInTheDocument();
 
     await user.click(screen.getByLabelText("Шлюз включён"));
     await waitFor(() => expect(apiMock.llmGateway.setEnabled).toHaveBeenCalledWith(false));

@@ -22,6 +22,7 @@ class LlmGatewayActivityEvent:
     client_ip: str
     user_agent: str
     status: int
+    detail: str = ""
 
 
 _events: deque[LlmGatewayActivityEvent] = deque(maxlen=_MAX)
@@ -40,6 +41,7 @@ def record_activity(
     client_ip: str,
     user_agent: str,
     status: int,
+    detail: str = "",
 ) -> None:
     event = LlmGatewayActivityEvent(
         at=datetime.now(timezone.utc).isoformat(),
@@ -49,6 +51,7 @@ def record_activity(
         client_ip=(client_ip or "")[:64],
         user_agent=(user_agent or "")[:120],
         status=int(status),
+        detail=(detail or "").replace("\n", " ")[:160],
     )
     with _lock:
         _events.appendleft(event)

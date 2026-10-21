@@ -44,6 +44,43 @@ class ProxyError(Exception):
     pass
 
 
+def explain_proxy_failure(exc: BaseException, *, masked_url: str) -> str:
+    """Human-readable Russian reason why a proxy health check failed."""
+    if isinstance(exc, ProxyError):
+        return str(exc)
+    if isinstance(exc, (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout)):
+        return f"Прокси {masked_url}: таймаут соединения. Проверьте URL и доступность хоста."
+    if isinstance(exc, httpx.ProxyError):
+        text = str(exc).lower()
+        if "407" in text or "authentication" in text or "auth" in text:
+            return f"Прокси {masked_url}: отказ авторизации (логин/пароль)."
+        return f"Прокси {masked_url}: ошибка протокола прокси."
+    if isinstance(exc, httpx.ConnectError):
+        return f"Прокси {masked_url}: не удалось подключиться (хост недоступен или порт закрыт)."
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code if exc.response is not None else "?"
+        if code == 407:
+            return f"Прокси {masked_url}: отказ авторизации (HTTP 407)."
+        return f"Прокси {masked_url}: HTTP {code} при проверке."
+    text = str(exc).replace("\n", " ").lower()
+    if "407" in text or "proxy authentication" in text:
+        return f"Прокси {masked_url}: отказ авторизации (логин/пароль)."
+    if "timed out" in text or "timeout" in text:
+        return f"Прокси {masked_url}: таймаут соединения. Проверьте URL и доступность хоста."
+    if "connection refused" in text or "connect call failed" in text:
+        return f"Прокси {masked_url}: не удалось подключиться (хост недоступен или порт закрыт)."
+    if "ssl" in text or "certificate" in text:
+        return f"Прокси {masked_url}: ошибка TLS/SSL."
+    if "name or service not known" in text or "getaddrinfo" in text or "nodename" in text:
+        return f"Прокси {masked_url}: DNS не резолвит хост. Проверьте адрес."
+    short = str(exc).replace("\n", " ").replace(masked_url, masked_url)[:100]
+    # Strip obvious exception class noise if present
+    for prefix in ("ConnectError(", "ConnectTimeout(", "ProxyError(", "ReadTimeout("):
+        if short.startswith(prefix) and short.endswith(")"):
+            short = short[len(prefix) : -1]
+    return f"Прокси {masked_url} недоступен: {short}" if short else f"Прокси {masked_url} недоступен."
+
+
 class HealthCheckScope(str, Enum):
     """How aggressively :func:`health_check_cached` hits the network."""
 
@@ -175,8 +212,7 @@ def health_check(proxy_url: str, timeout: int | None = None) -> dict[str, str]:
                 data = {"ip": response.text.strip()}
             return data
     except (httpx.HTTPError, OSError) as exc:
-        detail = str(exc).replace(proxy_url, _mask(proxy_url))
-        raise ProxyError(f"Прокси {_mask(proxy_url)} недоступен: {detail}") from exc
+        raise ProxyError(explain_proxy_failure(exc, masked_url=_mask(proxy_url))) from exc
 
 
 def reach_instagram(proxy_url: str, timeout: int | None = None) -> bool:
@@ -201,11 +237,15 @@ def reach_instagram(proxy_url: str, timeout: int | None = None) -> bool:
             if resp.status_code < 500:
                 return True
             raise ProxyError(
-                f"Прокси {_mask(proxy_url)} не достучался до Instagram: http {resp.status_code}"
+                f"Прокси {_mask(proxy_url)}: Instagram ответил HTTP {resp.status_code}."
             )
+    except ProxyError:
+        raise
     except (httpx.HTTPError, OSError) as exc:
+        reason = explain_proxy_failure(exc, masked_url=_mask(proxy_url))
+        # Drop the leading "Прокси …:" prefix if already present — keep IG-specific lead-in.
         raise ProxyError(
-            f"Прокси {_mask(proxy_url)} не достучался до Instagram: {exc}"
+            f"Прокси {_mask(proxy_url)}: Instagram недоступен. {reason.split(':', 1)[-1].strip()}"
         ) from exc
 
 
@@ -411,9 +451,9 @@ def health_check_record(db: Session, proxy: Proxy) -> tuple[bool, HealthSnapshot
         instagram_login=snapshot.instagram_login_reachable,
     )
     if not snapshot.instagram_reachable:
-        return True, snapshot, "Instagram unreachable through proxy"
+        return True, snapshot, "Instagram недоступен через прокси"
     if not snapshot.instagram_login_reachable:
-        return True, snapshot, "Instagram login page unreachable through proxy"
+        return True, snapshot, "Страница входа Instagram недоступна через прокси"
     return True, snapshot, None
 
 
