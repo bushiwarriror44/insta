@@ -573,11 +573,13 @@ export function Accounts() {
                   className={`hover:bg-slate-900/40 ${flashProxyIds.includes(p.id) ? "flash-row" : ""}`}
                 >
                   <td className="font-medium">
-                    <div className="truncate" title={p.label}>
-                      {p.label}
-                    </div>
-                    <div className="text-[11px] text-slate-500 tabular-nums">
-                      {p.accounts_count ?? 0} акк.
+                    <div className="cell-stack">
+                      <div className="truncate" title={p.label}>
+                        {p.label}
+                      </div>
+                      <div className="text-[11px] tabular-nums text-slate-500">
+                        {p.accounts_count ?? 0} акк.
+                      </div>
                     </div>
                   </td>
                   <td className="hidden min-w-0 truncate font-mono text-[11px] text-slate-400 md:table-cell" title={p.url}>
@@ -591,32 +593,34 @@ export function Accounts() {
                         : undefined
                     }
                   >
-                    <div className="truncate">
-                      <span className="inline-flex items-center gap-1">
-                        <CountryFlag code={p.country} />
-                        {p.country ?? "—"}
-                        {p.timezone ? ` · ${p.timezone}` : ""}
+                    <div className="cell-stack">
+                      <div className="truncate">
+                        <span className="inline-flex items-center gap-1">
+                          <CountryFlag code={p.country} />
+                          {p.country ?? "—"}
+                          {p.timezone ? ` · ${p.timezone}` : ""}
+                        </span>
+                      </div>
+                      <div className="truncate font-mono text-[11px] tabular-nums text-slate-300">
+                        {p.last_known_ip ?? "—"}
+                      </div>
+                      <span
+                        className={
+                          p.geo_mismatch_warning
+                            ? "inline-flex items-center gap-1 text-amber-300"
+                            : "inline-flex items-center gap-1 text-slate-400"
+                        }
+                      >
+                        <CountryFlag code={p.last_geo_country} />
+                        {p.last_geo_country ?? "—"}
                       </span>
                     </div>
-                    <div className="truncate font-mono text-[11px] text-slate-300 tabular-nums">
-                      {p.last_known_ip ?? "—"}
-                    </div>
-                    <span
-                      className={
-                        p.geo_mismatch_warning
-                          ? "inline-flex items-center gap-1 text-amber-300"
-                          : "inline-flex items-center gap-1 text-slate-400"
-                      }
-                    >
-                      <CountryFlag code={p.last_geo_country} />
-                      {p.last_geo_country ?? "—"}
-                    </span>
                   </td>
                   <td>
                     <StatusBadge value={p.is_healthy ? "ok" : "bad"} />
                   </td>
                   <td className="text-right">
-                    <div className="flex items-center justify-end gap-1 flex-wrap">
+                    <div className="cell-actions">
                       <RowIconButton
                         label={`Изменить прокси ${p.label}`}
                         onClick={() => setEditingProxy(p)}
@@ -768,11 +772,11 @@ export function Accounts() {
           <div className="table-scroll">
           <table className="table-base">
             <colgroup>
+              <col className="w-[28%]" />
+              <col className="w-[12%]" />
+              <col className="w-[20%]" />
               <col className="w-[22%]" />
-              <col className="w-[14%]" />
               <col className="w-[18%]" />
-              <col className="w-[24%]" />
-              <col className="w-[22%]" />
             </colgroup>
             <thead>
               <tr>
@@ -797,81 +801,85 @@ export function Accounts() {
                     key={a.id}
                     className={`hover:bg-slate-900/40 ${flashAccountIds.includes(a.id) ? "flash-row" : ""}`}
                   >
-                    <td className="font-medium min-w-0">
-                      <div className="truncate" title={`@${a.username}`}>
-                        @{a.username}
-                        {a.has_totp ? (
-                          <span
-                            className="ml-1 text-[10px] uppercase tracking-wide text-emerald-400"
-                            title="Настроен секрет TOTP"
-                          >
-                            2FA
-                          </span>
-                        ) : null}
-                        {isInstagram(a) && a.has_session_id ? (
-                          <span
-                            className="ml-1 text-[10px] uppercase tracking-wide text-brand-300"
-                            title="Сессия сохранена — используется для автопостинга"
-                          >
-                            Сессия
-                          </span>
-                        ) : null}
-                        {a.session_file_exists ? (
-                          <span
-                            className="ml-1 text-[10px] uppercase tracking-wide text-sky-300"
-                            title={
-                              a.session_file_updated_at
-                                ? `Cookies на диске · ${new Date(a.session_file_updated_at).toLocaleString()}`
-                                : "Cookies сохранены на диске"
-                            }
-                          >
-                            Cookies
-                          </span>
-                        ) : null}
-                      </div>
-                      {a.caption_profile ? (
-                        <div className="capitalize text-[11px] text-slate-400 truncate">
-                          {a.caption_profile}
+                    <td className="min-w-0 font-medium">
+                      <div className="cell-stack">
+                        <div className="truncate" title={`@${a.username}`}>
+                          @{a.username}
+                          {a.has_totp ? (
+                            <span
+                              className="ml-1 text-[10px] uppercase tracking-wide text-emerald-400"
+                              title="Настроен секрет TOTP"
+                            >
+                              2FA
+                            </span>
+                          ) : null}
+                          {isInstagram(a) && a.has_session_id ? (
+                            <span
+                              className="ml-1 text-[10px] uppercase tracking-wide text-brand-300"
+                              title="Сессия сохранена — используется для автопостинга"
+                            >
+                              Сессия
+                            </span>
+                          ) : null}
+                          {a.session_file_exists ? (
+                            <span
+                              className="ml-1 text-[10px] uppercase tracking-wide text-sky-300"
+                              title={
+                                a.session_file_updated_at
+                                  ? `Cookies на диске · ${new Date(a.session_file_updated_at).toLocaleString()}`
+                                  : "Cookies сохранены на диске"
+                              }
+                            >
+                              Cookies
+                            </span>
+                          ) : null}
                         </div>
-                      ) : null}
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                        <a
-                          href={
-                            a.platform === "youtube"
-                              ? `https://www.youtube.com/@${encodeURIComponent(a.username)}`
-                              : a.platform === "tiktok"
-                                ? `https://www.tiktok.com/@${encodeURIComponent(a.username)}`
-                                : `https://www.instagram.com/${encodeURIComponent(a.username)}/`
-                          }
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-[11px] font-normal text-brand-300 hover:text-brand-200"
-                        >
-                          <ExternalLink size={12} />
-                          Профиль
-                        </a>
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1 text-[11px] font-normal text-sky-300 hover:text-sky-200 disabled:opacity-40 disabled:pointer-events-none"
-                          disabled={!a.proxy_label}
-                          title={
-                            a.proxy_label
-                              ? "Открыть браузер через прокси аккаунта"
-                              : "Сначала назначьте прокси"
-                          }
-                          onClick={() => setBrowserAccount(a)}
-                        >
-                          <MonitorPlay size={12} />
-                          Браузер
-                        </button>
+                        {a.caption_profile ? (
+                          <div className="truncate text-[11px] capitalize text-slate-400">
+                            {a.caption_profile}
+                          </div>
+                        ) : null}
+                        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5">
+                          <a
+                            href={
+                              a.platform === "youtube"
+                                ? `https://www.youtube.com/@${encodeURIComponent(a.username)}`
+                                : a.platform === "tiktok"
+                                  ? `https://www.tiktok.com/@${encodeURIComponent(a.username)}`
+                                  : `https://www.instagram.com/${encodeURIComponent(a.username)}/`
+                            }
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-[11px] font-normal text-brand-300 hover:text-brand-200"
+                          >
+                            <ExternalLink size={12} />
+                            Профиль
+                          </a>
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 text-[11px] font-normal text-sky-300 hover:text-sky-200 disabled:pointer-events-none disabled:opacity-40"
+                            disabled={!a.proxy_label}
+                            title={
+                              a.proxy_label
+                                ? "Открыть браузер через прокси аккаунта"
+                                : "Сначала назначьте прокси"
+                            }
+                            onClick={() => setBrowserAccount(a)}
+                          >
+                            <MonitorPlay size={12} />
+                            Браузер
+                          </button>
+                        </div>
                       </div>
                     </td>
                     <td className="hidden min-w-0 sm:table-cell">
-                      <div className="flex items-center gap-1.5 truncate text-[11px] text-slate-300">
-                        <PlatformIcon platform={a.platform} size={14} />
-                        <span>{platformLabel(a.platform)}</span>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="inline-flex min-w-0 items-center gap-1.5 truncate text-[11px] text-slate-300">
+                          <PlatformIcon platform={a.platform} size={14} />
+                          <span className="truncate">{platformLabel(a.platform)}</span>
+                        </span>
+                        <StatusBadge value={a.status} />
                       </div>
-                      <StatusBadge value={a.status} />
                     </td>
                     <td
                       className="hidden min-w-0 text-slate-400 md:table-cell"
@@ -883,63 +891,74 @@ export function Accounts() {
                           : (a.proxy_label ?? "")
                       }
                     >
-                      <div className="flex items-center gap-1 truncate">
-                        <CountryFlag code={a.proxy_country} />
-                        <span className="truncate">{a.proxy_label ?? "—"}</span>
-                        {a.proxy_is_healthy != null ? (
-                          <StatusBadge value={a.proxy_is_healthy ? "ok" : "bad"} />
-                        ) : null}
-                      </div>
-                      {a.proxy_geo_country ? (
-                        <span
-                          className={
-                            a.proxy_country &&
-                            a.proxy_country.toUpperCase() !== a.proxy_geo_country.toUpperCase()
-                              ? "inline-flex items-center gap-1 text-amber-300"
-                              : "inline-flex items-center gap-1 text-slate-400"
-                          }
-                        >
-                          <CountryFlag code={a.proxy_geo_country} />
-                          {a.proxy_geo_country}
-                        </span>
-                      ) : null}
-                      <div className="truncate text-[11px]" title={a.timezone}>
-                        {a.timezone}
+                      <div className="cell-stack">
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <CountryFlag code={a.proxy_country} />
+                          <span className="min-w-0 truncate">{a.proxy_label ?? "—"}</span>
+                          {a.proxy_is_healthy != null ? (
+                            <StatusBadge value={a.proxy_is_healthy ? "ok" : "bad"} />
+                          ) : null}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
+                          {a.proxy_geo_country ? (
+                            <span
+                              className={
+                                a.proxy_country &&
+                                a.proxy_country.toUpperCase() !== a.proxy_geo_country.toUpperCase()
+                                  ? "inline-flex items-center gap-1 text-amber-300"
+                                  : "inline-flex items-center gap-1 text-slate-400"
+                              }
+                            >
+                              <CountryFlag code={a.proxy_geo_country} />
+                              {a.proxy_geo_country}
+                            </span>
+                          ) : null}
+                          <span className="truncate text-slate-500" title={a.timezone}>
+                            {a.timezone}
+                          </span>
+                        </div>
                       </div>
                     </td>
                     <td className="hidden min-w-0 tabular-nums text-slate-300 lg:table-cell">
-                      <div>
-                        {a.daily_post_cap} · {a.min_gap_hours}h
-                        <span className="ml-1 text-emerald-300">{a.posts_today}</span>
-                        <span className="text-slate-500">/</span>
-                        <span className={a.failures_today ? "text-rose-300" : "text-slate-500"}>
-                          {a.failures_today}
-                        </span>
+                      <div className="cell-stack">
+                        <div>
+                          {a.daily_post_cap} · {a.min_gap_hours}h
+                          <span className="ml-1 text-emerald-300">{a.posts_today}</span>
+                          <span className="text-slate-500">/</span>
+                          <span className={a.failures_today ? "text-rose-300" : "text-slate-500"}>
+                            {a.failures_today}
+                          </span>
+                        </div>
+                        <div className="truncate text-[11px] text-slate-400" title={lastPublish}>
+                          {lastPublish}
+                        </div>
+                        {a.cooldown_until ? (
+                          <div className="truncate text-[11px] text-orange-300" title={cooldown}>
+                            {cooldown}
+                          </div>
+                        ) : null}
+                        <label className="inline-flex items-center gap-1.5 text-[10px] text-slate-500">
+                          <input
+                            type="checkbox"
+                            className="rounded border-slate-600"
+                            checked={Boolean(a.hold_for_review)}
+                            onChange={async (e) => {
+                              try {
+                                await api.factory.updateAgentSettings(a.id, {
+                                  hold_for_review: e.target.checked,
+                                });
+                                await reload();
+                              } catch (err) {
+                                push((err as Error).message, "error");
+                              }
+                            }}
+                          />
+                          проверка
+                        </label>
                       </div>
-                      <div className="truncate text-[11px] text-slate-400" title={lastPublish}>
-                        {lastPublish}
-                      </div>
-                      <div className="truncate text-[11px] text-orange-300" title={cooldown}>
-                        {cooldown}
-                      </div>
-                      <label className="mt-0.5 flex items-center gap-1 text-[10px] text-slate-500">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(a.hold_for_review)}
-                          onChange={async (e) => {
-                            try {
-                              await api.factory.updateAgentSettings(a.id, { hold_for_review: e.target.checked });
-                              await reload();
-                            } catch (err) {
-                              push((err as Error).message, "error");
-                            }
-                          }}
-                        />
-                        проверка
-                      </label>
                     </td>
                     <td className="text-right">
-                      <div className="flex items-center justify-end gap-1 flex-wrap">
+                      <div className="cell-actions">
                         <RowIconButton
                           label={`Подключение для ${a.username}`}
                           disabled={!a.proxy_label}
