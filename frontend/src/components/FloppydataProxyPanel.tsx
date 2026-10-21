@@ -294,7 +294,11 @@ export function FloppydataProxyPanel({
             type="button"
             className="btn-ghost text-xs"
             disabled={busy}
-            onClick={() => void loadStatus().then(() => status?.configured && loadMeta(proxyType))}
+            onClick={() =>
+              void loadStatus().then((next) => {
+                if (next.configured) return loadMeta(proxyType);
+              })
+            }
           >
             <RefreshCw className="mr-1 inline h-3.5 w-3.5" />
             Обновить
