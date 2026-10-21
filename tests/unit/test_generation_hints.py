@@ -32,6 +32,19 @@ def test_enrich_keeps_wan_traceback_without_url_hint():
     assert LOCAL_RENDER_HINT_MARKER not in msg
 
 
+def test_enrich_keeps_flash_attn_assertion_without_url_hint():
+    # generate_server keeps only the tail of stderr — often without the word Traceback.
+    raw = (
+        "local: File \"/opt/wan/wan/modules/attention.py\", line 112, in flash_attention\n"
+        "assert FLASH_ATTN_2_AVAILABLE\n"
+        "AssertionError"
+    )
+    msg = enrich_generation_error(raw, backend="local")
+    assert msg == raw
+    assert "WAN_BASE_URL" not in msg
+    assert LOCAL_RENDER_HINT_MARKER not in msg
+
+
 def test_enrich_empty_message_returns_hint_only():
     msg = enrich_generation_error("", backend="auto")
     assert msg.startswith(LOCAL_RENDER_HINT_MARKER)

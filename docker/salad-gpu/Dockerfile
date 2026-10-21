@@ -40,7 +40,10 @@ RUN --mount=type=cache,id=ollama-qwen3-32b,target=/ollama-cache \
       cp -a /ollama-cache/models /opt/ollama/models'
 
 # dashscope is imported by Wan generate.py even when prompt extend is off.
+# flash-attn is not installed on Salad; route model.py through attention() (SDPA).
 RUN git clone --depth 1 https://github.com/Wan-Video/Wan2.1.git /opt/wan \
+ && sed -i 's/from \.attention import flash_attention/from .attention import attention as flash_attention/' \
+      /opt/wan/wan/modules/model.py \
  && pip install --no-cache-dir \
       "huggingface_hub[cli]" fastapi "uvicorn[standard]" \
       opencv-python-headless easydict ftfy imageio imageio-ffmpeg \

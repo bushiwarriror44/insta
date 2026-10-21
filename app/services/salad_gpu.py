@@ -43,6 +43,7 @@ WAN_GATEWAY_PORT = 8080
 WARMUP_MARKER = "gpu-warmup"
 IPV6_MARKER = "gateway-ipv6"
 WAN_DEPS_MARKER = "wan-dashscope"
+WAN_SDPA_MARKER = "wan-sdpa-attn"
 SEND_START = "Отправляю Start в Salad…"
 LAUNCH_STATUS = "Запускаю видеокарту, подождите"
 START_NOT_SENT = "Не удалось отправить Start в Salad, группа осталась остановленной."
@@ -272,6 +273,7 @@ def _warmup_command_stale(settings: Settings, text: str) -> bool:
         WARMUP_MARKER not in text
         or IPV6_MARKER not in text
         or WAN_DEPS_MARKER not in text
+        or WAN_SDPA_MARKER not in text
     ):
         return True
     if patch_configured(settings) and WAN_ASYNC_PATCH_MARKER not in text:
@@ -279,11 +281,22 @@ def _warmup_command_stale(settings: Settings, text: str) -> bool:
     return False
 
 
+def _wan_sdpa_shell() -> str:
+    """Point Wan model.py at attention() (SDPA) when flash-attn is missing."""
+    return (
+        "model=/opt/wan/wan/modules/model.py\n"
+        'if [ -f "$model" ] && ! grep -q "attention as flash_attention" "$model"; then\n'
+        "  sed -i 's/from \\.attention import flash_attention/"
+        "from .attention import attention as flash_attention/' \"$model\"\n"
+        "fi\n"
+    )
+
+
 def warmup_script(model: str, settings: Settings | None = None) -> str:
     """In-container warmup. The public gateway cuts requests at ~100s."""
     settings = settings or get_settings()
     curl_patch = patch_curl_shell(settings)
-    header = f"# {WARMUP_MARKER} {IPV6_MARKER} {WAN_DEPS_MARKER}"
+    header = f"# {WARMUP_MARKER} {IPV6_MARKER} {WAN_DEPS_MARKER} {WAN_SDPA_MARKER}"
     if curl_patch:
         header += f" {WAN_ASYNC_PATCH_MARKER}"
     body = json.dumps(
@@ -312,6 +325,7 @@ def warmup_script(model: str, settings: Settings | None = None) -> str:
         "  sed -i 's/listen 8080 default_server;/listen [::]:8080 default_server ipv6only=off;/' \"$conf\"\n"
         "fi\n"
         f"{install}"
+        f"{_wan_sdpa_shell()}"
         "/opt/gpu/start.sh &\n"
         "spid=$!\n"
         "(\n"

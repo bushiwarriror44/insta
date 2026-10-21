@@ -59,10 +59,47 @@ export function mergeGeneration(
 
 const TERMINAL = new Set(["done", "failed", "dead", "cancelled"]);
 
+export function isTerminalGeneration(status: string): boolean {
+  return TERMINAL.has(status);
+}
+
+export function generationStageLabel(
+  status: string,
+  stage: string,
+  queuePosition?: number | null
+): string {
+  const trimmed = (stage || "").trim();
+  let label = trimmed;
+  if (!label) {
+    if (status === "done") label = "готово";
+    else if (status === "failed" || status === "dead") label = "ошибка";
+    else if (status === "cancelled") label = "отменено";
+    else if (status === "running") label = "в работе…";
+    else label = "в очереди…";
+  }
+  if (queuePosition != null && Number.isFinite(queuePosition)) {
+    label = `${label} · #${queuePosition}`;
+  }
+  return label;
+}
+
+export function GenerationStagePulse() {
+  return (
+    <div
+      className="mt-1 h-1 overflow-hidden rounded-full bg-slate-800"
+      data-testid="generation-stage-pulse"
+      aria-hidden
+    >
+      <div className="h-full w-1/3 animate-pulse rounded-full bg-sky-400" />
+    </div>
+  );
+}
+
 export function RenderProgressCard({ job }: { job: ActiveGeneration }) {
   const done = job.status === "done";
   const failed = ["failed", "dead"].includes(job.status);
-  const stage = job.stage || (done ? "готово" : failed ? "ошибка" : "в очереди…");
+  const stage = generationStageLabel(job.status, job.stage);
+  const live = !isTerminalGeneration(job.status);
 
   return (
     <div
@@ -77,7 +114,7 @@ export function RenderProgressCard({ job }: { job: ActiveGeneration }) {
         {job.backend ? <span className="text-xs text-slate-500">{job.backend}</span> : null}
       </div>
       <p className="text-xs text-slate-400">{stage}</p>
-      {!done && !failed ? (
+      {live ? (
         <div className="h-1.5 overflow-hidden rounded-full bg-slate-800">
           <div className="h-full w-1/3 animate-pulse rounded-full bg-sky-400" />
         </div>
@@ -92,8 +129,4 @@ export function RenderProgressCard({ job }: { job: ActiveGeneration }) {
       ) : null}
     </div>
   );
-}
-
-export function isTerminalGeneration(status: string): boolean {
-  return TERMINAL.has(status);
 }

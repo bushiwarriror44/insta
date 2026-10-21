@@ -14,6 +14,11 @@ import { useAssistantMutate } from "../lib/assistantMutate";
 import { withLocalRenderHint } from "../lib/renderErrors";
 import { retryGenerationOnLocal } from "../lib/pollGeneration";
 import { RenderLocalSwitchModal, type LocalSwitchOffer } from "../components/RenderLocalSwitchModal";
+import {
+  GenerationStagePulse,
+  generationStageLabel,
+  isTerminalGeneration,
+} from "../components/RenderProgressCard";
 import { RenderReferenceField } from "../components/RenderReferenceField";
 import {
   clipboardMediaFile,
@@ -33,6 +38,7 @@ type Gen = {
   last_error: string | null;
   cost_usd: number;
   backend?: string;
+  queue_position?: number | null;
   offer_local_switch?: boolean;
 };
 const LOCAL_OFFER_DISMISS_KEY = "renders:local-offer-dismissed";
@@ -485,7 +491,12 @@ export function Renders() {
                 <td className="truncate" title={g.post_title || g.prompt}>
                   {g.post_title || g.prompt.slice(0, 60)}
                 </td>
-                <td className="truncate">{g.stage}</td>
+                <td className="min-w-[8rem]">
+                  <p className="truncate text-xs text-slate-300" title={generationStageLabel(g.status, g.stage, g.queue_position)}>
+                    {generationStageLabel(g.status, g.stage, g.queue_position)}
+                  </p>
+                  {!isTerminalGeneration(g.status) ? <GenerationStagePulse /> : null}
+                </td>
                 <td
                   className={clsx(
                     "max-w-[200px] truncate text-xs",

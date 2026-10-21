@@ -398,6 +398,22 @@ describe("Renders page", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows a live stage fallback and pulse for a queued generation", async () => {
+    renderRenders();
+    const row = (await screen.findByText("Ridge")).closest("tr") as HTMLElement;
+    expect(within(row).getByText("в очереди…")).toBeInTheDocument();
+    expect(within(row).getByTestId("generation-stage-pulse")).toBeInTheDocument();
+  });
+
+  it("shows queue_position in the stage cell", async () => {
+    apiMock.factory.generations.mockResolvedValue([
+      { ...queuedGen, stage: "в очереди у провайдера", queue_position: 3 },
+    ]);
+    renderRenders();
+    const row = (await screen.findByText("Ridge")).closest("tr") as HTMLElement;
+    expect(within(row).getByText("в очереди у провайдера · #3")).toBeInTheDocument();
+  });
+
   it("hides a stale error while a generation is running", async () => {
     apiMock.factory.generations.mockResolvedValue([
       {

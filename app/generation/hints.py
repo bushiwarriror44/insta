@@ -55,8 +55,15 @@ def enrich_generation_error(message: str, *, backend: str | None = None) -> str:
         return f"{text} — {_WAN_TIMEOUT}"
     if LOCAL_RENDER_HINT_MARKER in text:
         return text
-    # Wan already explained itself (missing package, CUDA). The generic URL hint hides that.
-    if "ModuleNotFoundError" in text or "Traceback" in text:
+    # Wan already explained itself (missing package, CUDA, flash-attn). The generic URL hint hides that.
+    if (
+        "ModuleNotFoundError" in text
+        or "Traceback" in text
+        or "AssertionError" in text
+        or "FLASH_ATTN" in text
+        or "flash_attn" in text
+        or "attention.py" in text
+    ):
         return text
     hint = _LOCAL_CHECK if (backend or "").strip().lower() == "local" else _LOCAL_SWITCH
     if not text:

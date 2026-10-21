@@ -25,7 +25,7 @@ from app.services.salad_gpu import (
 
 HOST = "tabasco.example.salad.cloud"
 ORIGIN = f"https://{HOST}"
-_READY = ("gpu-warmup", "gateway-ipv6", "wan-dashscope")
+_READY = ("gpu-warmup", "gateway-ipv6", "wan-dashscope", "wan-sdpa-attn")
 
 
 def _titles(lines: list) -> list[str]:
@@ -56,7 +56,10 @@ def test_warmup_script_marks_itself_and_names_the_model():
     assert "gpu-warmup" in script
     assert "gateway-ipv6" in script
     assert "wan-dashscope" in script
+    assert "wan-sdpa-attn" in script
     assert "pip install -q dashscope" in script
+    assert "attention as flash_attention" in script
+    assert "/opt/wan/wan/modules/model.py" in script
     assert "[::]:8080" in script
     assert "qwen3:32b" in script
     assert "127.0.0.1:11434" in script

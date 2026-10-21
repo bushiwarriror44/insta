@@ -2642,6 +2642,7 @@ def create_render(
         seed=seed,
         account_id=account_id,
         status=PipelineStatus.queued,
+        stage="в очереди",
         scheduled_at=datetime.now(timezone.utc),
     )
     apply_job_reference_fields(

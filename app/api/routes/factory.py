@@ -49,6 +49,7 @@ def _generation_row(job: GenerationJob) -> dict[str, Any]:
         "status": job.status.value,
         "prompt": job.prompt,
         "stage": job.stage,
+        "queue_position": job.queue_position,
         "post_title": job.post_title,
         "last_error": job.last_error,
         "cost_usd": job.cost_usd,
@@ -450,6 +451,7 @@ def create_generation(payload: GenerationCreate, db: Session = Depends(get_db)) 
         seed=payload.seed,
         account_id=payload.account_id,
         status=PipelineStatus.queued,
+        stage="в очереди",
         scheduled_at=datetime.now(timezone.utc),
     )
     apply_job_reference_fields(

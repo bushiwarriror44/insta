@@ -218,6 +218,13 @@ def test_create_generation_and_join(api_client, db_session, app_env, monkeypatch
     assert body.get("input_mode") == "image_slideshow"
     assert body.get("backend") == "slideshow"
 
+    listed = api_client.get("/api/generations")
+    assert listed.status_code == 200
+    row = next(item for item in listed.json() if item["id"] == body["id"])
+    assert row["stage"] == "в очереди"
+    assert "queue_position" in row
+    assert row["queue_position"] is None
+
     (settings.media_dir / "join-a.mp4").write_bytes(b"x")
     (settings.media_dir / "join-b.mp4").write_bytes(b"x")
     asset_a = MediaAsset(filename="join-a.mp4", kind=AssetKind.video, source=AssetSource.generated)

@@ -4,6 +4,8 @@
 
 Внутри: Ollama `qwen3:32b` (в каталоге Qwen3 нет 20B; 32B — следующий размер после 8B/14B), Wan 2.1 T2V 1.3B, nginx `:8080` (`/v1` и `/api` → Ollama, `/generate` → видео). На 24 GB VRAM чат и ролик по очереди: 32B Q4 занимает ~20 GB, перед Wan панель делает `keep_alive: 0`.
 
+**Attention:** пакет `flash-attn` в образ не ставится (тяжёлые CUDA-wheels на Salad). В Dockerfile и в Command панели (`wan-sdpa-attn`) `model.py` переключается на `attention()` → PyTorch SDPA. Без этого Wan падает с `assert FLASH_ATTN_2_AVAILABLE`. После обновления панели сделайте Stop/Start группы, чтобы применился новый Command (полная пересборка образа нужна только для узлов с нуля).
+
 ## Сборка (Windows, Docker Desktop)
 
 Свободно ~70 ГБ диска (32B тяжелее 8B). Сборка 2–4 часа (качает модель и веса).
@@ -17,15 +19,22 @@ docker push ТВОЙ_ЛОГИН/insta-gpu:chat-wan
 
 На hub.docker.com репозиторий `insta-gpu` сделай **Public**, иначе Salad не скачает без логина.
 
-После правки зависимостей Wan (например `dashscope`) образ нужно собрать и запушить заново, затем Stop/Start группы Salad, чтобы подтянулся новый digest. Панель Utah (`reels-worker`) для этого не пересобирается.
+После правки зависимостей Wan (например `dashscope`) или SDPA-патча в Dockerfile образ нужно собрать и запушить заново, затем Stop/Start группы Salad, чтобы подтянулся новый digest. Панель Utah (`reels-worker`) для этого не пересобирается.
 
 ### Wan без пересборки образа (быстро)
 
-Старый образ на Hub без `dashscope` можно починить **на узле** за пару минут:
+Старый образ на Hub без `dashscope` / без SDPA-патча можно починить **на узле** за пару минут:
 
-1. **Через панель** (после `git pull` и пересборки только `reels-api`): одно сообщение в нижний чат с настроенным Salad — панель обновит Command и выполнит `pip install dashscope` перед `start.sh` (маркер `wan-dashscope` в команде). Реплика перезапустится один раз.
-2. **Вручную в Salad** → Edit → Command: после `set -eu` добавьте строку  
+1. **Через панель** (после `git pull` и пересборки только `reels-api`): одно сообщение в нижний чат с настроенным Salad — панель обновит Command: `pip install dashscope`, SDPA-патч `model.py` (маркеры `wan-dashscope`, `wan-sdpa-attn`) перед `start.sh`. Реплика перезапустится один раз.
+2. **Вручную в Salad** → Edit → Command: после `set -eu` добавьте  
    `python -m pip install -q dashscope`  
+   и при необходимости:
+   ```sh
+   model=/opt/wan/wan/modules/model.py
+   if [ -f "$model" ] && ! grep -q "attention as flash_attention" "$model"; then
+     sed -i 's/from \.attention import flash_attention/from .attention import attention as flash_attention/' "$model"
+   fi
+   ```
    перед `/opt/gpu/start.sh`. Save перезапускает контейнер; качается только пакет (~1–2 мин), не весь образ.
 
 Пересборка `docker build` на ПК по-прежнему нужна для **новых** узлов с нуля, но для уже работающей группы достаточно варианта 1 или 2.

@@ -663,6 +663,7 @@ export const api = {
           status: string;
           prompt: string;
           stage: string;
+          queue_position?: number | null;
           post_title: string;
           last_error: string | null;
           cost_usd: number;
@@ -677,6 +678,7 @@ export const api = {
         status: string;
         prompt: string;
         stage: string;
+        queue_position?: number | null;
         post_title: string;
         last_error: string | null;
         cost_usd: number;
