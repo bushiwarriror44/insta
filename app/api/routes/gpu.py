@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
@@ -24,6 +25,50 @@ def _wan_ok(settings: Settings) -> bool | None:
 
 def _chat_ok(settings: Settings) -> bool:
     return ollama_reachable(settings)
+
+
+def _counts(state: salad_gpu.GroupState) -> str:
+    return (
+        f"работают {state.running_count}, создаются {state.creating_count}, "
+        f"выделяются {state.allocating_count}"
+    )
+
+
+def _elapsed_label(started: datetime | None) -> str:
+    if started is None:
+        return ""
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    total = max(0, int((datetime.now(timezone.utc) - started).total_seconds()))
+    if total < 60:
+        return f"{total} с"
+    return f"{total // 60} мин {total % 60:02d} с"
+
+
+def _connect(
+    state: salad_gpu.GroupState | None,
+    *,
+    chat_ok: bool,
+    started: datetime | None,
+) -> tuple[Literal["idle", "pull", "boot", "gateway", "ready"], str, str, float]:
+    """One shared connect stage. HTTP 200 from Salad is not success."""
+    if state is None or state.status in _DOWN or not state.status:
+        return "idle", "", "", 0.0
+    counts = _counts(state)
+    replica_up = state.status == "running" or state.replica_ready
+    if chat_ok and replica_up:
+        return "ready", "Чат отвечает", counts, 1.0
+    if replica_up:
+        return "gateway", "Узел запущен, жду Ollama", "шлюз не отвечает", 0.8
+    if state.status == "deploying" or state.creating_count > 0:
+        clock = _elapsed_label(started)
+        detail = f"{clock} · {counts}" if clock else counts
+        return "pull", "Качается образ на узел", detail, 0.45
+    if state.allocating_count > 0:
+        return "boot", "Выделяю GPU", counts, 0.6
+    if state.status == "pending":
+        return "boot", "Жду узел", counts, 0.2
+    return "boot", f"Запуск ({state.status})", counts, 0.3
 
 
 def _payload(state: salad_gpu.GroupState | None, settings: Settings) -> GpuOut:
@@ -48,6 +93,8 @@ def _payload(state: salad_gpu.GroupState | None, settings: Settings) -> GpuOut:
     else:
         chat_ok = _chat_ok(settings)
         wan_ok = _wan_ok(settings)
+    started = salad_gpu.pull_started_at(state, settings)
+    phase, label, connect_detail, ratio = _connect(state, chat_ok=chat_ok, started=started)
     return GpuOut(
         configured=True,
         status=state.status,
@@ -60,7 +107,11 @@ def _payload(state: salad_gpu.GroupState | None, settings: Settings) -> GpuOut:
         wan_ok=wan_ok,
         detail=state.detail,
         idle_stop_minutes=int(settings.salad_idle_stop_minutes),
-        deploy_started_at=salad_gpu.pull_started_at(state, settings),
+        deploy_started_at=started,
+        connect_phase=phase,
+        connect_label=label,
+        connect_detail=connect_detail,
+        connect_ratio=ratio,
     )
 
 

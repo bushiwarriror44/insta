@@ -106,4 +106,40 @@ describe("SaladGpuCard", () => {
     expect(await screen.findByText(/статус не обновился/i)).toBeInTheDocument();
     expect(screen.getByText(/сеть/i)).toBeInTheDocument();
   });
+
+  it("shows the shared connect bar while the image is pulling", async () => {
+    vi.mocked(api.gpu.status).mockResolvedValue(
+      idle({
+        configured: true,
+        status: "deploying",
+        creating_count: 1,
+        connect_phase: "pull",
+        connect_label: "Качается образ на узел",
+        connect_detail: "12 с · работают 0, создаются 1, выделяются 0",
+        connect_ratio: 0.45,
+      })
+    );
+    render(<SaladGpuCard />);
+    const bar = await screen.findByRole("progressbar", { name: /качается образ/i });
+    expect(bar).toHaveAttribute("aria-valuenow", "45");
+    expect(screen.getByText(/12 с · работают 0/)).toBeInTheDocument();
+  });
+
+  it("hides the connect bar when chat is ready", async () => {
+    vi.mocked(api.gpu.status).mockResolvedValue(
+      idle({
+        configured: true,
+        status: "running",
+        billing: true,
+        running_count: 1,
+        chat_ok: true,
+        connect_phase: "ready",
+        connect_label: "Чат отвечает",
+        connect_ratio: 1,
+      })
+    );
+    render(<SaladGpuCard />);
+    expect(await screen.findByText(/работает — идут gpu-часы/i)).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  });
 });

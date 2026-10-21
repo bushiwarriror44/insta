@@ -465,6 +465,10 @@ export interface GpuOut {
   detail: string;
   idle_stop_minutes?: number;
   deploy_started_at?: string | null;
+  connect_phase?: "idle" | "pull" | "boot" | "gateway" | "ready";
+  connect_label?: string;
+  connect_detail?: string;
+  connect_ratio?: number;
 }
 
 export interface RenderBackendOut {

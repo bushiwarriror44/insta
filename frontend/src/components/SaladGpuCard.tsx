@@ -8,6 +8,7 @@ import { useToast } from "../context/ToastContext";
 import { usePollWhenVisible } from "../hooks/usePollWhenVisible";
 import { canStart, canStop, chatLine, statusLabel } from "../lib/gpuLabels";
 import { GpuConfirm } from "./GpuConfirm";
+import { GpuConnectBar } from "./GpuConnectBar";
 
 const POLL_MS = 8000;
 
@@ -128,6 +129,7 @@ export function SaladGpuCard() {
           {busy === "stop" ? "Останавливаем…" : "Остановить"}
         </button>
       </div>
+      <GpuConnectBar gpu={loadError ? null : gpu} />
       {loadError ? <p className="text-sm text-rose-300">{loadError}</p> : null}
       <GpuConfirm action={ask} busy={Boolean(busy)} onNo={() => setAsk(null)} onYes={() => void confirm()} />
     </section>

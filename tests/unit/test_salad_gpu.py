@@ -135,6 +135,54 @@ def test_gpu_reports_deploy_start_only_while_the_image_is_pulling(auth_client, m
     assert stopped.json()["deploy_started_at"] is None
 
 
+@respx.mock
+def test_gpu_connect_phase_from_group_status(auth_client, monkeypatch):
+    _configure(monkeypatch)
+    from app.config import settings
+    from app.services.gateway_probe import clear_probes
+
+    monkeypatch.setattr(settings, "agent_base_url", "https://gpu.example/v1", raising=True)
+    deploying = _state("deploying", creating=1)
+    running = _state("running", running=1)
+    stopped = _state("stopped")
+    respx.get(GROUP_URL).mock(
+        side_effect=[
+            httpx.Response(200, json=deploying),
+            httpx.Response(200, json=running),
+            httpx.Response(200, json=running),
+            httpx.Response(200, json=stopped),
+        ]
+    )
+    tags = respx.get("https://gpu.example/api/tags")
+
+    pull = auth_client.get("/api/gpu", headers=_h()).json()
+    assert pull["connect_phase"] == "pull"
+    assert pull["connect_label"] == "Качается образ на узел"
+    assert pull["connect_ratio"] == 0.45
+
+    tags.mock(side_effect=httpx.ConnectError("down"))
+    clear_probes()
+    gateway = auth_client.get("/api/gpu", headers=_h()).json()
+    assert gateway["connect_phase"] == "gateway"
+    assert gateway["connect_label"] == "Узел запущен, жду Ollama"
+    assert gateway["connect_ratio"] == 0.8
+    assert gateway["connect_ratio"] > pull["connect_ratio"]
+
+    tags.mock(return_value=httpx.Response(200, json={"models": []}))
+    clear_probes()
+    ready = auth_client.get("/api/gpu", headers=_h()).json()
+    assert ready["connect_phase"] == "ready"
+    assert ready["connect_label"] == "Чат отвечает"
+    assert ready["connect_ratio"] == 1.0
+    assert ready["chat_ok"] is True
+
+    clear_probes()
+    idle = auth_client.get("/api/gpu", headers=_h()).json()
+    assert idle["connect_phase"] == "idle"
+    assert idle["connect_ratio"] == 0.0
+    assert idle["connect_label"] == ""
+
+
 def test_get_open_mode_unconfigured(open_client, monkeypatch):
     from app.config import settings
 

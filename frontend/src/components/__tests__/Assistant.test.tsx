@@ -86,8 +86,7 @@ describe("Assistant", () => {
     expect(screen.getByRole("button", { name: /^спросить$/i })).toBeInTheDocument();
   });
 
-  it("shows the image pull clock after a refresh without a new message", async () => {
-    const started = new Date(Date.now() - (47 * 60 + 12) * 1000).toISOString();
+  it("shows the shared connect bar from gpu.status without a new message", async () => {
     apiMock.gpu.status.mockResolvedValue({
       configured: true,
       status: "deploying",
@@ -99,11 +98,45 @@ describe("Assistant", () => {
       chat_ok: false,
       wan_ok: null,
       detail: "",
-      deploy_started_at: started,
+      deploy_started_at: new Date(Date.now() - (47 * 60 + 12) * 1000).toISOString(),
+      connect_phase: "pull",
+      connect_label: "Качается образ на узел",
+      connect_detail: "47 мин 12 с · работают 0, создаются 1, выделяются 0",
+      connect_ratio: 0.45,
     });
     renderDock();
     expect(await screen.findByText("Качается образ на узел")).toBeInTheDocument();
-    expect(screen.getByText(/deploying · 47 мин/)).toBeInTheDocument();
+    expect(screen.getByText(/47 мин 12 с/)).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: /качается образ/i })).toHaveAttribute(
+      "aria-valuenow",
+      "45"
+    );
+    expect(askMock).not.toHaveBeenCalled();
+  });
+
+  it("fills the shared connect bar when connect_phase is ready", async () => {
+    apiMock.gpu.status.mockResolvedValue({
+      configured: true,
+      status: "running",
+      billing: true,
+      allocating_count: 0,
+      creating_count: 0,
+      running_count: 1,
+      stopping_count: 0,
+      chat_ok: true,
+      wan_ok: null,
+      detail: "",
+      connect_phase: "ready",
+      connect_label: "Чат отвечает",
+      connect_detail: "работают 1, создаются 0, выделяются 0",
+      connect_ratio: 1,
+    });
+    renderDock();
+    expect(await screen.findByText("Чат отвечает")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: /чат отвечает/i })).toHaveAttribute(
+      "aria-valuenow",
+      "100"
+    );
     expect(askMock).not.toHaveBeenCalled();
   });
 
@@ -225,42 +258,24 @@ describe("Assistant", () => {
     expect(screen.getAllByText("Запускаю видеокарту, подождите")).toHaveLength(1);
   });
 
-  it("shows a live progress bar while the card starts", async () => {
-    let release: (() => void) | undefined;
-    askMock.mockImplementationOnce(
-      (_messages, onStep) =>
-        new Promise<void>((resolve) => {
-          onStep({ type: "progress", text: "Качается образ на узел", detail: "deploying · 12 с", ratio: 0.3 });
-          onStep({ type: "status", text: "Качается образ на узел" });
-          onStep({ type: "progress", text: "Качается образ на узел", detail: "deploying · 40 с", ratio: 0.45 });
-          release = () => {
-            onStep({
-              type: "done",
-              reply: "готово",
-              open_url: null,
-              opened: null,
-              used: [],
-              images: [],
-            });
-            resolve();
-          };
-        })
-    );
-    const user = userEvent.setup();
-    renderDock();
-    await user.type(await screen.findByLabelText(/спросить агента/i), "привет");
-    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
-    expect(await screen.findByRole("progressbar", { name: /качается образ/i })).toBeInTheDocument();
-    expect(screen.getAllByText(/deploying · 40 с/i).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Качается образ на узел").length).toBeGreaterThanOrEqual(1);
-    release?.();
-    expect(await screen.findByText("готово")).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByRole("progressbar")).not.toBeInTheDocument());
-  });
-
-  it("keeps the pull line and progress when Salad is still deploying", async () => {
+  it("keeps the shared connect bar when Salad is still deploying after an error", async () => {
+    apiMock.gpu.status.mockResolvedValue({
+      configured: true,
+      status: "deploying",
+      billing: false,
+      allocating_count: 0,
+      creating_count: 1,
+      running_count: 0,
+      stopping_count: 0,
+      chat_ok: false,
+      wan_ok: null,
+      detail: "",
+      connect_phase: "pull",
+      connect_label: "Качается образ на узел",
+      connect_detail: "deploying · 12 с",
+      connect_ratio: 0.45,
+    });
     askMock.mockImplementationOnce(async (_messages, onStep) => {
-      onStep({ type: "progress", text: "Качается образ на узел", detail: "deploying · 12 с", ratio: 0.3 });
       onStep({
         type: "error",
         detail: "API Salad не отвечает, но группа может ещё качать образ",
@@ -269,11 +284,12 @@ describe("Assistant", () => {
     });
     const user = userEvent.setup();
     renderDock();
+    expect(await screen.findByRole("progressbar", { name: /качается образ/i })).toBeInTheDocument();
     await user.type(await screen.findByLabelText(/спросить агента/i), "привет");
     await user.click(screen.getByRole("button", { name: /^спросить$/i }));
-    expect(await screen.findByRole("progressbar", { name: /качается образ/i })).toBeInTheDocument();
+    expect(await screen.findByText(/инстанс может ещё загружаться/i)).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: /качается образ/i })).toBeInTheDocument();
     expect(screen.getAllByText("Качается образ на узел").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText(/инстанс может ещё загружаться/i)).toBeInTheDocument();
   });
 
   it("does not pretend the image is downloading when Start was not sent", async () => {

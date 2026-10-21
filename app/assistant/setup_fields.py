@@ -1,4 +1,4 @@
-﻿"""Canonical ask_operator field presets for account and proxy setup in the chat UI."""
+"""Canonical ask_operator field presets for account and proxy setup in the chat UI."""
 from __future__ import annotations
 
 from typing import Any

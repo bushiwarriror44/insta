@@ -527,6 +527,10 @@ class GpuOut(BaseModel):
     detail: str = ""
     idle_stop_minutes: int = 0
     deploy_started_at: Optional[datetime] = None
+    connect_phase: Literal["idle", "pull", "boot", "gateway", "ready"] = "idle"
+    connect_label: str = ""
+    connect_detail: str = ""
+    connect_ratio: float = 0.0
 
 
 class AdminNotesOut(BaseModel):

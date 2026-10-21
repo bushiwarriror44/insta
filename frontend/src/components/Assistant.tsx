@@ -13,7 +13,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 
 import { api, formatApiError } from "../api/client";
 import type { GpuLogsOut, GpuOut } from "../api/types";
-import { formatDeployClock, isImagePull } from "../lib/gpuLabels";
+import { GpuConnectBar } from "./GpuConnectBar";
 import { ask, type AskField, type AssistantMessageAttachment } from "../api/assistant";
 import { mediaApiPath } from "../api/media";
 import {
@@ -262,7 +262,6 @@ interface Live {
   note: string | null;
   progressText: string | null;
   progressDetail: string | null;
-  progressRatio: number | null;
   activeGeneration: ActiveGeneration | null;
   wires: string[];
 }
@@ -282,7 +281,6 @@ function emptyLive(): Live {
     note: null,
     progressText: null,
     progressDetail: null,
-    progressRatio: null,
     activeGeneration: null,
     wires: [],
   };
@@ -532,7 +530,6 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const [logsFetchedAt, setLogsFetchedAt] = useState<Date | null>(null);
   const [followTail, setFollowTail] = useState(true);
   const [gpuPull, setGpuPull] = useState<GpuOut | null>(null);
-  const [deployNow, setDeployNow] = useState(() => Date.now());
   const logsReq = useRef(0);
 
   const box = useRef<HTMLTextAreaElement>(null);
@@ -700,7 +697,6 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         busy: true,
         progressText: null,
         progressDetail: null,
-        progressRatio: null,
         activeGeneration: null,
       });
       setBrowsing(false);
@@ -755,7 +751,6 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
               patchLive(id, {
                 progressText: step.text,
                 progressDetail: step.detail ?? null,
-                progressRatio: typeof step.ratio === "number" ? step.ratio : null,
               });
             } else if (step.type === "generation") {
               const next = generationFromStep(step.text, step.name ?? "", step.detail);
@@ -769,7 +764,6 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                       activeGeneration: mergeGeneration(current.activeGeneration, next),
                       progressText: null,
                       progressDetail: null,
-                      progressRatio: null,
                     },
                   };
                 });
@@ -781,7 +775,6 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                 doingName: step.name ?? null,
                 progressText: null,
                 progressDetail: null,
-                progressRatio: null,
               });
             } else if (step.type === "think") {
               thinkRef.current[id] = (thinkRef.current[id] ?? "") + step.text;
@@ -789,7 +782,6 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                 think: thinkRef.current[id],
                 progressText: null,
                 progressDetail: null,
-                progressRatio: null,
               });
             } else if (step.type === "token") {
               writingRef.current[id] = (writingRef.current[id] ?? "") + step.text;
@@ -797,7 +789,6 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                 writing: writingRef.current[id],
                 progressText: null,
                 progressDetail: null,
-                progressRatio: null,
               });
             } else if (step.type === "image") {
               setLive((prev) => {
@@ -917,9 +908,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
           doingName: null,
           pending: [],
           wires: [],
-          ...(keepProgress
-            ? {}
-            : { progressText: null, progressDetail: null, progressRatio: null }),
+          ...(keepProgress ? {} : { progressText: null, progressDetail: null }),
         });
         if (activeRef.current === id) box.current?.focus();
       }
@@ -958,12 +947,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const view = (chat && live[chat.id]) || emptyLive();
   const busy = view.busy;
 
-  usePollWhenVisible(reloadGpu, 5000, !hidden && !busy);
-  useEffect(() => {
-    if (!gpuPull?.deploy_started_at || busy) return;
-    const id = window.setInterval(() => setDeployNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, [gpuPull?.deploy_started_at, busy]);
+  usePollWhenVisible(reloadGpu, 5000, !hidden);
 
   const writing = view.writing;
   const draftThink = view.think;
@@ -978,14 +962,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const progressText = view.progressText;
   const liveWires = view.wires ?? [];
   const progressDetail = view.progressDetail;
-  const progressRatio = view.progressRatio;
   const activeGeneration = view.activeGeneration;
-  const resumeDeploy = !busy && !progressText && !activeGeneration && gpuPull != null && isImagePull(gpuPull);
-  const resumeTitle = gpuPull?.status === "pending" ? "Жду узел" : "Качается образ на узел";
-  const resumeDetail =
-    resumeDeploy && gpuPull?.deploy_started_at
-      ? `${gpuPull.status} · ${formatDeployClock(gpuPull.deploy_started_at, deployNow)}`
-      : "";
   const anyBusy = Object.values(live).some((item) => item.busy);
 
   useEffect(() => {
@@ -1269,34 +1246,9 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
               </div>
             ) : null}
             {busy && liveWires.length ? <WireList lines={liveWires} /> : null}
-            {(busy || Boolean(progressText && !activeGeneration)) && (
-              <div role="status" className="space-y-2">
-                {progressText && !activeGeneration ? (
-                  <div className="space-y-2 rounded-lg border border-slate-800 bg-slate-900/70 p-3">
-                    <div className="flex items-center gap-2 text-sm text-slate-200">
-                      <ThinkingSparkle quiet />
-                      <span>{progressText}</span>
-                    </div>
-                    {progressDetail ? (
-                      <p className="text-xs text-slate-500">{progressDetail}</p>
-                    ) : null}
-                    <div
-                      className="h-1.5 overflow-hidden rounded-full bg-slate-800"
-                      role="progressbar"
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={Math.round(Math.min(1, Math.max(0, progressRatio ?? 0)) * 100)}
-                      aria-label={progressText}
-                    >
-                      <div
-                        className="h-full rounded-full bg-sky-400 transition-[width] duration-500"
-                        style={{
-                          width: `${Math.round(Math.min(0.95, Math.max(0.05, progressRatio ?? 0.05)) * 100)}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                ) : (
+            {busy ? (
+              <div className="space-y-2" role="status">
+                {!progressText ? (
                   <div className="flex items-center gap-2 text-sm text-slate-400">
                     <ThinkingSparkle quiet={Boolean(writing)} />
                     <span>
@@ -1309,7 +1261,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                             : `Думает… ${seconds} с`}
                     </span>
                   </div>
-                )}
+                ) : null}
                 {!writing && doingName && toolHint(doingName) ? (
                   <p data-testid="assistant-tool-hint" className="text-xs text-slate-500">
                     {toolHint(doingName)}
@@ -1332,7 +1284,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                   </div>
                 )}
               </div>
-            )}
+            ) : null}
             {!busy && note && <p className="text-xs text-slate-400">{note}</p>}
             {!busy && hasAskForm && (
               <form onSubmit={answerAsks} className="space-y-2 rounded-lg border border-slate-800 bg-slate-900/80 p-3">
@@ -1474,15 +1426,9 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
               )
             )}
           </div>
-          {resumeDeploy ? (
-            <div role="status" className="mb-2 space-y-2 rounded-lg border border-slate-800 bg-slate-900/70 p-3">
-              <div className="flex items-center gap-2 text-sm text-slate-200">
-                <ThinkingSparkle quiet />
-                <span>{resumeTitle}</span>
-              </div>
-              <p className="text-xs text-slate-500">{resumeDetail}</p>
-            </div>
-          ) : null}
+          <div className="mb-2">
+            <GpuConnectBar gpu={gpuPull} includeReady />
+          </div>
           {!busy ? (
             <p data-testid="assistant-page-hint" className="mb-2 px-1 text-xs text-slate-500">
               {pageHint(page)}
