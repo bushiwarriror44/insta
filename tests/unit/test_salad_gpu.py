@@ -183,6 +183,34 @@ def test_gpu_connect_phase_from_group_status(auth_client, monkeypatch):
     assert idle["connect_label"] == ""
 
 
+@respx.mock
+def test_get_gpu_shows_pull_restart_label(auth_client, monkeypatch, app_env):
+    _configure(monkeypatch)
+    from app.config import settings
+    from app.services import salad_gpu as gpu_mod
+
+    old = datetime.now(timezone.utc) - timedelta(minutes=40)
+    gpu_mod._write_pull_stamp(settings, old)
+    gpu_mod._write_pull_track(
+        settings,
+        {
+            "creating_count": 1,
+            "allocating_count": 0,
+            "saw_dip": True,
+            "restart_until": (datetime.now(timezone.utc) + timedelta(minutes=10)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
+        },
+    )
+    deploying = _state("deploying", creating=1)
+    respx.get(GROUP_URL).mock(return_value=httpx.Response(200, json=deploying))
+    monkeypatch.setattr(gpu_mod, "recent_node_offline", lambda settings=None: False)
+    row = auth_client.get("/api/gpu", headers=_h()).json()
+    assert row["connect_phase"] == "pull"
+    assert row["connect_label"] == "Узел Salad offline — качаю образ заново"
+    assert "offline" in row["detail"].lower() or "заново" in row["detail"].lower()
+
+
 def test_get_open_mode_unconfigured(open_client, monkeypatch):
     from app.config import settings
 

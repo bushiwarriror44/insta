@@ -50,6 +50,7 @@ def _connect(
     *,
     chat_ok: bool,
     started: datetime | None,
+    settings: Settings | None = None,
 ) -> tuple[Literal["idle", "pull", "boot", "gateway", "ready"], str, str, float]:
     """One shared connect stage. HTTP 200 from Salad is not success."""
     if state is None or state.status in _DOWN or not state.status:
@@ -60,12 +61,17 @@ def _connect(
         return "ready", "Чат отвечает", counts, 1.0
     if replica_up:
         return "gateway", "Узел запущен, жду Ollama", "шлюз не отвечает", 0.8
+    restart = salad_gpu.pull_restart_note_active(settings)
     if state.status == "deploying" or state.creating_count > 0:
         clock = _elapsed_label(started)
         detail = f"{clock} · {counts}" if clock else counts
-        return "pull", "Качается образ на узел", detail, 0.45
+        label = (
+            salad_gpu.PHASE_PULL_RESTART if restart else "Качается образ на узел"
+        )
+        return "pull", label, detail, 0.45
     if state.allocating_count > 0:
-        return "boot", "Выделяю GPU", counts, 0.6
+        label = salad_gpu.PHASE_PULL_RESTART if restart else "Выделяю GPU"
+        return "boot", label, counts, 0.6
     if state.status == "pending":
         return "boot", "Жду узел", counts, 0.2
     return "boot", f"Запуск ({state.status})", counts, 0.3
@@ -94,7 +100,12 @@ def _payload(state: salad_gpu.GroupState | None, settings: Settings) -> GpuOut:
         chat_ok = _chat_ok(settings)
         wan_ok = _wan_ok(settings)
     started = salad_gpu.pull_started_at(state, settings)
-    phase, label, connect_detail, ratio = _connect(state, chat_ok=chat_ok, started=started)
+    phase, label, connect_detail, ratio = _connect(
+        state, chat_ok=chat_ok, started=started, settings=settings
+    )
+    detail = state.detail
+    if salad_gpu.pull_restart_note_active(settings) and state.still_pulling:
+        detail = salad_gpu.PHASE_PULL_RESTART
     return GpuOut(
         configured=True,
         status=state.status,
@@ -105,7 +116,7 @@ def _payload(state: salad_gpu.GroupState | None, settings: Settings) -> GpuOut:
         stopping_count=state.stopping_count,
         chat_ok=chat_ok,
         wan_ok=wan_ok,
-        detail=state.detail,
+        detail=detail,
         idle_stop_minutes=int(settings.salad_idle_stop_minutes),
         deploy_started_at=started,
         connect_phase=phase,

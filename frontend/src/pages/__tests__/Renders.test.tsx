@@ -58,6 +58,7 @@ function defaults() {
   apiMock.factory.backends.mockResolvedValue([
     { name: "auto", healthy: true, licence: "depends", experimental: false, detail: "fal: ok" },
     { name: "fal", healthy: true, licence: "Apache-2.0", experimental: false, detail: "" },
+    { name: "local", healthy: true, licence: "Apache-2.0", experimental: false, detail: "" },
   ]);
   apiMock.factory.compositions.mockResolvedValue([]);
   apiMock.factory.createGeneration.mockResolvedValue({ id: 9 });
@@ -100,11 +101,13 @@ describe("Renders page", () => {
     await waitFor(() =>
       expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
         prompt: "fog over ridge",
-        backend: "auto",
+        backend: "local",
         account_id: undefined,
         width: 720,
         height: 1280,
         duration_s: 5,
+        negative_prompt:
+          "текст, субтитры, водяной знак, логотип, UI, рамка, лишние руки, лишние пальцы, деформированные конечности, искажённое лицо, мутный кадр, низкое качество, артефакты, двоение, морфинг, тряска камеры, стоп-кадр, чёрные полосы, blurry, watermark, bad anatomy",
       })
     );
     const open = await screen.findByRole("link", { name: /открыть/i });
@@ -131,11 +134,13 @@ describe("Renders page", () => {
     await waitFor(() =>
       expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
         prompt: "wide ridge",
-        backend: "auto",
+        backend: "local",
         account_id: undefined,
         width: 1280,
         height: 720,
         duration_s: 10,
+        negative_prompt:
+          "текст, субтитры, водяной знак, логотип, UI, рамка, лишние руки, лишние пальцы, деформированные конечности, искажённое лицо, мутный кадр, низкое качество, артефакты, двоение, морфинг, тряска камеры, стоп-кадр, чёрные полосы, blurry, watermark, bad anatomy",
       })
     );
   });
@@ -171,6 +176,8 @@ describe("Renders page", () => {
         width: 720,
         height: 1280,
         duration_s: 30,
+        negative_prompt:
+          "текст, субтитры, водяной знак, логотип, UI, рамка, лишние руки, лишние пальцы, деформированные конечности, искажённое лицо, мутный кадр, низкое качество, артефакты, двоение, морфинг, тряска камеры, стоп-кадр, чёрные полосы, blurry, watermark, bad anatomy",
       })
     );
   });
@@ -191,11 +198,11 @@ describe("Renders page", () => {
     await waitFor(() =>
       expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
         prompt: "reels apple",
-        backend: "auto",
+        backend: "local",
         account_id: undefined,
         width: 1080,
         height: 1920,
-        duration_s: 15,
+        duration_s: 10,
         negative_prompt: "текст, логотип",
         seed: 42,
       })
@@ -212,11 +219,13 @@ describe("Renders page", () => {
     await waitFor(() =>
       expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
         prompt: "city night",
-        backend: "auto",
+        backend: "local",
         account_id: 1,
         width: 720,
         height: 1280,
         duration_s: 5,
+        negative_prompt:
+          "текст, субтитры, водяной знак, логотип, UI, рамка, лишние руки, лишние пальцы, деформированные конечности, искажённое лицо, мутный кадр, низкое качество, артефакты, двоение, морфинг, тряска камеры, стоп-кадр, чёрные полосы, blurry, watermark, bad anatomy",
       })
     );
   });
@@ -236,6 +245,8 @@ describe("Renders page", () => {
         width: 720,
         height: 1280,
         duration_s: 5,
+        negative_prompt:
+          "текст, субтитры, водяной знак, логотип, UI, рамка, лишние руки, лишние пальцы, деформированные конечности, искажённое лицо, мутный кадр, низкое качество, артефакты, двоение, морфинг, тряска камеры, стоп-кадр, чёрные полосы, blurry, watermark, bad anatomy",
       })
     );
   });
@@ -254,11 +265,13 @@ describe("Renders page", () => {
     await waitFor(() =>
       expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
         prompt: "like this still",
-        backend: "auto",
+        backend: "local",
         account_id: undefined,
         width: 720,
         height: 1280,
         duration_s: 5,
+        negative_prompt:
+          "текст, субтитры, водяной знак, логотип, UI, рамка, лишние руки, лишние пальцы, деформированные конечности, искажённое лицо, мутный кадр, низкое качество, артефакты, двоение, морфинг, тряска камеры, стоп-кадр, чёрные полосы, blurry, watermark, bad anatomy",
         input_mode: "image_to_video",
         reference_filename: "still.jpg",
         reference_role: "start_image",
@@ -284,11 +297,13 @@ describe("Renders page", () => {
     await waitFor(() =>
       expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
         prompt: "match the frame",
-        backend: "auto",
+        backend: "local",
         account_id: undefined,
         width: 720,
         height: 1280,
         duration_s: 5,
+        negative_prompt:
+          "текст, субтитры, водяной знак, логотип, UI, рамка, лишние руки, лишние пальцы, деформированные конечности, искажённое лицо, мутный кадр, низкое качество, артефакты, двоение, морфинг, тряска камеры, стоп-кадр, чёрные полосы, blurry, watermark, bad anatomy",
         input_mode: "image_to_video",
         reference_filename: "paste.png",
         reference_role: "start_image",
@@ -326,6 +341,8 @@ describe("Renders page", () => {
         width: 720,
         height: 1280,
         duration_s: 5,
+        negative_prompt:
+          "текст, субтитры, водяной знак, логотип, UI, рамка, лишние руки, лишние пальцы, деформированные конечности, искажённое лицо, мутный кадр, низкое качество, артефакты, двоение, морфинг, тряска камеры, стоп-кадр, чёрные полосы, blurry, watermark, bad anatomy",
       })
     );
   });

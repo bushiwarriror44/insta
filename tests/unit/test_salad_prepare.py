@@ -17,6 +17,7 @@ from app.services.salad_gpu import (
     PHASE_MODEL,
     PHASE_PATCH,
     PHASE_PULL,
+    PHASE_PULL_RESTART,
     PrepStatus,
     GroupState,
     SaladProblem,
@@ -417,12 +418,98 @@ def test_prepare_keeps_the_pull_clock_from_salad_start_time(app_env, monkeypatch
 def test_pull_stamp_stays_until_the_group_leaves_deploying(app_env, monkeypatch):
     _enable(monkeypatch)
     pulling = GroupState(status="deploying", creating_count=1)
-    first = salad_gpu.pull_started_at(pulling, settings)
-    second = salad_gpu.pull_started_at(pulling, settings)
+    first = salad_gpu.pull_started_at(pulling, settings, probe_logs=False)
+    second = salad_gpu.pull_started_at(pulling, settings, probe_logs=False)
     assert first == second
-    assert salad_gpu.pull_started_at(GroupState(status="running", running_count=1), settings) is None
-    fresh = salad_gpu.pull_started_at(GroupState(status="deploying", creating_count=1), settings)
+    assert salad_gpu.pull_started_at(
+        GroupState(status="running", running_count=1), settings, probe_logs=False
+    ) is None
+    fresh = salad_gpu.pull_started_at(
+        GroupState(status="deploying", creating_count=1), settings, probe_logs=False
+    )
     assert fresh is not None
+
+
+def test_pull_restart_resets_stamp_and_sets_offline_note(app_env, monkeypatch):
+    _enable(monkeypatch)
+    old = datetime.now(timezone.utc) - timedelta(minutes=55)
+    salad_gpu._write_pull_stamp(settings, old)
+    salad_gpu._write_pull_track(
+        settings,
+        {"creating_count": 1, "allocating_count": 0, "saw_dip": False},
+    )
+    # Pull finished on the failed node → creating drops.
+    mid = GroupState(status="deploying", creating_count=0, allocating_count=1)
+    assert salad_gpu.note_pull_progress(mid, settings, probe_logs=False) is False
+    assert salad_gpu._read_pull_track(settings).get("saw_dip") is True
+    # New node starts downloading again.
+    again = GroupState(status="deploying", creating_count=1, allocating_count=0)
+    assert salad_gpu.note_pull_progress(again, settings, probe_logs=False) is True
+    stamp = salad_gpu._read_pull_stamp(settings)
+    assert stamp is not None
+    assert stamp > old
+    assert salad_gpu.pull_restart_note_active(settings) is True
+    assert salad_gpu._launch_title(again, settings) == PHASE_PULL_RESTART
+
+
+def test_prepare_emits_pull_restart_after_creating_dip(app_env, monkeypatch):
+    _enable(monkeypatch)
+    calls = {"n": 0}
+
+    def sequence(settings=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return GroupState(
+                status="deploying",
+                dns=HOST,
+                port=GATEWAY_PORT,
+                command=_READY,
+                creating_count=1,
+            )
+        if calls["n"] == 2:
+            return GroupState(
+                status="deploying",
+                dns=HOST,
+                port=GATEWAY_PORT,
+                command=_READY,
+                creating_count=0,
+                allocating_count=1,
+            )
+        if calls["n"] < 6:
+            return GroupState(
+                status="deploying",
+                dns=HOST,
+                port=GATEWAY_PORT,
+                command=_READY,
+                creating_count=1,
+            )
+        return GroupState(
+            status="running",
+            dns=HOST,
+            port=GATEWAY_PORT,
+            command=_READY,
+            running_count=1,
+        )
+
+    monkeypatch.setattr(salad_gpu, "get_group", sequence)
+    monkeypatch.setattr(salad_gpu, "recent_node_offline", lambda settings=None: True)
+    with respx.mock:
+        respx.get(f"{ORIGIN}/").mock(return_value=httpx.Response(200, text="Ollama is running"))
+        respx.get(f"{ORIGIN}/api/tags").mock(
+            return_value=httpx.Response(200, json={"models": [{"name": "qwen3:32b"}]})
+        )
+        respx.get(f"{ORIGIN}/api/ps").mock(
+            return_value=httpx.Response(200, json={"models": [{"name": "qwen3:32b"}]})
+        )
+        lines = []
+        gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None)
+        try:
+            while True:
+                lines.append(next(gen))
+        except StopIteration:
+            pass
+    titles = _titles(lines)
+    assert PHASE_PULL_RESTART in titles
 
 
 def test_prepare_reports_deploying_and_model_phases(app_env, monkeypatch):

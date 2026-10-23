@@ -56,6 +56,9 @@ const LOCAL_DURATIONS = [5, 10] as const;
 const CLOUD_DURATIONS = [5, 10, 15, 30] as const;
 type DurationS = (typeof CLOUD_DURATIONS)[number];
 
+const DEFAULT_NEGATIVE_PROMPT =
+  "текст, субтитры, водяной знак, логотип, UI, рамка, лишние руки, лишние пальцы, деформированные конечности, искажённое лицо, мутный кадр, низкое качество, артефакты, двоение, морфинг, тряска камеры, стоп-кадр, чёрные полосы, blurry, watermark, bad anatomy";
+
 const PLATFORMS = [
   { id: "", label: "без платформы", duration: null },
   { id: "reels", label: "Reels", duration: 15 },
@@ -113,11 +116,11 @@ export function Renders() {
   const [accounts, setAccounts] = useState<AccountOut[]>([]);
   const [backends, setBackends] = useState<RenderBackendOut[]>([]);
   const [prompt, setPrompt] = useState("");
-  const [backend, setBackend] = useState("auto");
+  const [backend, setBackend] = useState("local");
   const [accountId, setAccountId] = useState<number | "">("");
   const [frameId, setFrameId] = useState<(typeof FRAME_SIZES)[number]["id"]>("9:16-720");
   const [durationS, setDurationS] = useState<DurationS>(5);
-  const [negativePrompt, setNegativePrompt] = useState("");
+  const [negativePrompt, setNegativePrompt] = useState(DEFAULT_NEGATIVE_PROMPT);
   const [seed, setSeed] = useState("");
   const [platform, setPlatform] = useState<(typeof PLATFORMS)[number]["id"]>("");
   const [joinIds, setJoinIds] = useState("");
@@ -356,7 +359,7 @@ export function Renders() {
             <input
               className="input mt-1"
               aria-label="Негативный промпт"
-              placeholder="текст, логотип, лишние руки"
+              placeholder={DEFAULT_NEGATIVE_PROMPT}
               value={negativePrompt}
               onChange={(e) => setNegativePrompt(e.target.value)}
             />

@@ -63,7 +63,7 @@ def test_enrich_524_names_the_salad_gateway_not_the_worker():
 
 def test_enrich_wan_timeout_does_not_blame_the_url():
     msg = enrich_generation_error("local: wan timed out", backend="local")
-    assert "14 минут" in msg
+    assert "30 минут" in msg
     assert "WAN_BASE_URL" not in msg
     assert "следующую попытку" in msg
 

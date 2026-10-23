@@ -52,6 +52,7 @@ WARM_STATUS = "Прогреваю модель, подождите"
 PHASE_PATCH = "Настраиваю шлюз"
 PHASE_NODE = "Жду узел"
 PHASE_PULL = "Качается образ на узел"
+PHASE_PULL_RESTART = "Узел Salad offline — качаю образ заново"
 PHASE_ALLOC = "Выделяю GPU"
 PHASE_OLLAMA = "Жду Ollama"
 PHASE_MODEL = "Гружу модель в память"
@@ -71,8 +72,11 @@ PULL_WAIT_S = 90 * 60
 WARM_WAIT_S = 20 * 60
 KICK_TIMEOUT_S = 20.0
 KICK_INTERVAL_S = 30.0
+PULL_RESTART_NOTE_S = 15 * 60
+NODE_OFFLINE_PROBE_S = 60.0
 PREP_PHASES = 4
 _MODEL_NAME = re.compile(r"[A-Za-z0-9_.:-]{1,80}")
+_node_offline_probe: tuple[float, bool] = (0.0, False)
 
 
 class SaladProblem(Exception):
@@ -500,6 +504,7 @@ def _kick_model_load(origin: str, settings: Settings, model: str) -> str:
 
 
 PULL_STAMP = "gpu_pull_started.txt"
+PULL_TRACK = "gpu_pull_track.json"
 
 
 def _parse_time(value: Any) -> datetime | None:
@@ -515,8 +520,19 @@ def _parse_time(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _utc_now(now: datetime | None = None) -> datetime:
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return current.astimezone(timezone.utc).replace(microsecond=0)
+
+
 def _pull_path(settings: Settings) -> Path:
     return Path(settings.data_dir) / PULL_STAMP
+
+
+def _track_path(settings: Settings) -> Path:
+    return Path(settings.data_dir) / PULL_TRACK
 
 
 def clear_pull_stamp(settings: Settings) -> None:
@@ -543,27 +559,157 @@ def _write_pull_stamp(settings: Settings, when: datetime) -> None:
         return
 
 
+def _read_pull_track(settings: Settings) -> dict[str, Any]:
+    try:
+        raw = json.loads(_track_path(settings).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _write_pull_track(settings: Settings, track: dict[str, Any]) -> None:
+    path = _track_path(settings)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(track, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        return
+
+
+def clear_pull_track(settings: Settings) -> None:
+    try:
+        _track_path(settings).unlink(missing_ok=True)
+    except OSError:
+        return
+
+
+def pull_restart_note_active(settings: Settings | None = None, *, now: datetime | None = None) -> bool:
+    """True for a short window after a Node Offline / reallocation restart."""
+    settings = settings or get_settings()
+    until = _parse_time(_read_pull_track(settings).get("restart_until"))
+    if until is None:
+        return False
+    return _utc_now(now) < until
+
+
+def _line_node_offline(text: str) -> bool:
+    lower = text.lower()
+    return "node offline" in lower or "instance interrupted" in lower
+
+
+def recent_node_offline(settings: Settings | None = None) -> bool:
+    """Best-effort Salad log probe; cached so /api/gpu polls do not hammer log-entries."""
+    global _node_offline_probe
+    settings = settings or get_settings()
+    mono = time.monotonic()
+    cached_at, cached_hit = _node_offline_probe
+    if mono - cached_at < NODE_OFFLINE_PROBE_S:
+        return cached_hit
+    hit = False
+    try:
+        rows = container_logs(settings, since=timedelta(minutes=45))
+        for line in rows.get("lines") or []:
+            if isinstance(line, str) and _line_node_offline(line):
+                hit = True
+                break
+    except Exception:  # noqa: BLE001 — probe must never break status
+        hit = False
+    _node_offline_probe = (mono, hit)
+    return hit
+
+
+def note_pull_progress(
+    state: GroupState,
+    settings: Settings | None = None,
+    *,
+    now: datetime | None = None,
+    probe_logs: bool = True,
+) -> bool:
+    """Track creating/allocating dips. True when the current image pull restarted."""
+    settings = settings or get_settings()
+    current = _utc_now(now)
+    if not state.still_pulling:
+        clear_pull_track(settings)
+        return False
+
+    track = _read_pull_track(settings)
+    prev_creating = int(track.get("creating_count") or 0)
+    prev_allocating = int(track.get("allocating_count") or 0)
+    saw_dip = bool(track.get("saw_dip"))
+    if state.creating_count == 0 and prev_creating > 0:
+        saw_dip = True
+    if state.allocating_count > 0 and prev_creating > 0 and state.creating_count == 0:
+        saw_dip = True
+
+    restarted = False
+    # Creating rose again after a dip → new node is pulling the image.
+    if saw_dip and state.creating_count > 0:
+        restarted = True
+    # Allocating after a dip with Node Offline in recent Salad logs.
+    elif (
+        saw_dip
+        and state.allocating_count > 0
+        and prev_allocating == 0
+        and state.creating_count == 0
+        and probe_logs
+        and recent_node_offline(settings)
+    ):
+        restarted = True
+
+    remembered = _read_pull_stamp(settings)
+    if (
+        state.start_time is not None
+        and remembered is not None
+        and state.start_time > remembered + timedelta(seconds=30)
+    ):
+        restarted = True
+
+    if restarted:
+        clear_pull_stamp(settings)
+        _write_pull_stamp(settings, current)
+        track = {
+            "creating_count": state.creating_count,
+            "allocating_count": state.allocating_count,
+            "saw_dip": False,
+            "restart_until": (current + timedelta(seconds=PULL_RESTART_NOTE_S)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
+        }
+        _write_pull_track(settings, track)
+        log.info("salad.pull_restart", status=state.status, creating=state.creating_count)
+        return True
+
+    track["creating_count"] = state.creating_count
+    track["allocating_count"] = state.allocating_count
+    track["saw_dip"] = saw_dip
+    if "restart_until" in track and not pull_restart_note_active(settings, now=current):
+        track.pop("restart_until", None)
+    _write_pull_track(settings, track)
+    return False
+
+
 def pull_started_at(
     state: GroupState,
     settings: Settings | None = None,
     *,
     now: datetime | None = None,
+    probe_logs: bool = True,
 ) -> datetime | None:
     """Wall clock when the current image pull began. None once the replica is up or the group is down."""
     settings = settings or get_settings()
+    current = _utc_now(now)
     if not state.still_pulling:
         clear_pull_stamp(settings)
+        clear_pull_track(settings)
         return None
+    note_pull_progress(state, settings, now=current, probe_logs=probe_logs)
+    remembered = _read_pull_stamp(settings)
+    # After Node Offline the group start_time often stays old — prefer a newer local stamp.
+    if remembered is not None and (state.start_time is None or remembered >= state.start_time):
+        return remembered
     if state.start_time is not None:
         _write_pull_stamp(settings, state.start_time)
         return state.start_time
-    remembered = _read_pull_stamp(settings)
-    if remembered is not None:
-        return remembered
-    current = now or datetime.now(timezone.utc)
-    if current.tzinfo is None:
-        current = current.replace(tzinfo=timezone.utc)
-    current = current.astimezone(timezone.utc).replace(microsecond=0)
     _write_pull_stamp(settings, current)
     return current
 
@@ -583,12 +729,16 @@ def _soft_ratio(phase: int, *, phases: int, elapsed: float, soft_s: float) -> fl
     return round(base + width * soft, 3)
 
 
-def _launch_title(state: GroupState) -> str:
+def _launch_title(state: GroupState, settings: Settings | None = None) -> str:
     if state.status == "pending":
         return PHASE_NODE
     if state.status == "deploying" or state.creating_count > 0:
+        if pull_restart_note_active(settings):
+            return PHASE_PULL_RESTART
         return PHASE_PULL
     if state.allocating_count > 0:
+        if pull_restart_note_active(settings):
+            return PHASE_PULL_RESTART
         return PHASE_ALLOC
     if state.status == "running":
         return "Узел запущен"
@@ -767,6 +917,9 @@ def prepare_for_chat(
             yield emit(LAUNCH_STATUS, 2, soft_s=START_WAIT_S, force_milestone=True)
             state = yield from fetch_group()
             _touch(settings)
+        if state.still_pulling:
+            # Seed creating/allocating so a later dip → recreate counts as Node Offline restart.
+            note_pull_progress(state, settings, probe_logs=False)
         wait_started = clock()
         non_pull_started: float | None = None
         misses = 0
@@ -803,23 +956,31 @@ def prepare_for_chat(
                     raise SaladProblem(
                         "Образ всё ещё качается на узел. Подождите и спросите ещё раз — Start уже идёт."
                     )
-                anchor = pull_started_at(state, settings)
+                restarted = note_pull_progress(state, settings, probe_logs=True)
+                anchor = pull_started_at(state, settings, probe_logs=False)
                 pull_for = None
                 if anchor is not None:
                     pull_for = max(0.0, (datetime.now(timezone.utc) - anchor).total_seconds())
+                title = _launch_title(state, settings)
                 yield emit(
-                    _launch_title(state),
+                    title,
                     2,
                     soft_s=PULL_WAIT_S,
                     extra=state.status,
                     elapsed=pull_for,
+                    force_milestone=restarted,
                 )
             else:
                 if non_pull_started is None:
                     non_pull_started = clock()
                 if clock() - non_pull_started > START_WAIT_S:
                     raise SaladProblem("Видеокарта не успела запуститься")
-                yield emit(_launch_title(state), 2, soft_s=START_WAIT_S, extra=state.status)
+                yield emit(
+                    _launch_title(state, settings),
+                    2,
+                    soft_s=START_WAIT_S,
+                    extra=state.status,
+                )
     if patch_after_pull and needs_gateway_patch(settings, state):
         yield emit(PHASE_PATCH, 1, soft_s=60, force_milestone=True)
         known = state

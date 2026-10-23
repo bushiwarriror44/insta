@@ -21,6 +21,8 @@ from starlette.background import BackgroundTask
 
 WAN_DIR = Path(os.environ.get("WAN_DIR", "/opt/wan"))
 WAN_CKPT = Path(os.environ.get("WAN_CKPT", "/opt/wan/Wan2.1-T2V-1.3B"))
+# Cold start + T5 CPU offload on 3090 often exceeds 14 minutes for 5–10 s clips.
+WAN_TIMEOUT_S = 1800
 lock = threading.Lock()
 jobs_guard = threading.Lock()
 jobs: dict[str, dict[str, object]] = {}
@@ -100,7 +102,7 @@ def _run(body: Request, work: Path, out: Path) -> None:
             cwd=str(WAN_DIR),
             capture_output=True,
             text=True,
-            timeout=840,
+            timeout=WAN_TIMEOUT_S,
             check=False,
         )
     except subprocess.TimeoutExpired as exc:

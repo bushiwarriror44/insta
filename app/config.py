@@ -124,7 +124,7 @@ class Settings(BaseSettings):
     hf_space_id: str = Field(default="")
     hf_space_api_name: str = Field(default="predict")
     generation_poll_seconds: float = Field(default=5.0)
-    generation_timeout_seconds: float = Field(default=900.0)
+    generation_timeout_seconds: float = Field(default=1920.0)
     daily_spend_cap_usd: float = Field(default=0.0, ge=0)
     outbound_proxy: str = Field(default="")
     floppydata_api_key: str = Field(default="")
