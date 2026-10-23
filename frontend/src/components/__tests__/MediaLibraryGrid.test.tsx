@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { VideoOut } from "../../api/types";
@@ -49,6 +49,25 @@ describe("MediaLibraryGrid", () => {
     expect(screen.getByText("reel.mp4")).toBeInTheDocument();
     fireEvent.click(screen.getByText("reel.mp4"));
     expect(onSelect).toHaveBeenCalledWith(items[0]);
+  });
+
+  it("opens a video fullscreen without selecting the card", async () => {
+    const onSelect = vi.fn();
+    const requestFullscreen = vi.fn().mockResolvedValue(undefined);
+    HTMLVideoElement.prototype.requestFullscreen = requestFullscreen;
+    HTMLVideoElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    render(<MediaLibraryGrid {...baseProps} onSelect={onSelect} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /открыть reel\.mp4 на весь экран/i })
+    );
+    await waitFor(() => expect(requestFullscreen).toHaveBeenCalled());
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("does not offer fullscreen for a photo", () => {
+    render(<MediaLibraryGrid {...baseProps} tab="image" selectedFilename="pic.jpg" />);
+    expect(screen.getByText("pic.jpg")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /на весь экран/i })).toBeNull();
   });
 
   it("calls onQuickPublish from card button", () => {

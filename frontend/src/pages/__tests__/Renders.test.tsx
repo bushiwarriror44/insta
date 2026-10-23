@@ -43,6 +43,7 @@ const apiMock = vi.hoisted(() => ({
     cancelGeneration: vi.fn(),
     retryGeneration: vi.fn(),
     createComposition: vi.fn(),
+    assets: vi.fn(),
     cancelComposition: vi.fn(),
     retryComposition: vi.fn(),
   },
@@ -72,6 +73,7 @@ function defaults() {
   apiMock.factory.cancelGeneration.mockResolvedValue({ id: 9 });
   apiMock.factory.retryGeneration.mockResolvedValue({ id: 11 });
   apiMock.factory.createComposition.mockResolvedValue({ id: 3 });
+  apiMock.factory.assets.mockResolvedValue([]);
   apiMock.factory.cancelComposition.mockResolvedValue({ id: 4 });
   apiMock.factory.retryComposition.mockResolvedValue({ id: 4 });
 }
@@ -153,7 +155,7 @@ describe("Renders page", () => {
     await screen.findByText("Ridge");
     const file = new File([new Uint8Array([1, 2, 3])], "bed.mp3", { type: "audio/mpeg" });
     fireEvent.change(screen.getByLabelText("Своя дорожка"), { target: { files: [file] } });
-    expect(await screen.findByRole("button", { name: /убрать/i })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^убрать$/i })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: /дорожка из библиотеки/i })).toHaveValue("bed.mp3");
     expect(apiMock.videos.upload).toHaveBeenCalledWith(file, { compress: false });
     fireEvent.change(screen.getByPlaceholderText("Промпт"), { target: { value: "with bed" } });
@@ -488,14 +490,24 @@ describe("Renders page", () => {
     );
   });
 
-  it("queues a join from clip ids and links the toast to /renders?join=", async () => {
+  it("queues a join from two clips and links the toast to /renders?join=", async () => {
+    apiMock.factory.assets.mockImplementation(async (params?: { kind?: string }) => {
+      if (params?.kind === "audio") return [];
+      return [
+        { id: 12, filename: "a.mp4", prompt: "танк", kind: "video" },
+        { id: 15, filename: "b.mp4", prompt: "толпа", kind: "video" },
+      ];
+    });
     renderRenders();
-    await screen.findByText("Ridge");
-    fireEvent.change(screen.getByPlaceholderText(/id клипов/i), { target: { value: "12, 15" } });
+    const firstClip = await screen.findByRole("combobox", { name: "Ролик 1" });
+    expect(await within(firstClip).findByRole("option", { name: "танк" })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "Ролик 1" }), { target: { value: "12" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Ролик 2" }), { target: { value: "15" } });
     fireEvent.click(screen.getByRole("button", { name: /склеить/i }));
     await waitFor(() =>
       expect(apiMock.factory.createComposition).toHaveBeenCalledWith({
         clip_ids: [12, 15],
+        audio_start_s: 0,
         account_id: undefined,
       })
     );
@@ -503,12 +515,45 @@ describe("Renders page", () => {
     expect(open).toHaveAttribute("href", "/renders?join=3");
   });
 
-  it("does not join when fewer than two clip ids are given", async () => {
+  it("joins a cutaway between two clips and starts audio at a given second", async () => {
+    apiMock.videos.list.mockResolvedValue([
+      { filename: "bed.mp3", media_type: "audio", size_bytes: 8, modified_at: "" },
+    ]);
+    apiMock.factory.assets.mockImplementation(async (params?: { kind?: string }) => {
+      if (params?.kind === "audio") return [];
+      return [
+        { id: 12, filename: "a.mp4", prompt: "танк", kind: "video" },
+        { id: 15, filename: "b.mp4", prompt: "толпа", kind: "video" },
+        { id: 18, filename: "c.mp4", prompt: "флаг", kind: "video" },
+      ];
+    });
+    renderRenders();
+    const firstClip = await screen.findByRole("combobox", { name: "Ролик 1" });
+    expect(await within(firstClip).findByRole("option", { name: "флаг" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /вставить перебивку/i }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Ролик 1" }), { target: { value: "12" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Перебивка" }), { target: { value: "18" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Ролик 2" }), { target: { value: "15" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Звук склейки" }), {
+      target: { value: "file:bed.mp3" },
+    });
+    fireEvent.change(screen.getByLabelText("Начать с секунды"), { target: { value: "12" } });
+    fireEvent.click(screen.getByRole("button", { name: /склеить/i }));
+    await waitFor(() =>
+      expect(apiMock.factory.createComposition).toHaveBeenCalledWith({
+        clip_ids: [12, 18, 15],
+        audio_filename: "bed.mp3",
+        audio_start_s: 12,
+        account_id: undefined,
+      })
+    );
+  });
+
+  it("does not join when fewer than two clips are chosen", async () => {
     renderRenders();
     await screen.findByText("Ridge");
-    fireEvent.change(screen.getByPlaceholderText(/id клипов/i), { target: { value: "12" } });
     fireEvent.click(screen.getByRole("button", { name: /склеить/i }));
-    expect(await screen.findByText(/минимум два id клипов/i)).toBeInTheDocument();
+    expect(await screen.findByText(/нужны два ролика/i)).toBeInTheDocument();
     expect(apiMock.factory.createComposition).not.toHaveBeenCalled();
   });
 

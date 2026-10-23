@@ -51,7 +51,14 @@ def ensure_composition_media(
         raise MediaError("склейка: нужны минимум два клипа")
     for clip in job.clips:
         asset_media_path(media, clip.asset)
-    if job.audio is not None:
+    if (job.audio_filename or "").strip():
+        from app.video.mux_audio import MuxError, resolve_audio_file
+
+        try:
+            resolve_audio_file(job.audio_filename, settings)
+        except MuxError as exc:
+            raise MediaError(str(exc)) from exc
+    elif job.audio is not None:
         asset_media_path(media, job.audio)
 
 
@@ -79,7 +86,15 @@ def run_composition(
 
     try:
         clip_paths = [asset_media_path(media, clip.asset) for clip in job.clips]
-        audio_path = asset_media_path(media, job.audio) if job.audio else None
+        if (job.audio_filename or "").strip():
+            from app.video.mux_audio import MuxError, resolve_audio_file
+
+            try:
+                audio_path = resolve_audio_file(job.audio_filename, settings)
+            except MuxError as exc:
+                raise MediaError(str(exc)) from exc
+        else:
+            audio_path = asset_media_path(media, job.audio) if job.audio else None
     except MediaError as exc:
         _fail(session, job, str(exc), retryable=False, now=now)
         return
@@ -91,6 +106,7 @@ def run_composition(
         clips=clip_paths,
         output=output,
         audio=audio_path,
+        audio_start_s=float(job.audio_start_s or 0),
         width=job.width,
         height=job.height,
         fps=job.fps,

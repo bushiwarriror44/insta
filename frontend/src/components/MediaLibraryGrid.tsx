@@ -1,6 +1,6 @@
 import clsx from "clsx";
-import { Download, Film, ImageIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Download, Film, ImageIcon, Maximize2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 
 import { fetchMediaObjectUrl, formatBytes, formatDuration, revokeMediaObjectUrl } from "../api/media";
 import type { VideoOut } from "../api/types";
@@ -8,6 +8,7 @@ import { useHotkeys } from "../hooks/useHotkeys";
 
 function MediaThumb({ item }: { item: VideoOut }) {
   const [url, setUrl] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -30,15 +31,61 @@ function MediaThumb({ item }: { item: VideoOut }) {
     };
   }, [item.filename]);
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const leaveFullscreen = () => {
+      if (document.fullscreenElement === video) return;
+      video.pause();
+      video.muted = true;
+      video.controls = false;
+    };
+    document.addEventListener("fullscreenchange", leaveFullscreen);
+    return () => document.removeEventListener("fullscreenchange", leaveFullscreen);
+  }, [url]);
+
+  const openFullscreen = async (event: MouseEvent | KeyboardEvent) => {
+    event.stopPropagation();
+    const video = videoRef.current;
+    if (!video) return;
+    video.controls = true;
+    video.muted = false;
+    try {
+      const playing = video.play();
+      if (playing && typeof playing.then === "function") await playing;
+    } catch {
+      // The frame can still go fullscreen if autoplay is blocked.
+    }
+    try {
+      await video.requestFullscreen();
+    } catch {
+      video.pause();
+      video.muted = true;
+      video.controls = false;
+    }
+  };
+
   if (item.media_type === "video" && url) {
     return (
-      <video
-        src={url}
-        className="absolute inset-0 h-full w-full object-cover"
-        muted
-        playsInline
-        preload="metadata"
-      />
+      <>
+        <video
+          ref={videoRef}
+          src={url}
+          className="absolute inset-0 h-full w-full object-cover"
+          muted
+          playsInline
+          preload="metadata"
+        />
+        <button
+          type="button"
+          className="absolute bottom-1.5 left-1.5 z-10 flex h-6 w-6 items-center justify-center rounded bg-black/60 text-white"
+          aria-label={`Открыть ${item.filename} на весь экран`}
+          onClick={(event) => void openFullscreen(event)}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
+          <Maximize2 size={14} />
+        </button>
+      </>
     );
   }
   if (item.media_type === "image" && url) {

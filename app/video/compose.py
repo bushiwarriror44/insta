@@ -45,6 +45,7 @@ class ComposeRequest:
     clips: list[Path]
     output: Path
     audio: Path | None = None
+    audio_start_s: float = 0.0
     width: int = DEFAULT_WIDTH
     height: int = DEFAULT_HEIGHT
     fps: int = DEFAULT_FPS
@@ -134,13 +135,16 @@ def build_command(request: ComposeRequest, total: float | None = None) -> list[s
 
     if request.audio is not None:
         command += ["-map", f"{audio_index}:a"]
+        audio_filters: list[str] = []
+        if request.audio_start_s > 0:
+            delay_ms = int(round(request.audio_start_s * 1000))
+            audio_filters.append(f"adelay={delay_ms}|{delay_ms}")
         if request.audio_fade_out_s > 0:
             length = total if total is not None else total_duration(request.clips)
             start = fade_start(length, request.audio_fade_out_s)
-            command += [
-                "-af",
-                f"afade=t=out:st={start:.3f}:d={request.audio_fade_out_s}",
-            ]
+            audio_filters.append(f"afade=t=out:st={start:.3f}:d={request.audio_fade_out_s}")
+        if audio_filters:
+            command += ["-af", ",".join(audio_filters)]
         command += ["-c:a", "aac", "-b:a", "192k", "-shortest"]
     else:
         command += ["-an"]

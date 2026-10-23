@@ -35,6 +35,20 @@ def test_a_soundtrack_is_looped_so_the_footage_decides_the_length():
     assert "-stream_loop" in command
     assert command[command.index("-stream_loop") + 1] == "-1"
     assert "-shortest" in command
+    assert "adelay" not in command[command.index("-af") + 1]
+
+
+def test_soundtrack_can_start_at_a_given_second():
+    command = build_command(
+        ComposeRequest(
+            clips=[Path("a.mp4"), Path("b.mp4")],
+            output=Path("out.mp4"),
+            audio=Path("bed.mp3"),
+            audio_start_s=12,
+        ),
+        total=30.0,
+    )
+    assert "adelay=12000|12000" in command[command.index("-af") + 1]
 
 
 def test_no_soundtrack_means_an_explicitly_silent_file():
@@ -45,5 +59,5 @@ def test_no_soundtrack_means_an_explicitly_silent_file():
 
 
 def test_a_composition_needs_a_clip():
-    with pytest.raises(ComposeError, match="at least one clip"):
+    with pytest.raises(ComposeError, match="хотя бы один клип"):
         build_command(ComposeRequest(clips=[], output=Path("out.mp4")))

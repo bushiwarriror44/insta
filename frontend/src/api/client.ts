@@ -715,7 +715,14 @@ export const api = {
       request<Array<{ id: number; status: string; post_title: string; last_error: string | null; clips: number }>>(
         "/api/compositions"
       ),
-    createComposition: (body: { clip_ids: number[]; audio_asset_id?: number; account_id?: number; post_title?: string }) =>
+    createComposition: (body: {
+      clip_ids: number[];
+      audio_asset_id?: number;
+      audio_filename?: string;
+      audio_start_s?: number;
+      account_id?: number;
+      post_title?: string;
+    }) =>
       request<{ id: number; status: string }>("/api/compositions", { method: "POST", body }),
     cancelComposition: (id: number) =>
       request<{ id: number; status: string }>(`/api/compositions/${id}/cancel`, { method: "POST" }),

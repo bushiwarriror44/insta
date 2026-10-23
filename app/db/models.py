@@ -537,6 +537,8 @@ class Composition(Base):
     height: Mapped[int] = mapped_column(Integer, default=1920)
     fps: Mapped[int] = mapped_column(Integer, default=30)
     audio_asset_id: Mapped[Optional[int]] = mapped_column(ForeignKey("media_assets.id"), nullable=True)
+    audio_filename: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    audio_start_s: Mapped[float] = mapped_column(Float, default=0.0)
     audio_fade_out_s: Mapped[float] = mapped_column(Float, default=1.5)
     account_id: Mapped[Optional[int]] = mapped_column(ForeignKey("accounts.id"), nullable=True, index=True)
     post_title: Mapped[str] = mapped_column(String(255), default="")

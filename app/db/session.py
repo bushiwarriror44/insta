@@ -97,6 +97,8 @@ _PENDING_COLUMNS: list[tuple[str, str, str]] = [
     ("generation_jobs", "reference_json", "TEXT"),
     ("generation_jobs", "audio_mode", "VARCHAR(16) DEFAULT 'none'"),
     ("generation_jobs", "audio_filename", "VARCHAR(255)"),
+    ("compositions", "audio_filename", "VARCHAR(255)"),
+    ("compositions", "audio_start_s", "FLOAT DEFAULT 0"),
 ]
 
 

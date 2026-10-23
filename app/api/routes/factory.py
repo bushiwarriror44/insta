@@ -113,6 +113,8 @@ class GenerationRetryIn(BaseModel):
 class CompositionIn(BaseModel):
     clip_ids: list[int] = Field(min_length=2)
     audio_asset_id: Optional[int] = None
+    audio_filename: Optional[str] = None
+    audio_start_s: float = Field(default=0.0, ge=0, le=3600)
     account_id: Optional[int] = None
     post_title: str = ""
     width: int = Field(default=1080, ge=256, le=1920)
@@ -584,10 +586,20 @@ def create_composition(payload: CompositionIn, db: Session = Depends(get_db)) ->
             asset_media_path(settings.media_dir, audio)
         except MediaError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+    audio_filename = (payload.audio_filename or "").strip() or None
+    if audio_filename:
+        from app.video.mux_audio import MuxError, resolve_audio_file
+
+        try:
+            resolve_audio_file(audio_filename, settings)
+        except MuxError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     composition = Composition(
         width=payload.width,
         height=payload.height,
         audio_asset_id=payload.audio_asset_id,
+        audio_filename=audio_filename,
+        audio_start_s=payload.audio_start_s,
         account_id=payload.account_id,
         post_title=payload.post_title,
         status=PipelineStatus.queued,

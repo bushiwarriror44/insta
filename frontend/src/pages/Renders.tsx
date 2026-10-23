@@ -28,7 +28,20 @@ import {
   type RenderInputMode,
   type RenderReference,
 } from "../lib/referenceUpload";
-import type { AccountOut, RenderBackendOut } from "../api/types";
+import type { AccountOut, MediaAssetOut, RenderBackendOut } from "../api/types";
+
+type JoinSlot = { key: string; assetId: string; cutaway: boolean };
+
+function joinSlotLabel(row: JoinSlot, rows: JoinSlot[]) {
+  if (row.cutaway) {
+    const cutaways = rows.filter((item) => item.cutaway);
+    const number = cutaways.findIndex((item) => item.key === row.key) + 1;
+    return cutaways.length > 1 ? `Перебивка ${number}` : "Перебивка";
+  }
+  const mains = rows.filter((item) => !item.cutaway);
+  const which = mains.findIndex((item) => item.key === row.key);
+  return which <= 0 ? "Ролик 1" : "Ролик 2";
+}
 
 type Gen = {
   id: number;
@@ -136,7 +149,15 @@ export function Renders() {
   const audioInputRef = useRef<HTMLInputElement>(null);
   const [seed, setSeed] = useState("");
   const [platform, setPlatform] = useState<(typeof PLATFORMS)[number]["id"]>("");
-  const [joinIds, setJoinIds] = useState("");
+  const [joinRows, setJoinRows] = useState<JoinSlot[]>([
+    { key: "main-1", assetId: "", cutaway: false },
+    { key: "main-2", assetId: "", cutaway: false },
+  ]);
+  const joinKey = useRef(2);
+  const [joinAudio, setJoinAudio] = useState("");
+  const [joinAudioStart, setJoinAudioStart] = useState("0");
+  const [videoAssets, setVideoAssets] = useState<MediaAssetOut[]>([]);
+  const [audioAssets, setAudioAssets] = useState<MediaAssetOut[]>([]);
   const [libraryFiles, setLibraryFiles] = useState<Array<{ filename: string; media_type: string }>>([]);
   const [references, setReferences] = useState<RenderReference[]>([]);
   const [inputMode, setInputMode] = useState<RenderInputMode>("");
@@ -160,17 +181,21 @@ export function Renders() {
   }, [genFromUrl, joinFromUrl, gens, joins]);
 
   const reload = useCallback(async () => {
-    const [g, c, accs, engines, uploads] = await Promise.all([
+    const [g, c, accs, engines, uploads, videos, audios] = await Promise.all([
       api.factory.generations(),
       api.factory.compositions(),
       api.accounts.list(),
       api.factory.backends(),
       api.videos.list().catch(() => []),
+      api.factory.assets({ kind: "video", limit: 100 }).catch(() => []),
+      api.factory.assets({ kind: "audio", limit: 100 }).catch(() => []),
     ]);
     setGens(g);
     setJoins(c);
     setAccounts(accs);
     setBackends(engines);
+    setVideoAssets(videos);
+    setAudioAssets(audios);
     setLibraryFiles(
       uploads.map((f) => ({ filename: f.filename, media_type: f.media_type ?? "video" }))
     );
@@ -302,6 +327,79 @@ export function Renders() {
       await reload();
     } catch (err) {
       push(withLocalRenderHint(formatApiError(err)), "error");
+    }
+  };
+
+  const insertCutaway = () => {
+    joinKey.current += 1;
+    const key = `cut-${joinKey.current}`;
+    setJoinRows((rows) => {
+      const next = [...rows];
+      next.splice(Math.max(rows.length - 1, 1), 0, { key, assetId: "", cutaway: true });
+      return next;
+    });
+  };
+
+  const moveJoinRow = (index: number, direction: -1 | 1) => {
+    setJoinRows((rows) => {
+      const target = index + direction;
+      if (target < 0 || target >= rows.length) return rows;
+      const next = [...rows];
+      const [item] = next.splice(index, 1);
+      next.splice(target, 0, item);
+      return next;
+    });
+  };
+
+  const removeJoinRow = (index: number) => {
+    setJoinRows((rows) => (rows.length <= 2 ? rows : rows.filter((_, i) => i !== index)));
+  };
+
+  const queueJoin = async () => {
+    const clip_ids = joinRows.map((row) => Number(row.assetId)).filter((id) => id > 0);
+    if (clip_ids.length < 2 || joinRows.some((row) => !row.assetId)) {
+      push("Нужны два ролика", "error");
+      return;
+    }
+    const start = Number(joinAudioStart);
+    const audio_start_s = Number.isFinite(start) && start > 0 ? start : 0;
+    const body: {
+      clip_ids: number[];
+      audio_start_s: number;
+      account_id?: number;
+      audio_asset_id?: number;
+      audio_filename?: string;
+    } = {
+      clip_ids,
+      audio_start_s,
+      account_id: typeof accountId === "number" ? accountId : undefined,
+    };
+    if (joinAudio.startsWith("asset:")) body.audio_asset_id = Number(joinAudio.slice(6));
+    if (joinAudio.startsWith("file:")) body.audio_filename = joinAudio.slice(5);
+    try {
+      const created = await api.factory.createComposition(body);
+      setJoinRows([
+        { key: "main-1", assetId: "", cutaway: false },
+        { key: "main-2", assetId: "", cutaway: false },
+      ]);
+      setJoinAudio("");
+      setJoinAudioStart("0");
+      const href = created?.id ? `/renders?join=${created.id}` : "/renders";
+      push("Склейка в очереди", "success", { label: "Открыть", href });
+      if (created?.id) {
+        setSearchParams(
+          (prev) => {
+            const next = new URLSearchParams(prev);
+            next.set("join", String(created.id));
+            next.delete("gen");
+            return next;
+          },
+          { replace: true }
+        );
+      }
+      await reload();
+    } catch (err) {
+      push(formatApiError(err), "error");
     }
   };
 
@@ -713,41 +811,103 @@ export function Renders() {
       </Card>
       <Card>
         <h2 className="font-medium">Склейки</h2>
-        <div className="flex gap-2">
-          <input className="input" placeholder="id клипов через запятую" value={joinIds} onChange={(e) => setJoinIds(e.target.value)} />
-          <button
-            className="btn-ghost shrink-0"
-            onClick={async () => {
-              const clip_ids = joinIds.split(",").map((s) => Number(s.trim())).filter(Boolean);
-              if (clip_ids.length < 2) {
-                push("Нужны минимум два id клипов через запятую", "error");
-                return;
-              }
-              try {
-                const created = await api.factory.createComposition({
-                  clip_ids,
-                  account_id: typeof accountId === "number" ? accountId : undefined,
-                });
-                setJoinIds("");
-                const href = created?.id ? `/renders?join=${created.id}` : "/renders";
-                push("Склейка в очереди", "success", { label: "Открыть", href });
-                if (created?.id) {
-                  setSearchParams(
-                    (prev) => {
-                      const next = new URLSearchParams(prev);
-                      next.set("join", String(created.id));
-                      next.delete("gen");
-                      return next;
-                    },
-                    { replace: true }
-                  );
-                }
-                await reload();
-              } catch (err) {
-                push(formatApiError(err), "error");
-              }
-            }}
-          >
+        <div className="space-y-3">
+          {joinRows.map((row, index) => {
+            const label = joinSlotLabel(row, joinRows);
+            return (
+              <div key={row.key} className="flex flex-wrap items-end gap-2">
+                <label className="min-w-[12rem] flex-1 text-sm">
+                  {label}
+                  <select
+                    className="input mt-1"
+                    aria-label={label}
+                    value={row.assetId}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setJoinRows((rows) =>
+                        rows.map((item) => (item.key === row.key ? { ...item, assetId: value } : item))
+                      );
+                    }}
+                  >
+                    <option value="">выберите ролик</option>
+                    {videoAssets.map((asset) => (
+                      <option key={asset.id} value={String(asset.id)}>
+                        {(asset.prompt || "").trim() || asset.filename}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    className="btn-ghost btn-compact"
+                    aria-label={`Поднять ${label}`}
+                    disabled={index === 0}
+                    onClick={() => moveJoinRow(index, -1)}
+                  >
+                    Вверх
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost btn-compact"
+                    aria-label={`Опустить ${label}`}
+                    disabled={index === joinRows.length - 1}
+                    onClick={() => moveJoinRow(index, 1)}
+                  >
+                    Вниз
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost btn-compact"
+                    aria-label={`Убрать ${label}`}
+                    disabled={joinRows.length <= 2}
+                    onClick={() => removeJoinRow(index)}
+                  >
+                    Убрать
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          <button type="button" className="btn-ghost" onClick={insertCutaway}>
+            Вставить перебивку
+          </button>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="text-sm">
+              Звук
+              <select
+                className="input mt-1"
+                aria-label="Звук склейки"
+                value={joinAudio}
+                onChange={(event) => setJoinAudio(event.target.value)}
+              >
+                <option value="">без звука</option>
+                {audioAssets.map((asset) => (
+                  <option key={`asset-${asset.id}`} value={`asset:${asset.id}`}>
+                    {(asset.prompt || "").trim() || asset.filename}
+                  </option>
+                ))}
+                {libraryFiles
+                  .filter((file) => file.media_type === "audio")
+                  .map((file) => (
+                    <option key={`file-${file.filename}`} value={`file:${file.filename}`}>
+                      {file.filename}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <label className="text-sm">
+              Начать с секунды
+              <input
+                className="input mt-1"
+                aria-label="Начать с секунды"
+                inputMode="decimal"
+                value={joinAudioStart}
+                onChange={(event) => setJoinAudioStart(event.target.value.replace(/[^\d.]/g, ""))}
+              />
+            </label>
+          </div>
+          <button type="button" className="btn-ghost" onClick={() => void queueJoin()}>
             <Layers className="h-4 w-4" />
             Склеить
           </button>
