@@ -6,7 +6,12 @@ import { formatApiError } from "../api/client";
 import { mediaApiPath } from "../api/media";
 import { useToast } from "../context/ToastContext";
 import {
-  modeForMedia,
+  MAX_IMAGE_REFERENCES,
+  clipboardMediaFiles,
+  filesFromDataTransfer,
+  mediaKind,
+  mergeReferences,
+  modeAfterReferences,
   uploadRenderReference,
   type RenderInputMode,
   type RenderReference,
@@ -23,10 +28,10 @@ const MODES: { id: RenderInputMode; label: string }[] = [
 type LibraryFile = { filename: string; media_type: string };
 
 interface Props {
-  value: RenderReference | null;
+  value: RenderReference[];
   libraryFiles: LibraryFile[];
   inputMode: RenderInputMode;
-  onChange: (next: RenderReference | null) => void;
+  onChange: (next: RenderReference[]) => void;
   onInputModeChange: (mode: RenderInputMode) => void;
   disabled?: boolean;
   backendNote?: string | null;
@@ -46,13 +51,33 @@ export function RenderReferenceField({
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
   const busy = disabled || uploading;
+  const imageCount = value.filter((item) => item.mediaType === "image").length;
+  const room = imageCount < MAX_IMAGE_REFERENCES;
 
-  const applyFile = async (file: File) => {
+  const publish = (incoming: RenderReference[]) => {
+    const before = value.filter((item) => item.mediaType === "image").length;
+    const next = mergeReferences(value, incoming);
+    const after = next.filter((item) => item.mediaType === "image").length;
+    if (incoming.some((item) => item.mediaType === "image") && after === before && before >= MAX_IMAGE_REFERENCES) {
+      push(`Не больше ${MAX_IMAGE_REFERENCES} фото`, "error");
+    }
+    onChange(next);
+    onInputModeChange(modeAfterReferences(inputMode, next));
+  };
+
+  const applyFiles = async (files: File[]) => {
+    const media = files.filter((file) => mediaKind(file));
+    if (!media.length) {
+      push("Нужны jpg, png, webp или короткое mp4", "error");
+      return;
+    }
     setUploading(true);
     try {
-      const next = await uploadRenderReference(file);
-      onChange(next);
-      onInputModeChange(modeForMedia(next.mediaType));
+      const uploaded: RenderReference[] = [];
+      for (const file of media) {
+        uploaded.push(await uploadRenderReference(file));
+      }
+      publish(uploaded);
     } catch (err) {
       push(formatApiError(err), "error");
     } finally {
@@ -62,65 +87,69 @@ export function RenderReferenceField({
   };
 
   const pickLibrary = (filename: string) => {
-    if (!filename) {
-      onChange(null);
-      onInputModeChange("");
-      return;
-    }
+    if (!filename) return;
     const item = libraryFiles.find((file) => file.filename === filename);
     const mediaType = item?.media_type === "video" ? "video" : "image";
-    onChange({
-      filename,
-      mediaType,
-      previewUrl: mediaApiPath(filename),
-    });
-    onInputModeChange(modeForMedia(mediaType));
+    publish([
+      {
+        filename,
+        mediaType,
+        previewUrl: mediaApiPath(filename),
+      },
+    ]);
+  };
+
+  const remove = (filename: string) => {
+    const next = value.filter((item) => item.filename !== filename);
+    onChange(next);
+    onInputModeChange(modeAfterReferences(inputMode, next));
   };
 
   return (
     <div className="space-y-2">
       <div className="text-sm text-slate-200">Пример для генерации</div>
       <div className="space-y-3 rounded-xl border border-slate-800 p-3">
-        {value ? (
-          <div className="flex items-center gap-3">
-            {value.mediaType === "video" ? (
-              <video
-                src={value.previewUrl || mediaApiPath(value.filename)}
-                className="h-[72px] w-[72px] rounded-md border border-slate-700 bg-black object-cover"
-                muted
-                playsInline
-                preload="metadata"
-              />
-            ) : (
-              <img
-                src={value.previewUrl || mediaApiPath(value.filename)}
-                alt=""
-                className="h-[72px] w-[72px] rounded-md border border-slate-700 object-cover"
-              />
-            )}
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-sm text-slate-200" title={value.filename}>
-                {value.filename}
+        {value.length ? (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {value.map((item) => (
+              <div key={item.filename} className="flex min-w-0 flex-col gap-1">
+                {item.mediaType === "video" ? (
+                  <video
+                    src={item.previewUrl || mediaApiPath(item.filename)}
+                    className="h-[72px] w-full rounded-md border border-slate-700 bg-black object-cover"
+                    muted
+                    playsInline
+                    preload="metadata"
+                  />
+                ) : (
+                  <img
+                    src={item.previewUrl || mediaApiPath(item.filename)}
+                    alt=""
+                    className="h-[72px] w-full rounded-md border border-slate-700 object-cover"
+                  />
+                )}
+                <div className="truncate text-xs text-slate-300" title={item.filename}>
+                  {item.filename}
+                </div>
+                <button
+                  type="button"
+                  className="btn-ghost btn-compact min-h-[44px] w-full justify-center"
+                  disabled={busy}
+                  aria-label={`Убрать ${item.filename}`}
+                  onClick={() => remove(item.filename)}
+                >
+                  <X className="h-3.5 w-3.5" />
+                  Убрать
+                </button>
               </div>
-              <div className="text-xs text-slate-500">
-                {value.mediaType === "video" ? "Видео-референс" : "Фото-референс"}
-              </div>
-            </div>
-            <button
-              type="button"
-              className="btn-ghost btn-compact shrink-0"
-              disabled={busy}
-              onClick={() => {
-                onChange(null);
-                onInputModeChange("");
-              }}
-            >
-              <X className="h-4 w-4" />
-              Убрать
-            </button>
+            ))}
           </div>
-        ) : (
+        ) : null}
+
+        {room ? (
           <div
+            tabIndex={0}
+            aria-label="Зона референсов"
             onDragOver={(event) => {
               event.preventDefault();
               if (!busy) setDragging(true);
@@ -130,18 +159,25 @@ export function RenderReferenceField({
               event.preventDefault();
               setDragging(false);
               if (busy) return;
-              const file = event.dataTransfer.files?.[0];
-              if (file) void applyFile(file);
+              void filesFromDataTransfer(event.dataTransfer).then((files) => {
+                if (files.length) void applyFiles(files);
+              });
+            }}
+            onPaste={(event) => {
+              const files = clipboardMediaFiles(event.nativeEvent);
+              if (!files.length) return;
+              event.preventDefault();
+              void applyFiles(files);
             }}
             className={clsx(
-              "flex flex-col items-center gap-2 rounded-xl border border-dashed border-slate-700 bg-slate-900/40 px-4 py-5 text-center",
+              "flex flex-col items-center gap-2 rounded-xl border border-dashed border-slate-700 bg-slate-900/40 px-4 py-5 text-center outline-none focus:border-brand-500",
               dragging && "border-brand-500 bg-brand-500/10",
               busy && "opacity-60"
             )}
           >
             <ImagePlus className="h-5 w-5 text-slate-400" />
             <p className="text-sm text-slate-300">
-              {uploading ? "Загрузка…" : "Перетащите фото или короткое видео"}
+              {uploading ? "Загрузка…" : "Перетащите фото, папку или короткое видео"}
             </p>
             <button
               type="button"
@@ -149,33 +185,34 @@ export function RenderReferenceField({
               disabled={busy}
               onClick={() => inputRef.current?.click()}
             >
-              Выбрать файл
+              Выбрать файлы
             </button>
             <input
               ref={inputRef}
               type="file"
+              multiple
               accept={ACCEPT}
               className="hidden"
               aria-label="Выбрать файл референса"
               disabled={busy}
               onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) void applyFile(file);
+                const files = Array.from(event.target.files ?? []);
+                if (files.length) void applyFiles(files);
               }}
             />
           </div>
-        )}
+        ) : null}
 
         <label className="block text-sm text-slate-400">
-          или из библиотеки
+          добавить из библиотеки
           <select
             className="input mt-1"
             aria-label="или из библиотеки"
             disabled={busy}
-            value={value?.filename ?? ""}
+            value=""
             onChange={(event) => pickLibrary(event.target.value)}
           >
-            <option value="">без референса</option>
+            <option value="">не выбрано</option>
             {libraryFiles
               .filter((file) => file.media_type === "image" || file.media_type === "video")
               .map((file) => (
@@ -186,7 +223,7 @@ export function RenderReferenceField({
           </select>
         </label>
 
-        {value ? (
+        {value.length ? (
           <div className="flex flex-wrap gap-2" role="group" aria-label="режим референса">
             {MODES.map((mode) => (
               <button
@@ -208,8 +245,8 @@ export function RenderReferenceField({
         ) : null}
 
         <p className="text-xs leading-relaxed text-slate-500">
-          Фото — похожее видео (I2V). Короткое mp4 — перенос движения (V2V). Ken Burns — слайдшоу
-          без нейросети.
+          Несколько фото — референс для ролика. Первое фото задаёт «По фото». Ken Burns проходит
+          каждый кадр. Короткое mp4 заменяет список и переносит движение.
         </p>
         {backendNote ? <p className="text-xs text-amber-300/90">{backendNote}</p> : null}
       </div>

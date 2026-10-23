@@ -22,7 +22,8 @@ router = APIRouter(prefix="/api/videos", tags=["videos"], dependencies=[AuthDep]
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
-ALLOWED_EXTENSIONS = VIDEO_EXTENSIONS | IMAGE_EXTENSIONS
+AUDIO_EXTENSIONS = {".mp3", ".m4a", ".wav", ".aac", ".ogg"}
+ALLOWED_EXTENSIONS = VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_EXTENSIONS
 SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 ARCHIVE_MAX_FILES = 100
 
@@ -34,6 +35,11 @@ CONTENT_TYPES = {
     ".jpeg": "image/jpeg",
     ".png": "image/png",
     ".webp": "image/webp",
+    ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".wav": "audio/wav",
+    ".aac": "audio/aac",
+    ".ogg": "audio/ogg",
 }
 
 
@@ -49,6 +55,8 @@ def media_type_for_name(name: str) -> str:
         return "video"
     if suffix in IMAGE_EXTENSIONS:
         return "image"
+    if suffix in AUDIO_EXTENSIONS:
+        return "audio"
     raise ValueError(f"Неподдерживаемое расширение: {suffix}")
 
 

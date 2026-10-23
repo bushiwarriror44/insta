@@ -34,6 +34,10 @@ const POST_TYPE_LABELS: Record<string, string> = {
   tiktok: "TikTok",
 };
 
+function publishableTab(media: VideoOut["media_type"]): "video" | "image" | null {
+  return media === "image" || media === "video" ? media : null;
+}
+
 function basename(path: string | null) {
   if (!path) return "-";
   return path.split(/[\\/]/).pop() || path;
@@ -236,12 +240,13 @@ export function Publishing() {
     if (existing) {
       if (!urlHydrated.current) {
         urlHydrated.current = true;
-        setLibraryTabState(existing.media_type);
+        const tab = publishableTab(existing.media_type);
+        if (tab) setLibraryTabState(tab);
         setPostType(postTypeForAccount(selectedAccount, existing));
         if (!mediaFromUrl || !tabFromUrl) {
           patchUrl({
             media: existing.filename,
-            tab: existing.media_type,
+            ...(tab ? { tab } : {}),
           });
         }
       }
@@ -252,9 +257,10 @@ export function Publishing() {
     const pick = fromUrl ?? firstVideo ?? media[0];
     urlHydrated.current = true;
     setSelectedFilename(pick.filename);
-    setLibraryTabState(pick.media_type);
+    const tab = publishableTab(pick.media_type);
+    if (tab) setLibraryTabState(tab);
     setPostType(postTypeForAccount(selectedAccount, pick));
-    patchUrl({ media: pick.filename, tab: pick.media_type });
+    patchUrl({ media: pick.filename, ...(tab ? { tab } : {}) });
   }, [media, selectedFilename, mediaFromUrl, tabFromUrl, patchUrl, selectedAccount]);
 
   useEffect(() => {
@@ -281,9 +287,10 @@ export function Publishing() {
 
   function selectItem(item: VideoOut) {
     setSelectedFilename(item.filename);
-    setLibraryTabState(item.media_type);
+    const tab = publishableTab(item.media_type);
+    if (tab) setLibraryTabState(tab);
     setPostType(postTypeForAccount(selectedAccount, item));
-    patchUrl({ media: item.filename, tab: item.media_type });
+    patchUrl({ media: item.filename, ...(tab ? { tab } : {}) });
   }
 
   function toggleChecked(filename: string) {

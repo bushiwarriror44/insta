@@ -412,14 +412,14 @@ export interface VideoOut {
   filename: string;
   size_bytes: number;
   modified_at: string;
-  media_type: "image" | "video";
+  media_type: "image" | "video" | "audio";
   duration_sec?: number | null;
 }
 
 export interface UploadOut {
   filename: string;
   size_bytes: number;
-  media_type: "image" | "video";
+  media_type: "image" | "video" | "audio";
   duration_sec?: number | null;
 }
 

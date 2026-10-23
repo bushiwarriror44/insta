@@ -198,10 +198,21 @@ def apply_job_reference_fields(
     reference_json: str | list[dict[str, Any]] | None = None,
     reference_asset_id: int | None = None,
     reference_filename: str | None = None,
+    reference_filenames: list[str] | None = None,
     reference_role: str = REF_START_IMAGE,
 ) -> None:
     specs: list[dict[str, Any]] = []
-    if reference_json is not None:
+    names = [name.strip() for name in (reference_filenames or []) if name and name.strip()]
+    if names:
+        seen: set[str] = set()
+        for name in names:
+            for spec in build_reference_json(reference_filename=name, role=reference_role):
+                key = str(spec.get("filename") or "")
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                specs.append(spec)
+    elif reference_json is not None:
         specs = parse_reference_specs(reference_json)
     if not specs:
         specs = build_reference_json(

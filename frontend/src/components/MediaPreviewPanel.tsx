@@ -19,7 +19,11 @@ const ACCOUNT_STATUS_LABELS: Record<string, string> = {
   error: "ошибка",
 };
 
-function typesForPlatform(platform: string | undefined, media: "image" | "video"): PostType[] {
+function typesForPlatform(
+  platform: string | undefined,
+  media: "image" | "video" | "audio"
+): PostType[] {
+  if (media === "audio") return [];
   if (platform === "youtube") return media === "video" ? ["youtube_short"] : [];
   if (platform === "tiktok") return media === "video" ? ["tiktok"] : [];
   if (media === "image") return ["feed_photo"];
@@ -124,6 +128,8 @@ export function MediaPreviewPanel({
             alt={item.filename}
             className="max-h-72 rounded-lg object-contain"
           />
+        ) : item.media_type === "audio" && blobUrl ? (
+          <audio src={blobUrl} className="w-full" controls preload="metadata" />
         ) : (
           <div className="text-slate-500 text-sm py-12">Предпросмотр недоступен</div>
         )}
@@ -174,7 +180,11 @@ export function MediaPreviewPanel({
             ))}
           </select>
           {compatibleTypes.length === 0 ? (
-            <p className="mt-1 text-xs text-amber-300">Для этой площадки нужно видео.</p>
+            <p className="mt-1 text-xs text-amber-300">
+              {item.media_type === "audio"
+                ? "Аудиодорожка не публикуется отдельно."
+                : "Для этой площадки нужно видео."}
+            </p>
           ) : null}
         </div>
         <div>

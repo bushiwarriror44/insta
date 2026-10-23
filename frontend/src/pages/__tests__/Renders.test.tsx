@@ -25,6 +25,13 @@ const failedGen = {
 
 const account = { id: 1, username: "alice" };
 
+const POSITIVE =
+  "проработай мелкие детали, чёткие текстуры, плавная непрерывная анимация, естественное движение, стабильная камера";
+
+function scenePrompt(text: string) {
+  return `${text}. ${POSITIVE}`;
+}
+
 const apiMock = vi.hoisted(() => ({
   accounts: { list: vi.fn() },
   videos: { list: vi.fn(), upload: vi.fn() },
@@ -100,7 +107,8 @@ describe("Renders page", () => {
     fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
     await waitFor(() =>
       expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
-        prompt: "fog over ridge",
+        prompt: scenePrompt("fog over ridge"),
+        audio_mode: "generate",
         backend: "local",
         account_id: undefined,
         width: 720,
@@ -112,6 +120,71 @@ describe("Renders page", () => {
     );
     const open = await screen.findByRole("link", { name: /открыть/i });
     expect(open).toHaveAttribute("href", "/renders?gen=9");
+  });
+
+  it("queues a render with Ctrl+Enter", async () => {
+    renderRenders();
+    await screen.findByText("Ridge");
+    const prompt = screen.getByPlaceholderText("Промпт");
+    fireEvent.change(prompt, { target: { value: "fog over ridge" } });
+    fireEvent.keyDown(prompt, { key: "Enter", ctrlKey: true });
+    await waitFor(() =>
+      expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
+        prompt: scenePrompt("fog over ridge"),
+        audio_mode: "generate",
+        backend: "local",
+        account_id: undefined,
+        width: 720,
+        height: 1280,
+        duration_s: 5,
+        negative_prompt:
+          "текст, субтитры, водяной знак, логотип, UI, рамка, лишние руки, лишние пальцы, деформированные конечности, искажённое лицо, мутный кадр, низкое качество, артефакты, двоение, морфинг, тряска камеры, стоп-кадр, чёрные полосы, blurry, watermark, bad anatomy",
+      })
+    );
+  });
+
+  it("uploads a soundtrack and sends it with the render", async () => {
+    apiMock.videos.upload.mockResolvedValue({
+      filename: "bed.mp3",
+      media_type: "audio",
+      size_bytes: 8,
+    });
+    renderRenders();
+    await screen.findByText("Ridge");
+    const file = new File([new Uint8Array([1, 2, 3])], "bed.mp3", { type: "audio/mpeg" });
+    fireEvent.change(screen.getByLabelText("Своя дорожка"), { target: { files: [file] } });
+    expect(await screen.findByRole("button", { name: /убрать/i })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /дорожка из библиотеки/i })).toHaveValue("bed.mp3");
+    expect(apiMock.videos.upload).toHaveBeenCalledWith(file, { compress: false });
+    fireEvent.change(screen.getByPlaceholderText("Промпт"), { target: { value: "with bed" } });
+    fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
+    await waitFor(() =>
+      expect(apiMock.factory.createGeneration).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: scenePrompt("with bed"),
+          audio_mode: "library",
+          audio_filename: "bed.mp3",
+        })
+      )
+    );
+  });
+
+  it("sends no soundtrack when sound is turned off", async () => {
+    renderRenders();
+    await screen.findByText("Ridge");
+    fireEvent.click(screen.getByRole("checkbox", { name: /добавить звук/i }));
+    fireEvent.change(screen.getByPlaceholderText("Промпт"), { target: { value: "silent ridge" } });
+    fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
+    await waitFor(() =>
+      expect(apiMock.factory.createGeneration).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: scenePrompt("silent ridge"),
+          audio_mode: "none",
+        })
+      )
+    );
+    const body = apiMock.factory.createGeneration.mock.calls[0][0] as { audio_filename?: string };
+    expect(body.audio_filename).toBeUndefined();
   });
 
   it("highlights the generation from the URL", async () => {
@@ -133,7 +206,8 @@ describe("Renders page", () => {
     fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
     await waitFor(() =>
       expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
-        prompt: "wide ridge",
+        prompt: scenePrompt("wide ridge"),
+        audio_mode: "generate",
         backend: "local",
         account_id: undefined,
         width: 1280,
@@ -170,7 +244,8 @@ describe("Renders page", () => {
     expect(screen.getByText(/fal снимет 5 или 10/i)).toBeInTheDocument();
     await waitFor(() =>
       expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
-        prompt: "long fal",
+        prompt: scenePrompt("long fal"),
+        audio_mode: "generate",
         backend: "fal",
         account_id: undefined,
         width: 720,
@@ -188,6 +263,7 @@ describe("Renders page", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "Платформа" }), {
       target: { value: "reels" },
     });
+    fireEvent.click(screen.getByText("Дополнительно"));
     fireEvent.change(screen.getByLabelText("Негативный промпт"), {
       target: { value: "текст, логотип" },
     });
@@ -197,7 +273,8 @@ describe("Renders page", () => {
     expect(screen.getByText(/файл остаётся mp4/i)).toBeInTheDocument();
     await waitFor(() =>
       expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
-        prompt: "reels apple",
+        prompt: scenePrompt("reels apple"),
+        audio_mode: "generate",
         backend: "local",
         account_id: undefined,
         width: 1080,
@@ -213,12 +290,14 @@ describe("Renders page", () => {
     apiMock.accounts.list.mockResolvedValue([account]);
     renderRenders();
     await screen.findByText("Ridge");
+    fireEvent.click(screen.getByText("Дополнительно"));
     fireEvent.change(screen.getByRole("combobox", { name: /аккаунт/i }), { target: { value: "1" } });
     fireEvent.change(screen.getByPlaceholderText("Промпт"), { target: { value: "city night" } });
     fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
     await waitFor(() =>
       expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
-        prompt: "city night",
+        prompt: scenePrompt("city night"),
+        audio_mode: "generate",
         backend: "local",
         account_id: 1,
         width: 720,
@@ -239,7 +318,8 @@ describe("Renders page", () => {
     fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
     await waitFor(() =>
       expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
-        prompt: "only fal",
+        prompt: scenePrompt("only fal"),
+        audio_mode: "generate",
         backend: "fal",
         account_id: undefined,
         width: 720,
@@ -264,7 +344,8 @@ describe("Renders page", () => {
     fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
     await waitFor(() =>
       expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
-        prompt: "like this still",
+        prompt: scenePrompt("like this still"),
+        audio_mode: "generate",
         backend: "local",
         account_id: undefined,
         width: 720,
@@ -273,6 +354,7 @@ describe("Renders page", () => {
         negative_prompt:
           "текст, субтитры, водяной знак, логотип, UI, рамка, лишние руки, лишние пальцы, деформированные конечности, искажённое лицо, мутный кадр, низкое качество, артефакты, двоение, морфинг, тряска камеры, стоп-кадр, чёрные полосы, blurry, watermark, bad anatomy",
         input_mode: "image_to_video",
+        reference_filenames: ["still.jpg"],
         reference_filename: "still.jpg",
         reference_role: "start_image",
       })
@@ -296,7 +378,8 @@ describe("Renders page", () => {
     fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
     await waitFor(() =>
       expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
-        prompt: "match the frame",
+        prompt: scenePrompt("match the frame"),
+        audio_mode: "generate",
         backend: "local",
         account_id: undefined,
         width: 720,
@@ -305,9 +388,66 @@ describe("Renders page", () => {
         negative_prompt:
           "текст, субтитры, водяной знак, логотип, UI, рамка, лишние руки, лишние пальцы, деформированные конечности, искажённое лицо, мутный кадр, низкое качество, артефакты, двоение, морфинг, тряска камеры, стоп-кадр, чёрные полосы, blurry, watermark, bad anatomy",
         input_mode: "image_to_video",
+        reference_filenames: ["paste.png"],
         reference_filename: "paste.png",
         reference_role: "start_image",
       })
+    );
+  });
+
+  it("uploads two reference images and sends both filenames", async () => {
+    apiMock.videos.upload.mockImplementation(async (file: File) => ({
+      filename: file.name,
+      media_type: "image",
+      size_bytes: 8,
+    }));
+    renderRenders();
+    await screen.findByText("Ridge");
+    const first = new File([new Uint8Array([1])], "one.jpg", { type: "image/jpeg" });
+    const second = new File([new Uint8Array([2])], "two.png", { type: "image/png" });
+    fireEvent.change(screen.getByLabelText(/выбрать файл референса/i), {
+      target: { files: [first, second] },
+    });
+    expect(await screen.findByText("one.jpg")).toBeInTheDocument();
+    expect(screen.getByText("two.png")).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("Промпт"), { target: { value: "two stills" } });
+    fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
+    await waitFor(() =>
+      expect(apiMock.factory.createGeneration).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: scenePrompt("two stills"),
+          reference_filenames: ["one.jpg", "two.png"],
+          reference_filename: "one.jpg",
+          input_mode: "image_to_video",
+        })
+      )
+    );
+  });
+
+  it("pastes two images from the prompt into the reference list", async () => {
+    apiMock.videos.upload.mockImplementation(async (file: File) => ({
+      filename: file.name,
+      media_type: "image",
+      size_bytes: 4,
+    }));
+    renderRenders();
+    await screen.findByText("Ridge");
+    const first = new File([new Uint8Array([1])], "clip-a.png", { type: "image/png" });
+    const second = new File([new Uint8Array([2])], "clip-b.png", { type: "image/png" });
+    fireEvent.paste(screen.getByLabelText("Описание видео"), {
+      clipboardData: { files: [first, second], items: [] },
+    });
+    expect(await screen.findByText("clip-a.png")).toBeInTheDocument();
+    expect(screen.getByText("clip-b.png")).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("Промпт"), { target: { value: "pasted pair" } });
+    fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
+    await waitFor(() =>
+      expect(apiMock.factory.createGeneration).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: scenePrompt("pasted pair"),
+          reference_filenames: ["clip-a.png", "clip-b.png"],
+        })
+      )
     );
   });
 
@@ -335,7 +475,8 @@ describe("Renders page", () => {
     fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
     await waitFor(() =>
       expect(apiMock.factory.createGeneration).toHaveBeenCalledWith({
-        prompt: "from chip",
+        prompt: scenePrompt("from chip"),
+        audio_mode: "generate",
         backend: "fal",
         account_id: undefined,
         width: 720,

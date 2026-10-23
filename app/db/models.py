@@ -423,6 +423,8 @@ class GenerationJob(Base):
     asset_id: Mapped[Optional[int]] = mapped_column(ForeignKey("media_assets.id"), nullable=True)
     input_mode: Mapped[str] = mapped_column(String(32), default="text_only")
     reference_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    audio_mode: Mapped[str] = mapped_column(String(16), default="none")
+    audio_filename: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, index=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

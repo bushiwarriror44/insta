@@ -20,6 +20,72 @@ from app.generation.base import (
 from app.video.compose import TIMEOUT_SECONDS
 
 
+def slideshow_ffmpeg_command(
+    images: list[Path],
+    dest: Path,
+    duration: float,
+    width: int,
+    height: int,
+) -> list[str]:
+    """Ken Burns over one still, or equal slices concatenated for several stills."""
+    if not images:
+        raise GenerationError("slideshow: нет изображений")
+    if len(images) == 1:
+        frames = max(1, int(duration * 30))
+        vf = (
+            f"scale={width * 2}:{height * 2}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},"
+            f"zoompan=z='min(zoom+0.0015,1.3)':d={frames}:s={width}x{height}:fps=30"
+        )
+        return [
+            "ffmpeg",
+            "-y",
+            "-loop",
+            "1",
+            "-i",
+            str(images[0]),
+            "-vf",
+            vf,
+            "-t",
+            str(duration),
+            "-pix_fmt",
+            "yuv420p",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            str(dest),
+        ]
+
+    per = max(duration / len(images), 1 / 30)
+    frames = max(1, int(round(per * 30)))
+    command = ["ffmpeg", "-y"]
+    filters: list[str] = []
+    for index, image in enumerate(images):
+        command += ["-loop", "1", "-i", str(image)]
+        filters.append(
+            f"[{index}:v]scale={width * 2}:{height * 2}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},"
+            f"zoompan=z='min(zoom+0.0015,1.3)':d={frames}:s={width}x{height}:fps=30[v{index}]"
+        )
+    joined = "".join(f"[v{index}]" for index in range(len(images)))
+    filters.append(f"{joined}concat=n={len(images)}:v=1:a=0[v]")
+    command += [
+        "-filter_complex",
+        ";".join(filters),
+        "-map",
+        "[v]",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        str(dest),
+    ]
+    return command
+
+
 class SlideshowVideoBackend(VideoBackend):
     name = "slideshow"
     model_licence = "ffmpeg (no ML)"
@@ -69,32 +135,7 @@ class SlideshowVideoBackend(VideoBackend):
         width = int(request.width)
         height = int(request.height)
         dest = out_dir / f"slideshow-{uuid.uuid4().hex}.mp4"
-        image = images[0]
-        # Slow zoom in (Ken Burns)
-        vf = (
-            f"scale={width * 2}:{height * 2}:force_original_aspect_ratio=increase,"
-            f"crop={width}:{height},"
-            f"zoompan=z='min(zoom+0.0015,1.3)':d={int(duration * 30)}:s={width}x{height}:fps=30"
-        )
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-loop",
-            "1",
-            "-i",
-            str(image),
-            "-vf",
-            vf,
-            "-t",
-            str(duration),
-            "-pix_fmt",
-            "yuv420p",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "fast",
-            str(dest),
-        ]
+        cmd = slideshow_ffmpeg_command(images, dest, duration, width, height)
         try:
             subprocess.run(cmd, check=True, capture_output=True, timeout=TIMEOUT_SECONDS)
         except FileNotFoundError as exc:

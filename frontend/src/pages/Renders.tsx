@@ -21,8 +21,9 @@ import {
 } from "../components/RenderProgressCard";
 import { RenderReferenceField } from "../components/RenderReferenceField";
 import {
-  clipboardMediaFile,
-  modeForMedia,
+  clipboardMediaFiles,
+  mergeReferences,
+  modeAfterReferences,
   uploadRenderReference,
   type RenderInputMode,
   type RenderReference,
@@ -59,6 +60,9 @@ type DurationS = (typeof CLOUD_DURATIONS)[number];
 const DEFAULT_NEGATIVE_PROMPT =
   "текст, субтитры, водяной знак, логотип, UI, рамка, лишние руки, лишние пальцы, деформированные конечности, искажённое лицо, мутный кадр, низкое качество, артефакты, двоение, морфинг, тряска камеры, стоп-кадр, чёрные полосы, blurry, watermark, bad anatomy";
 
+const DEFAULT_POSITIVE_PROMPT =
+  "проработай мелкие детали, чёткие текстуры, плавная непрерывная анимация, естественное движение, стабильная камера";
+
 const PLATFORMS = [
   { id: "", label: "без платформы", duration: null },
   { id: "reels", label: "Reels", duration: 15 },
@@ -74,15 +78,17 @@ function backendLabel(name: string) {
   return name === "auto" ? "Авто" : name;
 }
 
-function referenceMismatch(reference: RenderReference | null, inputMode: RenderInputMode): string | null {
-  if (!reference) return null;
-  if (inputMode === "image_slideshow" && reference.mediaType !== "image") {
+function referenceMismatch(references: RenderReference[], inputMode: RenderInputMode): string | null {
+  if (!references.length) return null;
+  const hasVideo = references.some((item) => item.mediaType === "video");
+  const hasImage = references.some((item) => item.mediaType === "image");
+  if (inputMode === "image_slideshow" && hasVideo) {
     return "Ken Burns работает только с фото. Выберите изображение или режим «По видео».";
   }
-  if (inputMode === "video_to_video" && reference.mediaType !== "video") {
+  if (inputMode === "video_to_video" && !hasVideo) {
     return "Режим «По видео» нужен короткий ролик. Для картинки выберите «По фото».";
   }
-  if (inputMode === "image_to_video" && reference.mediaType !== "image") {
+  if (inputMode === "image_to_video" && !hasImage) {
     return "Режим «По фото» нужен кадр-картинку. Для ролика выберите «По видео».";
   }
   return null;
@@ -91,9 +97,10 @@ function referenceMismatch(reference: RenderReference | null, inputMode: RenderI
 function referenceBackendNote(
   backends: RenderBackendOut[],
   backend: string,
-  reference: RenderReference | null,
+  references: RenderReference[],
   inputMode: RenderInputMode
 ): string | null {
+  const reference = references[0];
   if (!reference || (backend !== "local" && backend !== "auto")) return null;
   const engine = backends.find((item) => item.name === backend);
   if (!engine) return null;
@@ -121,11 +128,17 @@ export function Renders() {
   const [frameId, setFrameId] = useState<(typeof FRAME_SIZES)[number]["id"]>("9:16-720");
   const [durationS, setDurationS] = useState<DurationS>(5);
   const [negativePrompt, setNegativePrompt] = useState(DEFAULT_NEGATIVE_PROMPT);
+  const [positivePrompt, setPositivePrompt] = useState(DEFAULT_POSITIVE_PROMPT);
+  const [addSound, setAddSound] = useState(true);
+  const [soundtrack, setSoundtrack] = useState("");
+  const [uploadingAudio, setUploadingAudio] = useState(false);
+  const [audioDragging, setAudioDragging] = useState(false);
+  const audioInputRef = useRef<HTMLInputElement>(null);
   const [seed, setSeed] = useState("");
   const [platform, setPlatform] = useState<(typeof PLATFORMS)[number]["id"]>("");
   const [joinIds, setJoinIds] = useState("");
   const [libraryFiles, setLibraryFiles] = useState<Array<{ filename: string; media_type: string }>>([]);
-  const [reference, setReference] = useState<RenderReference | null>(null);
+  const [references, setReferences] = useState<RenderReference[]>([]);
   const [inputMode, setInputMode] = useState<RenderInputMode>("");
   const [uploadingReference, setUploadingReference] = useState(false);
   const [localOffer, setLocalOffer] = useState<LocalSwitchOffer | null>(null);
@@ -213,10 +226,89 @@ export function Renders() {
     }
   };
 
+  const acceptAudio = (file: File) => {
+    const suffix = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
+    if (![".mp3", ".m4a", ".wav", ".aac", ".ogg"].includes(suffix)) {
+      push("Нужен файл mp3, m4a, wav, aac или ogg", "error");
+      return;
+    }
+    setUploadingAudio(true);
+    void api.videos
+      .upload(file, { compress: false })
+      .then((out) => {
+        setSoundtrack(out.filename);
+        setLibraryFiles((prev) =>
+          prev.some((item) => item.filename === out.filename)
+            ? prev
+            : [...prev, { filename: out.filename, media_type: "audio" }]
+        );
+      })
+      .catch((err) => push(formatApiError(err), "error"))
+      .finally(() => setUploadingAudio(false));
+  };
+
+  const queueRender = async () => {
+    if (!prompt.trim() || uploadingReference || uploadingAudio) return;
+    const mismatch = referenceMismatch(references, inputMode);
+    if (mismatch) {
+      push(mismatch, "error");
+      return;
+    }
+    try {
+      const names = references.map((item) => item.filename);
+      const role = references.some((item) => item.mediaType === "video")
+        ? "motion_video"
+        : "start_image";
+      const frame = FRAME_SIZES.find((size) => size.id === frameId) ?? FRAME_SIZES[0];
+      const seedNumber = seed.trim() ? Number(seed) : undefined;
+      const scene = prompt.trim();
+      const extra = positivePrompt.trim();
+      const created = await api.factory.createGeneration({
+        prompt: extra ? `${scene}. ${extra}` : scene,
+        backend: inputMode === "image_slideshow" ? "slideshow" : backend,
+        audio_mode: !addSound ? "none" : soundtrack ? "library" : "generate",
+        ...(addSound && soundtrack ? { audio_filename: soundtrack } : {}),
+        account_id: typeof accountId === "number" ? accountId : undefined,
+        width: frame.width,
+        height: frame.height,
+        duration_s: durationS,
+        ...(negativePrompt.trim() ? { negative_prompt: negativePrompt.trim() } : {}),
+        ...(seedNumber !== undefined ? { seed: seedNumber } : {}),
+        ...(names.length
+          ? {
+              input_mode: inputMode || undefined,
+              reference_filenames: names,
+              reference_filename: names[0],
+              reference_role: role,
+            }
+          : {}),
+      });
+      setPrompt("");
+      setReferences([]);
+      setInputMode("");
+      const href = created?.id ? `/renders?gen=${created.id}` : "/renders";
+      push("Рендер в очереди", "success", { label: "Открыть", href });
+      if (created?.id) {
+        setSearchParams(
+          (prev) => {
+            const next = new URLSearchParams(prev);
+            next.set("gen", String(created.id));
+            next.delete("join");
+            return next;
+          },
+          { replace: true }
+        );
+      }
+      await reload();
+    } catch (err) {
+      push(withLocalRenderHint(formatApiError(err)), "error");
+    }
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader icon={Clapperboard} title="Рендеры и склейки" />
-      <Card>
+      <Card className="!overflow-visible">
         <div className="space-y-1">
           <h2 className="font-medium">Новый рендер</h2>
           <p className="text-sm text-slate-400">
@@ -260,47 +352,64 @@ export function Renders() {
             aria-label="Описание видео"
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault();
+                void queueRender();
+              }
+            }}
             onPaste={(event) => {
-              const file = clipboardMediaFile(event.nativeEvent);
-              if (!file || !file.type.startsWith("image/")) return;
+              const files = clipboardMediaFiles(event.nativeEvent);
+              if (!files.length) return;
               event.preventDefault();
               setUploadingReference(true);
-              void uploadRenderReference(file)
-                .then((next) => {
-                  setReference(next);
-                  setInputMode(modeForMedia(next.mediaType));
-                  setLibraryFiles((prev) =>
-                    prev.some((item) => item.filename === next.filename)
-                      ? prev
-                      : [...prev, { filename: next.filename, media_type: next.mediaType }]
-                  );
-                })
+              void (async () => {
+                const uploaded: RenderReference[] = [];
+                for (const file of files) {
+                  uploaded.push(await uploadRenderReference(file));
+                }
+                setReferences((current) => {
+                  const next = mergeReferences(current, uploaded);
+                  setInputMode((mode) => modeAfterReferences(mode, next));
+                  return next;
+                });
+                setLibraryFiles((prev) => {
+                  const known = new Set(prev.map((item) => item.filename));
+                  const extra = uploaded
+                    .filter((item) => !known.has(item.filename))
+                    .map((item) => ({ filename: item.filename, media_type: item.mediaType }));
+                  return extra.length ? [...prev, ...extra] : prev;
+                });
+              })()
                 .catch((err) => push(formatApiError(err), "error"))
                 .finally(() => setUploadingReference(false));
             }}
           />
           <span className="mt-1 block text-xs text-slate-500">
-            Ctrl+V — вставить картинку как пример кадра
+            Ctrl+V — вставить одно или несколько фото как референс
           </span>
         </label>
         <RenderReferenceField
-          value={reference}
+          value={references}
           libraryFiles={libraryFiles}
           inputMode={inputMode}
           disabled={uploadingReference}
-          backendNote={referenceBackendNote(backends, backend, reference, inputMode)}
+          backendNote={referenceBackendNote(backends, backend, references, inputMode)}
           onChange={(next) => {
-            setReference(next);
-            if (!next) return;
-            setLibraryFiles((prev) =>
-              prev.some((item) => item.filename === next.filename)
-                ? prev
-                : [...prev, { filename: next.filename, media_type: next.mediaType }]
-            );
+            setReferences(next);
+            setLibraryFiles((prev) => {
+              const known = new Set(prev.map((item) => item.filename));
+              const extra = next
+                .filter((item) => !known.has(item.filename))
+                .map((item) => ({ filename: item.filename, media_type: item.mediaType }));
+              return extra.length ? [...prev, ...extra] : prev;
+            });
           }}
           onInputModeChange={setInputMode}
         />
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="space-y-2">
+          <div className="text-sm text-slate-200">Кадр</div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <label className="block text-sm text-slate-200">
             Платформа
             <select
@@ -354,44 +463,152 @@ export function Renders() {
               ))}
             </select>
           </label>
-          <label className="block text-sm text-slate-200">
-            Негативный промпт
-            <input
-              className="input mt-1"
-              aria-label="Негативный промпт"
-              placeholder={DEFAULT_NEGATIVE_PROMPT}
-              value={negativePrompt}
-              onChange={(e) => setNegativePrompt(e.target.value)}
-            />
-          </label>
-          <label className="block text-sm text-slate-200">
-            Seed
-            <input
-              className="input mt-1"
-              aria-label="Seed"
-              inputMode="numeric"
-              placeholder="пусто — каждый раз новый"
-              value={seed}
-              onChange={(e) => setSeed(e.target.value.replace(/[^\d]/g, ""))}
-            />
-          </label>
-          <label className="block text-sm text-slate-200">
-            Аккаунт (необязательно)
-            <select
-              className="input mt-1"
-              aria-label="аккаунт"
-              value={accountId}
-              onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")}
-            >
-              <option value="">без аккаунта</option>
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.username}
-                </option>
-              ))}
-            </select>
-          </label>
+          </div>
         </div>
+        <div className="space-y-2">
+          <label className="flex items-center gap-2 text-sm text-slate-200">
+            <input
+              type="checkbox"
+              aria-label="Добавить звук"
+              checked={addSound}
+              onChange={(e) => setAddSound(e.target.checked)}
+            />
+            Добавить звук
+          </label>
+          {addSound ? (
+            <div className="space-y-3 rounded-xl border border-slate-800 p-3">
+              <div
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  if (!uploadingAudio) setAudioDragging(true);
+                }}
+                onDragLeave={() => setAudioDragging(false)}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  setAudioDragging(false);
+                  const file = event.dataTransfer.files?.[0];
+                  if (file) acceptAudio(file);
+                }}
+                className={clsx(
+                  "flex flex-col items-center gap-2 rounded-xl border border-dashed border-slate-700 bg-slate-900/40 px-4 py-5 text-center",
+                  audioDragging && "border-brand-500 bg-brand-500/10",
+                  uploadingAudio && "opacity-60"
+                )}
+              >
+                <p className="text-sm text-slate-300">
+                  {uploadingAudio ? "Загрузка дорожки…" : "Перетащите свою дорожку"}
+                </p>
+                <button
+                  type="button"
+                  className="btn-ghost btn-compact min-h-[44px]"
+                  disabled={uploadingAudio}
+                  onClick={() => audioInputRef.current?.click()}
+                >
+                  Выбрать файл
+                </button>
+                <input
+                  ref={audioInputRef}
+                  type="file"
+                  accept=".mp3,.m4a,.wav,.aac,.ogg,audio/*"
+                  className="hidden"
+                  aria-label="Своя дорожка"
+                  disabled={uploadingAudio}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = "";
+                    if (file) acceptAudio(file);
+                  }}
+                />
+              </div>
+              {soundtrack ? (
+                <p className="flex items-center gap-2 text-sm text-slate-300">
+                  <span className="min-w-0 truncate">{soundtrack}</span>
+                  <button
+                    type="button"
+                    className="btn-ghost btn-compact min-h-[44px] shrink-0"
+                    onClick={() => setSoundtrack("")}
+                  >
+                    убрать
+                  </button>
+                </p>
+              ) : (
+                <p className="text-xs text-slate-500">Без файла сгенерируется короткая дорожка.</p>
+              )}
+              <label className="block text-sm text-slate-400">
+                или из библиотеки
+                <select
+                  className="input mt-1"
+                  aria-label="Дорожка из библиотеки"
+                  value={soundtrack}
+                  onChange={(e) => setSoundtrack(e.target.value)}
+                >
+                  <option value="">сгенерировать дорожку</option>
+                  {libraryFiles
+                    .filter((file) => file.media_type === "audio")
+                    .map((file) => (
+                      <option key={file.filename} value={file.filename}>
+                        {file.filename}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            </div>
+          ) : null}
+        </div>
+        <details className="rounded-xl border border-slate-800 px-3 py-2">
+          <summary className="cursor-pointer text-sm text-slate-200">Дополнительно</summary>
+          <div className="mt-3 space-y-3">
+            <label className="block text-sm text-slate-200">
+              Позитивный промпт
+              <textarea
+                className="input mt-1 min-h-[72px]"
+                aria-label="Позитивный промпт"
+                placeholder={DEFAULT_POSITIVE_PROMPT}
+                value={positivePrompt}
+                onChange={(e) => setPositivePrompt(e.target.value)}
+              />
+            </label>
+            <label className="block text-sm text-slate-200">
+              Негативный промпт
+              <textarea
+                className="input mt-1 min-h-[72px]"
+                aria-label="Негативный промпт"
+                placeholder={DEFAULT_NEGATIVE_PROMPT}
+                value={negativePrompt}
+                onChange={(e) => setNegativePrompt(e.target.value)}
+              />
+            </label>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="block text-sm text-slate-200">
+                Seed
+                <input
+                  className="input mt-1"
+                  aria-label="Seed"
+                  inputMode="numeric"
+                  placeholder="пусто — каждый раз новый"
+                  value={seed}
+                  onChange={(e) => setSeed(e.target.value.replace(/[^\d]/g, ""))}
+                />
+              </label>
+              <label className="block text-sm text-slate-200">
+                Аккаунт (необязательно)
+                <select
+                  className="input mt-1"
+                  aria-label="аккаунт"
+                  value={accountId}
+                  onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")}
+                >
+                  <option value="">без аккаунта</option>
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.username}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </div>
+        </details>
         <p className="text-xs text-slate-500">
           {shortDurationOnly(backend, inputMode)
             ? "Local Wan длиннее 10 с не снимет. 480p: портрет 480×832, альбом 832×480."
@@ -400,62 +617,16 @@ export function Renders() {
               : "Локальный Wan 1.3B снимает 480p и только 5 или 10 с. Размер выше задаёт ориентацию."}
           {platform ? " 9:16, звук и поля под кнопки платформы. Файл остаётся mp4." : ""}
         </p>
-        <button
-          className="btn-primary"
-          disabled={!prompt.trim() || uploadingReference}
-          onClick={async () => {
-            const mismatch = referenceMismatch(reference, inputMode);
-            if (mismatch) {
-              push(mismatch, "error");
-              return;
-            }
-            try {
-              const ref = reference?.filename ?? "";
-              const role = reference?.mediaType === "video" ? "motion_video" : "start_image";
-              const frame = FRAME_SIZES.find((size) => size.id === frameId) ?? FRAME_SIZES[0];
-              const seedNumber = seed.trim() ? Number(seed) : undefined;
-              const created = await api.factory.createGeneration({
-                prompt: prompt.trim(),
-                backend: inputMode === "image_slideshow" ? "slideshow" : backend,
-                account_id: typeof accountId === "number" ? accountId : undefined,
-                width: frame.width,
-                height: frame.height,
-                duration_s: durationS,
-                ...(negativePrompt.trim() ? { negative_prompt: negativePrompt.trim() } : {}),
-                ...(seedNumber !== undefined ? { seed: seedNumber } : {}),
-                ...(ref
-                  ? {
-                      input_mode: inputMode || undefined,
-                      reference_filename: ref,
-                      reference_role: role,
-                    }
-                  : {}),
-              });
-              setPrompt("");
-              setReference(null);
-              setInputMode("");
-              const href = created?.id ? `/renders?gen=${created.id}` : "/renders";
-              push("Рендер в очереди", "success", { label: "Открыть", href });
-              if (created?.id) {
-                setSearchParams(
-                  (prev) => {
-                    const next = new URLSearchParams(prev);
-                    next.set("gen", String(created.id));
-                    next.delete("join");
-                    return next;
-                  },
-                  { replace: true }
-                );
-              }
-              await reload();
-            } catch (err) {
-              push(withLocalRenderHint(formatApiError(err)), "error");
-            }
-          }}
-        >
-          <Play className="h-4 w-4" />
-          Поставить рендер
-        </button>
+        <div className="sticky bottom-0 z-10 -mx-5 -mb-5 border-t border-slate-800 bg-slate-950/95 px-5 py-3 backdrop-blur sm:static sm:mx-0 sm:mb-0 sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
+          <button
+            className="btn-primary w-full sm:w-auto"
+            disabled={!prompt.trim() || uploadingReference || uploadingAudio}
+            onClick={() => void queueRender()}
+          >
+            <Play className="h-4 w-4" />
+            Поставить рендер
+          </button>
+        </div>
       </Card>
       <Card>
         <h2 className="font-medium mb-3">Рендеры</h2>

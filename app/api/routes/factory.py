@@ -100,7 +100,10 @@ class GenerationCreate(BaseModel):
     input_mode: Optional[str] = None
     reference_asset_id: Optional[int] = None
     reference_filename: Optional[str] = None
+    reference_filenames: Optional[list[str]] = None
     reference_role: str = "start_image"
+    audio_mode: str = "none"
+    audio_filename: Optional[str] = None
 
 
 class GenerationRetryIn(BaseModel):
@@ -441,6 +444,19 @@ def create_generation(payload: GenerationCreate, db: Session = Depends(get_db)) 
     from app.generation.base import INPUT_MODE_SLIDESHOW, GenerationError
     from app.services.generation_inputs import apply_job_reference_fields, ensure_job_references
 
+    audio_mode = (payload.audio_mode or "none").strip().lower()
+    if audio_mode not in {"none", "generate", "library"}:
+        raise HTTPException(status_code=400, detail="audio_mode: none, generate или library")
+    audio_filename = (payload.audio_filename or "").strip() or None
+    if audio_mode == "library":
+        if not audio_filename:
+            raise HTTPException(status_code=400, detail="для звука из библиотеки нужен файл")
+        from app.video.mux_audio import MuxError, resolve_audio_file
+
+        try:
+            resolve_audio_file(audio_filename, settings)
+        except MuxError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     job = GenerationJob(
         prompt=payload.prompt,
         negative_prompt=payload.negative_prompt,
@@ -450,15 +466,21 @@ def create_generation(payload: GenerationCreate, db: Session = Depends(get_db)) 
         height=payload.height,
         seed=payload.seed,
         account_id=payload.account_id,
+        audio_mode=audio_mode,
+        audio_filename=audio_filename,
         status=PipelineStatus.queued,
         stage="в очереди",
         scheduled_at=datetime.now(timezone.utc),
     )
+    names = [name.strip() for name in (payload.reference_filenames or []) if name and name.strip()]
+    if len(names) > 8:
+        raise HTTPException(status_code=400, detail="не больше 8 референсов")
     apply_job_reference_fields(
         job,
         input_mode=payload.input_mode,
         reference_asset_id=payload.reference_asset_id,
         reference_filename=payload.reference_filename,
+        reference_filenames=names or None,
         reference_role=payload.reference_role,
     )
     if job.input_mode == INPUT_MODE_SLIDESHOW:

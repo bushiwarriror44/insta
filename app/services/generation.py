@@ -36,6 +36,7 @@ from app.generation.base import (
 from app.generation.hints import enrich_generation_error
 from app.generation.registry import get_backend
 from app.services.generation_inputs import backend_supports_request, resolve_generation_inputs
+from app.video.mux_audio import MuxError, mux_audio
 from app.scheduler.queue import claim_due, fail
 from app.services.budget import day_start, next_day, refuses
 from app.services.media import probe_video
@@ -154,6 +155,19 @@ def run_generation_job(
     final_path = settings.media_dir / final_name
     result.video_path.rename(final_path)
 
+    mux_note = ""
+    audio_mode = (job.audio_mode or "none").strip().lower()
+    if audio_mode not in {"", "none"}:
+        try:
+            mux_audio(
+                final_path,
+                mode=audio_mode,
+                filename=job.audio_filename,
+                settings=settings,
+            )
+        except MuxError as exc:
+            mux_note = f"звук не приклеен: {exc}"[:240]
+
     probe = probe_video(final_path)
     asset = MediaAsset(
         filename=final_name,
@@ -175,7 +189,7 @@ def run_generation_job(
     job.asset_id = asset.id
     job.cost_usd = result.cost_usd
     job.seed = result.seed if result.seed is not None else job.seed
-    job.last_error = None
+    job.last_error = mux_note or None
     job.finished_at = now
 
     session.add(job)

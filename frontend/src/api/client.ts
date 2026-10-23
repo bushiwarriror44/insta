@@ -699,7 +699,10 @@ export const api = {
       input_mode?: string;
       reference_asset_id?: number;
       reference_filename?: string;
+      reference_filenames?: string[];
       reference_role?: string;
+      audio_mode?: "none" | "generate" | "library";
+      audio_filename?: string;
     }) => request<{ id: number; status: string }>("/api/generations", { method: "POST", body }),
     cancelGeneration: (id: number) =>
       request<{ id: number; status: string }>(`/api/generations/${id}/cancel`, { method: "POST" }),

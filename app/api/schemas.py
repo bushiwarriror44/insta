@@ -313,14 +313,14 @@ class VideoOut(BaseModel):
     filename: str
     size_bytes: int
     modified_at: datetime
-    media_type: Literal["image", "video"]
+    media_type: Literal["image", "video", "audio"]
     duration_sec: Optional[float] = None
 
 
 class UploadOut(BaseModel):
     filename: str
     size_bytes: int
-    media_type: Literal["image", "video"]
+    media_type: Literal["image", "video", "audio"]
     duration_sec: Optional[float] = None
 
 

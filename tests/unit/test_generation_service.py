@@ -159,6 +159,34 @@ def test_run_generation_job_slideshow_resolves_slideshow_backend(
     assert job.status is PipelineStatus.done
 
 
+def test_mux_failure_keeps_the_finished_clip(db_session, app_env, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.media.probe_video",
+        lambda _path: type("P", (), {"duration_s": 5.0, "width": 720, "height": 1280})(),
+    )
+
+    def _boom(*_args, **_kwargs):
+        from app.video.mux_audio import MuxError
+
+        raise MuxError("ffmpeg не приклеил звук")
+
+    monkeypatch.setattr("app.services.generation.mux_audio", _boom)
+    job = GenerationJob(
+        prompt="rain",
+        backend="local",
+        status=PipelineStatus.queued,
+        audio_mode="generate",
+    )
+    db_session.add(job)
+    db_session.commit()
+    run_generation_job(db_session, job, backend=FakeEngine("local"), settings=settings)
+    db_session.refresh(job)
+    assert job.status is PipelineStatus.done
+    assert job.asset_id is not None
+    assert job.last_error is not None
+    assert "звук не приклеен" in job.last_error
+
+
 def test_run_generation_clears_stale_error_before_the_next_attempt(db_session, app_env):
     from app.db import SessionLocal
 
