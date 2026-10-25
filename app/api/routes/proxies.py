@@ -8,7 +8,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import AuthDep, get_db
-from app.api.schemas import ProxyIn, ProxyOut, ProxyUpdate
+from app.api.schemas import (
+    ProxyCheckBatchIn,
+    ProxyCheckBatchOut,
+    ProxyIn,
+    ProxyOut,
+    ProxyUpdate,
+)
 from app.db import Account, Proxy
 from app.geo.country_codes import countries_mismatch
 from app.proxies.pool import HealthSnapshot, health_check_record, upsert_proxy
@@ -42,7 +48,17 @@ def _to_proxy_out(
     data["geo_mismatch_warning"] = _geo_mismatch(proxy, snapshot)
     if snapshot is not None:
         data["instagram_reachable"] = snapshot.instagram_reachable
-    data["check_detail"] = check_detail
+        data["instagram_login_ok"] = snapshot.instagram_login_reachable
+        data["last_check_ms"] = snapshot.check_ms
+        data["latency_ms"] = snapshot.latency_ms
+        data["instagram_latency_ms"] = snapshot.instagram_latency_ms
+        data["login_page_latency_ms"] = snapshot.login_page_latency_ms
+    else:
+        data["instagram_reachable"] = proxy.instagram_reachable
+        data["instagram_login_ok"] = proxy.instagram_login_ok
+        data["last_check_ms"] = proxy.last_check_ms
+    detail = check_detail if check_detail is not None else proxy.last_check_detail
+    data["check_detail"] = detail
     return ProxyOut.model_validate(data)
 
 
@@ -119,6 +135,52 @@ def delete_proxy(label: str, db: Session = Depends(get_db)) -> dict[str, bool]:
     db.delete(proxy)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/check-batch", response_model=ProxyCheckBatchOut)
+def check_proxies_batch(
+    payload: ProxyCheckBatchIn | None = None, db: Session = Depends(get_db)
+) -> ProxyCheckBatchOut:
+    """FULL-check many proxies (or all). Sequential to avoid stampeding egress."""
+    body = payload or ProxyCheckBatchIn()
+    counts = _proxy_account_counts(db)
+    if body.labels:
+        wanted = [label.strip() for label in body.labels if (label or "").strip()]
+        rows = db.scalars(select(Proxy).where(Proxy.label.in_(wanted)).order_by(Proxy.label)).all()
+        found = {p.label for p in rows}
+        missing = [label for label in wanted if label not in found]
+        if missing:
+            raise HTTPException(
+                status_code=404,
+                detail=f"прокси не найдены: {', '.join(missing[:8])}",
+            )
+    else:
+        rows = db.scalars(select(Proxy).order_by(Proxy.label)).all()
+
+    results: list[ProxyOut] = []
+    healthy = 0
+    failed = 0
+    for proxy in rows:
+        ok, snapshot, check_detail = health_check_record(db, proxy)
+        db.refresh(proxy)
+        if ok:
+            healthy += 1
+        else:
+            failed += 1
+        results.append(
+            _to_proxy_out(
+                proxy,
+                accounts_count=counts.get(proxy.id, 0),
+                snapshot=snapshot,
+                check_detail=check_detail,
+            )
+        )
+    return ProxyCheckBatchOut(
+        results=results,
+        checked=len(results),
+        healthy=healthy,
+        failed=failed,
+    )
 
 
 @router.post("/{label}/check", response_model=ProxyOut)

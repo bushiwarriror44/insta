@@ -25,8 +25,11 @@ LOGIN_EVENT_KINDS = frozenset(
         DiagnosticRunKind.first_login,
         DiagnosticRunKind.mint_mobile_session,
         DiagnosticRunKind.browser_session,
+        DiagnosticRunKind.studio_login,
     }
 )
+
+AttemptStatus = Literal["started", "ok", "fail", "skip"]
 
 
 @dataclass
@@ -112,6 +115,31 @@ class DiagnosticCollector:
 
     def error(self, step: str, message: str) -> None:
         self.log("error", step, message)
+
+    def attempt(
+        self,
+        method: str,
+        status: AttemptStatus,
+        detail: str = "",
+        *,
+        error: str | None = None,
+        next_method: str | None = None,
+    ) -> None:
+        """One connection-method try: preferred → next, with a stable message shape."""
+        parts = [f"method={method}", f"status={status}"]
+        if detail:
+            parts.append(f"detail={detail}")
+        if error:
+            parts.append(f"error={error}")
+        if next_method:
+            parts.append(f"next={next_method}")
+        message = " ".join(parts)
+        if status == "fail":
+            self.error("attempt", message)
+        elif status == "skip":
+            self.warn("attempt", message)
+        else:
+            self.info("attempt", message)
 
     def finish(self, status: RunStatus, summary: str) -> None:
         self._run.status = DiagnosticRunStatus(status)

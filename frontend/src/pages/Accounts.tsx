@@ -45,7 +45,8 @@ import {
 import { StatusBadge } from "../components/StatusBadge";
 import { useAuth } from "../context/AuthContext";
 
-type AccountsMainTab = "accounts" | "proxies" | "floppydata";
+type AccountsMainTab = "accounts" | "proxies" | "proxy-check" | "floppydata";
+type ProxyCheckFilter = "" | "ok" | "bad" | "geo-mismatch" | "ig-bad";
 import { useToast } from "../context/ToastContext";
 import { usePollWhenVisible } from "../hooks/usePollWhenVisible";
 import { useAssistantMutate } from "../lib/assistantMutate";
@@ -177,9 +178,21 @@ export function Accounts() {
     const raw = searchParams.get("proxy") || "";
     return raw === "bad" || raw === "ok" ? raw : "";
   })();
+  const tabFromUrl = (() => {
+    const raw = (searchParams.get("tab") || searchParams.get("main") || "").toLowerCase();
+    if (raw === "proxy-check" || raw === "check") return "proxy-check" as const;
+    if (raw === "proxies" || raw === "proxy") return "proxies" as const;
+    if (raw === "floppydata") return "floppydata" as const;
+    if (raw === "accounts") return "accounts" as const;
+    return null;
+  })();
   const [mainTab, setMainTab] = useState<AccountsMainTab>(() =>
-    proxyFromUrl ? "proxies" : "accounts"
+    proxyFromUrl ? "proxies" : tabFromUrl ?? "accounts"
   );
+  const [proxyCheckFilter, setProxyCheckFilter] = useState<ProxyCheckFilter>("");
+  const [proxyCheckSelected, setProxyCheckSelected] = useState<string[]>([]);
+  const [proxyChecking, setProxyChecking] = useState(false);
+  const [proxyCheckProgress, setProxyCheckProgress] = useState({ done: 0, total: 0 });
   const download = searchParams.get("download");
   const downloadFormat = searchParams.get("format") === "txt" ? "txt" : "json";
 
@@ -245,6 +258,69 @@ export function Accounts() {
     if (!proxyFilter) return proxies;
     return proxies.filter((p) => (proxyFilter === "ok" ? p.is_healthy : !p.is_healthy));
   }, [proxies, proxyFilter]);
+  const shownCheckProxies = useMemo(() => {
+    return proxies.filter((p) => {
+      if (proxyCheckFilter === "ok") return p.is_healthy;
+      if (proxyCheckFilter === "bad") return !p.is_healthy;
+      if (proxyCheckFilter === "geo-mismatch") return Boolean(p.geo_mismatch_warning);
+      if (proxyCheckFilter === "ig-bad") return p.instagram_reachable === false;
+      return true;
+    });
+  }, [proxies, proxyCheckFilter]);
+  const selectMainTab = useCallback(
+    (id: AccountsMainTab) => {
+      setMainTab(id);
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev);
+          if (id === "proxy-check") params.set("tab", "proxy-check");
+          else if (id === "proxies") {
+            params.delete("tab");
+            // keep ?proxy= filter when already on proxies
+          } else {
+            params.delete("tab");
+          }
+          return params;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
+  const runProxyCheckBatch = useCallback(
+    async (labels?: string[]) => {
+      const target = labels?.length ? labels : proxies.map((p) => p.label);
+      if (target.length === 0) {
+        push("Нет прокси для проверки", "info");
+        return;
+      }
+      setProxyChecking(true);
+      setProxyCheckProgress({ done: 0, total: target.length });
+      try {
+        const out = await api.proxies.checkBatch(labels?.length ? labels : undefined);
+        setProxies((arr) => {
+          const byId = new Map(arr.map((p) => [p.id, p]));
+          for (const p of out.results) byId.set(p.id, p);
+          return Array.from(byId.values()).sort((a, b) => a.label.localeCompare(b.label));
+        });
+        setProxyCheckProgress({ done: out.checked, total: out.checked });
+        setProxyCheckSelected([]);
+        if (out.failed > 0) {
+          push(
+            `Проверено ${out.checked}: ${out.healthy} ок, ${out.failed} с ошибкой`,
+            "error"
+          );
+        } else {
+          push(`Проверено ${out.checked}: все исправны`, "success");
+        }
+      } catch (err) {
+        push(formatApiError(err), "error");
+      } finally {
+        setProxyChecking(false);
+      }
+    },
+    [proxies, push]
+  );
   useEffect(() => {
     if (!proxyFilter) return;
     document.getElementById("proxies-card")?.scrollIntoView?.({ block: "start" });
@@ -469,6 +545,7 @@ export function Accounts() {
           [
             ["accounts", "Аккаунты"],
             ["proxies", "Прокси"],
+            ["proxy-check", "Проверка"],
             ["floppydata", "Floppydata прокси"],
           ] as const
         ).map(([id, label]) => (
@@ -483,7 +560,7 @@ export function Accounts() {
                 ? "rounded-t-lg bg-slate-900 px-3 py-1.5 text-xs text-slate-100 ring-1 ring-slate-700/80"
                 : "rounded-t-lg px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-900/60 hover:text-slate-300"
             }
-            onClick={() => setMainTab(id)}
+            onClick={() => selectMainTab(id)}
           >
             {label}
           </button>
@@ -687,6 +764,245 @@ export function Accounts() {
           </div>
         )}
       </Card>
+      ) : null}
+
+      {mainTab === "proxy-check" ? (
+        <Card
+          id="proxy-check-card"
+          title="Проверка прокси"
+          description={
+            proxyChecking
+              ? `Проверка ${proxyCheckProgress.done}/${proxyCheckProgress.total}…`
+              : proxyCheckFilter
+                ? `${shownCheckProxies.length} из ${proxies.length}`
+                : `${proxies.length} в списке`
+          }
+          actions={
+            <div className="flex flex-wrap items-center gap-2">
+              {(
+                [
+                  ["", "Все"],
+                  ["ok", "Исправные"],
+                  ["bad", "Недоступные"],
+                  ["geo-mismatch", "Geo mismatch"],
+                  ["ig-bad", "IG недоступен"],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value || "all"}
+                  type="button"
+                  aria-pressed={proxyCheckFilter === value}
+                  aria-label={`Фильтр проверки: ${label}`}
+                  className={
+                    proxyCheckFilter === value
+                      ? "rounded-full bg-brand-600/20 px-2 py-0.5 text-xs text-brand-200 ring-1 ring-brand-500/40"
+                      : "rounded-full px-2 py-0.5 text-xs text-slate-400 ring-1 ring-slate-700 hover:bg-slate-800/60"
+                  }
+                  onClick={() => setProxyCheckFilter(value)}
+                >
+                  {label}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="btn-ghost text-xs"
+                data-testid="proxy-check-all"
+                disabled={proxyChecking || proxies.length === 0}
+                onClick={() => void runProxyCheckBatch()}
+              >
+                <RefreshCw size={14} className={proxyChecking ? "animate-spin" : ""} />
+                {proxyChecking
+                  ? `${proxyCheckProgress.done}/${proxyCheckProgress.total}…`
+                  : "Проверить все"}
+              </button>
+              <button
+                type="button"
+                className="btn-ghost text-xs"
+                data-testid="proxy-check-selected"
+                disabled={proxyChecking || proxyCheckSelected.length === 0}
+                onClick={() => void runProxyCheckBatch(proxyCheckSelected)}
+              >
+                Проверить выбранные
+                {proxyCheckSelected.length > 0 ? ` (${proxyCheckSelected.length})` : ""}
+              </button>
+            </div>
+          }
+        >
+          {proxies.length === 0 ? (
+            <EmptyState>Прокси пока нет.</EmptyState>
+          ) : shownCheckProxies.length === 0 ? (
+            <EmptyState>Нет прокси с этим фильтром.</EmptyState>
+          ) : (
+            <div className="table-scroll">
+              <table className="table-base" data-testid="proxy-check-table">
+                <thead>
+                  <tr>
+                    <th className="w-8">
+                      <input
+                        type="checkbox"
+                        aria-label="Выбрать все видимые"
+                        checked={
+                          shownCheckProxies.length > 0 &&
+                          shownCheckProxies.every((p) =>
+                            proxyCheckSelected.includes(p.label)
+                          )
+                        }
+                        onChange={(e) => {
+                          const labels = shownCheckProxies.map((p) => p.label);
+                          if (e.target.checked) {
+                            setProxyCheckSelected((prev) =>
+                              Array.from(new Set([...prev, ...labels]))
+                            );
+                          } else {
+                            setProxyCheckSelected((prev) =>
+                              prev.filter((l) => !labels.includes(l))
+                            );
+                          }
+                        }}
+                      />
+                    </th>
+                    <th>Метка</th>
+                    <th className="hidden sm:table-cell">IP</th>
+                    <th className="hidden md:table-cell">Страна / geo</th>
+                    <th>Статус</th>
+                    <th className="hidden sm:table-cell">IG API</th>
+                    <th className="hidden md:table-cell">Login</th>
+                    <th className="hidden lg:table-cell">мс</th>
+                    <th className="hidden lg:table-cell">Проверено</th>
+                    <th className="hidden xl:table-cell">Детали</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {shownCheckProxies.map((p) => (
+                    <tr
+                      key={p.id}
+                      className={`hover:bg-slate-900/40 ${flashProxyIds.includes(p.id) ? "flash-row" : ""}`}
+                    >
+                      <td>
+                        <input
+                          type="checkbox"
+                          aria-label={`Выбрать ${p.label}`}
+                          checked={proxyCheckSelected.includes(p.label)}
+                          onChange={(e) => {
+                            setProxyCheckSelected((prev) =>
+                              e.target.checked
+                                ? [...prev, p.label]
+                                : prev.filter((l) => l !== p.label)
+                            );
+                          }}
+                        />
+                      </td>
+                      <td className="font-medium">
+                        <div className="truncate" title={p.label}>
+                          {p.label}
+                        </div>
+                      </td>
+                      <td className="hidden font-mono text-[11px] tabular-nums text-slate-300 sm:table-cell">
+                        {p.last_known_ip ?? "—"}
+                      </td>
+                      <td
+                        className="hidden min-w-0 text-slate-400 md:table-cell"
+                        title={
+                          p.geo_mismatch_warning
+                            ? `Не совпадает с заявленной страной (${p.country})`
+                            : undefined
+                        }
+                      >
+                        <span
+                          className={
+                            p.geo_mismatch_warning
+                              ? "inline-flex items-center gap-1 text-amber-300"
+                              : "inline-flex items-center gap-1"
+                          }
+                        >
+                          <CountryFlag code={p.country} />
+                          {p.country ?? "—"}
+                          <span className="text-slate-600">/</span>
+                          <CountryFlag code={p.last_geo_country} />
+                          {p.last_geo_country ?? "—"}
+                        </span>
+                      </td>
+                      <td>
+                        <StatusBadge value={p.is_healthy ? "ok" : "bad"} />
+                      </td>
+                      <td className="hidden text-xs sm:table-cell">
+                        {p.instagram_reachable == null ? (
+                          <span className="text-slate-500">—</span>
+                        ) : p.instagram_reachable ? (
+                          <span className="text-emerald-400">ok</span>
+                        ) : (
+                          <span className="text-rose-400">bad</span>
+                        )}
+                      </td>
+                      <td className="hidden text-xs md:table-cell">
+                        {p.instagram_login_ok == null ? (
+                          <span className="text-slate-500">—</span>
+                        ) : p.instagram_login_ok ? (
+                          <span className="text-emerald-400">ok</span>
+                        ) : (
+                          <span className="text-rose-400">bad</span>
+                        )}
+                      </td>
+                      <td className="hidden tabular-nums text-xs text-slate-400 lg:table-cell">
+                        {p.last_check_ms != null
+                          ? p.last_check_ms
+                          : p.latency_ms != null
+                            ? p.latency_ms
+                            : "—"}
+                      </td>
+                      <td className="hidden text-[11px] text-slate-500 lg:table-cell">
+                        {p.last_checked_at
+                          ? new Date(p.last_checked_at).toLocaleString()
+                          : "—"}
+                      </td>
+                      <td
+                        className="hidden max-w-[14rem] truncate text-[11px] text-slate-500 xl:table-cell"
+                        title={p.check_detail ?? undefined}
+                      >
+                        {p.check_detail?.trim() || "—"}
+                      </td>
+                      <td className="text-right">
+                        <RowIconButton
+                          label={`Проверить снова ${p.label}`}
+                          disabled={proxyChecking}
+                          onClick={async () => {
+                            try {
+                              const updated = await api.proxies.check(p.label);
+                              setProxies((arr) =>
+                                arr.map((x) => (x.id === updated.id ? updated : x))
+                              );
+                              const detail = updated.check_detail?.trim();
+                              if (updated.is_healthy && !detail) {
+                                push(`Прокси ${p.label}: работает`, "success");
+                              } else if (updated.is_healthy && detail) {
+                                push(
+                                  `Прокси ${p.label}: работает · ${detail}`,
+                                  "success"
+                                );
+                              } else {
+                                push(
+                                  detail
+                                    ? `Прокси ${p.label}: ${detail}`
+                                    : `Прокси ${p.label}: недоступен`,
+                                  "error"
+                                );
+                              }
+                            } catch (err) {
+                              push(formatApiError(err), "error");
+                            }
+                          }}
+                        >
+                          <RefreshCw size={14} />
+                        </RowIconButton>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
       ) : null}
 
       {mainTab === "floppydata" ? (

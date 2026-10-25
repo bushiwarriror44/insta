@@ -8,7 +8,7 @@ proxy URLs embed provider credentials — protect the admin API with
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -40,8 +40,24 @@ class ProxyOut(BaseModel):
     created_at: Optional[datetime] = None
     accounts_count: int = 0
     instagram_reachable: Optional[bool] = None
+    instagram_login_ok: Optional[bool] = None
+    last_check_ms: Optional[int] = None
+    latency_ms: Optional[int] = None
+    instagram_latency_ms: Optional[int] = None
+    login_page_latency_ms: Optional[int] = None
     geo_mismatch_warning: bool = False
     check_detail: Optional[str] = None
+
+
+class ProxyCheckBatchIn(BaseModel):
+    labels: Optional[List[str]] = None
+
+
+class ProxyCheckBatchOut(BaseModel):
+    results: List[ProxyOut]
+    checked: int
+    healthy: int
+    failed: int
 
 
 class ProxyIn(BaseModel):

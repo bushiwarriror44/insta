@@ -317,6 +317,58 @@ def test_proxy_check_returns_instagram_reachable(api_client, monkeypatch):
     assert body["geo_mismatch_warning"] is False
 
 
+def test_proxy_check_batch_returns_results_and_persists_ig(api_client, monkeypatch):
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-batch-a", "url": "http://u:p@h:1", "skip_health_check": True},
+    )
+    api_client.post(
+        "/api/proxies",
+        json={"label": "px-batch-b", "url": "http://u:p@h:2", "skip_health_check": True},
+    )
+
+    def _health(db, proxy):
+        snap = HealthSnapshot(
+            ok=True,
+            ip="10.0.0.1",
+            country="US",
+            instagram_reachable=True,
+            instagram_login_reachable=True,
+            checked_at=datetime.now(timezone.utc),
+            latency_ms=12,
+            instagram_latency_ms=34,
+            login_page_latency_ms=56,
+            check_ms=100,
+        )
+        proxy.is_healthy = True
+        proxy.instagram_reachable = True
+        proxy.instagram_login_ok = True
+        proxy.last_check_ms = 100
+        proxy.last_check_detail = None
+        proxy.last_known_ip = snap.ip
+        db.commit()
+        return True, snap, None
+
+    monkeypatch.setattr("app.api.routes.proxies.health_check_record", _health)
+    res = api_client.post("/api/proxies/check-batch", json={"labels": ["px-batch-a", "px-batch-b"]})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["checked"] == 2
+    assert body["healthy"] == 2
+    assert body["failed"] == 0
+    assert len(body["results"]) == 2
+    labels = {row["label"] for row in body["results"]}
+    assert labels == {"px-batch-a", "px-batch-b"}
+    assert all(row["instagram_reachable"] is True for row in body["results"])
+    assert all(row["last_check_ms"] == 100 for row in body["results"])
+
+    listed = api_client.get("/api/proxies").json()
+    by_label = {row["label"]: row for row in listed}
+    assert by_label["px-batch-a"]["instagram_reachable"] is True
+    assert by_label["px-batch-b"]["instagram_reachable"] is True
+    assert by_label["px-batch-a"]["last_check_ms"] == 100
+
+
 def test_run_account_connection_test_no_proxy(db_session, make_proxy):
     make_proxy()
     account = _make_account(db_session, username="noprx", proxy=None)

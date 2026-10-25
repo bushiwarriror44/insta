@@ -8,15 +8,21 @@ from typing import Callable, Optional
 from sqlalchemy.orm import Session
 
 from app.accounts.account_diagnostics import log_account_credentials, proxy_log_line
+from app.accounts.connection_ladder import (
+    METHOD_REUSE,
+    METHOD_STUDIO_HEADLESS,
+    METHOD_VNC,
+    ConnectionLadder,
+)
 from app.accounts.cookie_formats import studio_session_ready
 from app.accounts.login_identifier import resolve_login_identifier
 from app.api.schemas import DiagnosticLogLineOut, FirstLoginOut
 from app.behavior.studio_playwright import studio_login
 from app.behavior.warmup_playwright import playwright_browsers_available
+from app.browser.vnc_stack import vnc_stack_available
 from app.config import settings
 from app.db import Account, DiagnosticRunKind, Proxy
 from app.diagnostics.collector import DiagnosticCollector
-from app.browser.vnc_stack import vnc_stack_available
 
 StatusCallback = Callable[[str, Optional[str]], None]
 
@@ -70,10 +76,15 @@ def _run_vnc_fallback(
     proxy: Proxy,
     *,
     on_status: StatusCallback | None = None,
+    ladder: ConnectionLadder | None = None,
 ) -> FirstLoginOut:
     from app.browser.session_manager import BrowserSessionStatus, browser_session_manager
 
+    if ladder is not None:
+        ladder.start(METHOD_VNC, "интерактивный браузер")
     if not settings.browser_vnc_enabled:
+        if ladder is not None:
+            ladder.fail(METHOD_VNC, error="BROWSER_VNC_ENABLED выключен")
         return _finish(
             collector,
             ok=False,
@@ -84,6 +95,8 @@ def _run_vnc_fallback(
             error="Интерактивный браузер отключён на сервере",
         )
     if not vnc_stack_available():
+        if ladder is not None:
+            ladder.fail(METHOD_VNC, error="VNC стек недоступен")
         return _finish(
             collector,
             ok=False,
@@ -149,6 +162,8 @@ def _run_vnc_fallback(
     try:
         ok, challenge, err = asyncio.run(_orchestrate())
     except Exception as exc:  # noqa: BLE001
+        if ladder is not None:
+            ladder.fail(METHOD_VNC, error=str(exc))
         collector.error("browser", f"VNC fallback: {exc}")
         return _finish(
             collector,
@@ -161,14 +176,18 @@ def _run_vnc_fallback(
         )
 
     if ok:
+        if ladder is not None:
+            ladder.ok(METHOD_VNC, "Studio cookies сохранены")
         collector.info("session", "Playwright state Studio сохранён")
         return _finish(
             collector,
             ok=True,
-            summary="Studio-сессия сохранена",
+            summary=ladder.summary_ok() if ladder is not None else "Studio-сессия сохранена",
             status="ok",
             session_imported=True,
         )
+    if ladder is not None:
+        ladder.fail(METHOD_VNC, error=err or "challenge")
     return _finish(
         collector,
         ok=False,
@@ -191,6 +210,7 @@ def run_studio_login(
         kind=DiagnosticRunKind.studio_login,
         account_id=account.id,
     )
+    ladder = ConnectionLadder(collector)
     platform = _platform_value(account)
     if platform not in ("youtube", "tiktok"):
         collector.error("platform", "studio_login только для YouTube и TikTok")
@@ -228,11 +248,13 @@ def run_studio_login(
         )
 
     if studio_session_ready(account.username, platform):
+        ladder.start(METHOD_REUSE, "Studio cookies на диске")
+        ladder.ok(METHOD_REUSE, "повторный вход не нужен")
         collector.info("session", "Studio cookies уже есть — повторный вход не нужен")
         return _finish(
             collector,
             ok=True,
-            summary="Используется сохранённая Studio-сессия",
+            summary=ladder.summary_ok(),
             status="ok",
             session_imported=True,
         )
@@ -250,10 +272,14 @@ def run_studio_login(
     password = (account.password or "").strip()
     if not password:
         collector.warn("account", "Пароль не задан — только ручной/VNC вход")
+        ladder.skip(METHOD_STUDIO_HEADLESS, "пароль не задан", next_method=METHOD_VNC)
         if on_status:
             on_status("Пароль", "не задан — открою браузер для ручного входа")
-        return _run_vnc_fallback(collector, account, db, proxy, on_status=on_status)
+        return _run_vnc_fallback(
+            collector, account, db, proxy, on_status=on_status, ladder=ladder
+        )
 
+    ladder.start(METHOD_STUDIO_HEADLESS, platform, next_method=METHOD_VNC)
     result = studio_login(
         username=account.username,
         password=password,
@@ -265,29 +291,38 @@ def run_studio_login(
     )
 
     if result.ok and studio_session_ready(account.username, platform):
+        ladder.ok(METHOD_STUDIO_HEADLESS, "Studio cookies сохранены")
         collector.info("browser", "Headless: Studio cookies сохранены")
         return _finish(
             collector,
             ok=True,
-            summary="Studio-сессия сохранена (headless)",
+            summary=ladder.summary_ok(),
             status="ok",
             session_imported=True,
         )
 
     if result.challenge or not result.ok:
+        ladder.fail(
+            METHOD_STUDIO_HEADLESS,
+            error=result.error or "challenge",
+            next_method=METHOD_VNC,
+        )
         collector.warn(
             "browser",
             result.error or "Headless: нужно подтверждение или ручной вход",
         )
         if on_status:
             on_status("Challenge", "перехожу на интерактивный браузер")
-        return _run_vnc_fallback(collector, account, db, proxy, on_status=on_status)
+        return _run_vnc_fallback(
+            collector, account, db, proxy, on_status=on_status, ladder=ladder
+        )
 
+    ladder.fail(METHOD_STUDIO_HEADLESS, error=result.error or "нет cookies")
     collector.error("browser", result.error or "Не удалось сохранить Studio-сессию")
     return _finish(
         collector,
         ok=False,
-        summary=result.error or "Не удалось сохранить Studio-сессию",
+        summary=ladder.summary_fail(result.error),
         status="fail",
         error=result.error,
     )

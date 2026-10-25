@@ -22,6 +22,7 @@ Anti-detection extensions (in addition to the basic IP-echo health check):
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -98,6 +99,10 @@ class HealthSnapshot:
     checked_at: datetime
     instagram_login_http_status: int | None = None
     timezone: str | None = None
+    latency_ms: int | None = None
+    instagram_latency_ms: int | None = None
+    login_page_latency_ms: int | None = None
+    check_ms: int | None = None
 
 
 _CHROME_DESKTOP_UA = (
@@ -351,18 +356,26 @@ def health_check_cached(
     with _CACHE_LOCK:
         prev = _HEALTH_CACHE.get(proxy_url)
 
+    wall_started = time.monotonic()
     ip = None
     ok = True
+    latency_ms: int | None = None
+    ig_latency_ms: int | None = None
+    login_latency_ms: int | None = None
     ig_ok, ig_login_ok, login_status, country, geo_timezone = _inherit_cached_instagram_fields(prev)
     try:
+        t0 = time.monotonic()
         data = health_check(proxy_url)
+        latency_ms = int((time.monotonic() - t0) * 1000)
         ip = data.get("ip") or None
     except ProxyError:
         ok = False
 
     if ok and scope is HealthCheckScope.FULL:
         try:
+            t0 = time.monotonic()
             ig_ok = reach_instagram(proxy_url)
+            ig_latency_ms = int((time.monotonic() - t0) * 1000)
         except ProxyError:
             ok = False
             ig_ok = False
@@ -377,7 +390,9 @@ def health_check_cached(
                 ig_login_ok = prev.instagram_login_reachable
                 login_status = prev.instagram_login_http_status
             else:
+                t0 = time.monotonic()
                 ig_login_ok, login_status = reach_instagram_login_page(proxy_url)
+                login_latency_ms = int((time.monotonic() - t0) * 1000)
                 if login_status is not None and login_status >= 400:
                     logger.warning(
                         "proxy.login_page_http_error",
@@ -387,6 +402,7 @@ def health_check_cached(
         if ok:
             country, geo_timezone = geo_lookup(proxy_url)
 
+    check_ms = int((time.monotonic() - wall_started) * 1000)
     snapshot = HealthSnapshot(
         ok=ok,
         ip=ip,
@@ -396,6 +412,10 @@ def health_check_cached(
         checked_at=now,
         instagram_login_http_status=login_status,
         timezone=geo_timezone,
+        latency_ms=latency_ms,
+        instagram_latency_ms=ig_latency_ms,
+        login_page_latency_ms=login_latency_ms,
+        check_ms=check_ms,
     )
     with _CACHE_LOCK:
         _HEALTH_CACHE[proxy_url] = snapshot
@@ -414,14 +434,28 @@ def health_check_record(db: Session, proxy: Proxy) -> tuple[bool, HealthSnapshot
     except ProxyError as exc:
         proxy.is_healthy = False
         proxy.last_checked_at = datetime.now(timezone.utc)
-        db.commit()
+        proxy.instagram_reachable = False
+        proxy.instagram_login_ok = False
+        proxy.last_check_ms = None
         err = str(exc)
+        proxy.last_check_detail = err[:2000]
+        db.commit()
         logger.warning("proxy.unhealthy", label=proxy.label, error=err)
         return False, None, err
+
+    detail: str | None = None
+    if not snapshot.instagram_reachable:
+        detail = "Instagram недоступен через прокси"
+    elif not snapshot.instagram_login_reachable:
+        detail = "Страница входа Instagram недоступна через прокси"
 
     proxy.is_healthy = True
     proxy.last_checked_at = datetime.now(timezone.utc)
     proxy.last_known_ip = snapshot.ip or proxy.last_known_ip
+    proxy.instagram_reachable = snapshot.instagram_reachable
+    proxy.instagram_login_ok = snapshot.instagram_login_reachable
+    proxy.last_check_ms = snapshot.check_ms
+    proxy.last_check_detail = detail
     if snapshot.country:
         proxy.last_geo_country = snapshot.country
         if not (proxy.country or "").strip():
@@ -433,6 +467,9 @@ def health_check_record(db: Session, proxy: Proxy) -> tuple[bool, HealthSnapshot
                 advertised=proxy.country,
                 actual=snapshot.country,
             )
+            if not detail:
+                detail = f"Страна прокси не совпадает: заявлено {proxy.country}, факт {snapshot.country}"
+                proxy.last_check_detail = detail
     if not (proxy.timezone or "").strip():
         if snapshot.timezone:
             proxy.timezone = snapshot.timezone
@@ -449,12 +486,9 @@ def health_check_record(db: Session, proxy: Proxy) -> tuple[bool, HealthSnapshot
         timezone=proxy.timezone,
         instagram=snapshot.instagram_reachable,
         instagram_login=snapshot.instagram_login_reachable,
+        check_ms=snapshot.check_ms,
     )
-    if not snapshot.instagram_reachable:
-        return True, snapshot, "Instagram недоступен через прокси"
-    if not snapshot.instagram_login_reachable:
-        return True, snapshot, "Страница входа Instagram недоступна через прокси"
-    return True, snapshot, None
+    return True, snapshot, detail
 
 
 def upsert_proxy(

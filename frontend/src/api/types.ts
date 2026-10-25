@@ -75,8 +75,20 @@ export interface ProxyOut {
   created_at?: string | null;
   accounts_count: number;
   instagram_reachable?: boolean | null;
+  instagram_login_ok?: boolean | null;
+  last_check_ms?: number | null;
+  latency_ms?: number | null;
+  instagram_latency_ms?: number | null;
+  login_page_latency_ms?: number | null;
   geo_mismatch_warning?: boolean;
   check_detail?: string | null;
+}
+
+export interface ProxyCheckBatchOut {
+  results: ProxyOut[];
+  checked: number;
+  healthy: number;
+  failed: number;
 }
 
 export type FloppydataProxyType = "residential" | "mobile" | "datacenter";

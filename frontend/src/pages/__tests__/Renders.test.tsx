@@ -221,7 +221,7 @@ describe("Renders page", () => {
     );
   });
 
-  it("keeps local Wan on 5 or 10 seconds", async () => {
+  it("offers local Wan up to 60 seconds via segment stitch", async () => {
     apiMock.factory.backends.mockResolvedValue([
       { name: "local", healthy: true, licence: "Apache-2.0", experimental: false, detail: "" },
     ]);
@@ -230,8 +230,8 @@ describe("Renders page", () => {
     fireEvent.click(screen.getByRole("button", { name: /^local/i }));
     const duration = screen.getByRole("combobox", { name: "Длительность" });
     expect(within(duration).queryByRole("option", { name: "15 с" })).toBeNull();
-    expect(within(duration).getByRole("option", { name: "10 с" })).toBeInTheDocument();
-    expect(screen.getByText(/длиннее 10 с не снимет/i)).toBeInTheDocument();
+    expect(within(duration).getByRole("option", { name: "60 с" })).toBeInTheDocument();
+    expect(screen.getByText(/собирает из сегментов wan/i)).toBeInTheDocument();
   });
 
   it("sends 30 seconds for fal and notes the snap", async () => {
@@ -281,7 +281,7 @@ describe("Renders page", () => {
         account_id: undefined,
         width: 1080,
         height: 1920,
-        duration_s: 10,
+        duration_s: 20,
         negative_prompt: "текст, логотип",
         seed: 42,
       })

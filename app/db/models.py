@@ -126,6 +126,10 @@ class Proxy(Base):
     last_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     last_known_ip: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     last_geo_country: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    instagram_reachable: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    instagram_login_ok: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    last_check_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    last_check_detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

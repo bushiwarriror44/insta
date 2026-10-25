@@ -298,6 +298,10 @@ def test_first_login_service_bad_password_message(
         "app.accounts.first_login_service.login_and_export_sessionid",
         _raise_bad_password,
     )
+    monkeypatch.setattr(
+        "app.accounts.mint_mobile_session.login_and_export_sessionid",
+        _raise_bad_password,
+    )
 
     out = run_account_first_login(account, db_session)
     assert out.ok is False
@@ -340,9 +344,16 @@ def test_first_login_service_guest_explore_error_and_bad_password(
             login_debug_saved=True,
         ),
     )
+    def _bad(*a, **k):
+        raise AuthenticationError("bad password")
+
     monkeypatch.setattr(
         "app.accounts.first_login_service.login_and_export_sessionid",
-        lambda *a, **k: (_ for _ in ()).throw(AuthenticationError("bad password")),
+        _bad,
+    )
+    monkeypatch.setattr(
+        "app.accounts.mint_mobile_session.login_and_export_sessionid",
+        _bad,
     )
 
     out = run_account_first_login(account, db_session)

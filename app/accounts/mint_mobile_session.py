@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
@@ -29,52 +30,49 @@ from app.geo.timezone_normalize import (
 )
 
 
-def mint_mobile_session(account: Account, db: Session) -> MintMobileSessionOut:
-    """Password-login via mobile API, dump session file, store sessionid in DB."""
-    collector = DiagnosticCollector(
-        db,
-        kind=DiagnosticRunKind.mint_mobile_session,
-        account_id=account.id,
-    )
+@dataclass(slots=True)
+class MintCoreResult:
+    ok: bool
+    challenge: bool = False
+    error: str | None = None
+    session_id: str | None = None
+
+
+def mint_mobile_session_into(
+    collector: DiagnosticCollector,
+    account: Account,
+    db: Session,
+    *,
+    proxy: Proxy | None = None,
+    fingerprint=None,
+    log_preamble: bool = True,
+) -> MintCoreResult:
+    """Run mobile mint into an existing diagnostic run (no finish)."""
     started = time.monotonic()
 
     def _elapsed() -> str:
         return f"elapsed_ms={int((time.monotonic() - started) * 1000)}"
 
-    if not account.proxy_id:
-        collector.error("proxy", "Прокси не назначен")
-        collector.finish("fail", "Прокси не назначен")
-        return MintMobileSessionOut(
-            run_id=collector.run_id,
-            ok=False,
-            error="Прокси не назначен",
-            logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
-        )
-
-    proxy = db.get(Proxy, account.proxy_id)
     if proxy is None:
-        collector.error("proxy", "Запись прокси отсутствует")
-        collector.finish("fail", "Запись прокси отсутствует")
-        return MintMobileSessionOut(
-            run_id=collector.run_id,
-            ok=False,
-            error="Запись прокси отсутствует",
-            logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
-        )
+        if not account.proxy_id:
+            collector.error("proxy", "Прокси не назначен")
+            return MintCoreResult(ok=False, error="Прокси не назначен")
+        proxy = db.get(Proxy, account.proxy_id)
+        if proxy is None:
+            collector.error("proxy", "Запись прокси отсутствует")
+            return MintCoreResult(ok=False, error="Запись прокси отсутствует")
 
     if not (account.password or "").strip():
         collector.error("account", "Пароль аккаунта не задан")
-        collector.finish("fail", "Пароль аккаунта не задан")
-        return MintMobileSessionOut(
-            run_id=collector.run_id,
+        return MintCoreResult(
             ok=False,
             error="Пароль аккаунта не задан — укажите пароль в настройках аккаунта",
-            logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
         )
 
-    log_account_credentials(collector, account, proxy)
-    collector.info("start", f"Создание mobile-сессии для @{account.username}")
-    collector.info("proxy", proxy_log_line(proxy))
+    if log_preamble:
+        log_account_credentials(collector, account, proxy)
+        collector.info("start", f"Создание mobile-сессии для @{account.username}")
+        collector.info("proxy", proxy_log_line(proxy))
 
     tz_id = timezone_from_proxy(proxy.timezone, proxy.country)
     if is_placeholder_timezone(account.timezone):
@@ -82,12 +80,13 @@ def mint_mobile_session(account: Account, db: Session) -> MintMobileSessionOut:
         db.commit()
         collector.info("timezone", f"Часовой пояс аккаунта выставлен по прокси: {tz_id}")
 
-    fingerprint = ensure_fingerprint_and_proxy(
-        account.username,
-        country=normalize_country_code(proxy.country) or proxy.country or "US",
-        timezone_id=tz_id,
-    )
-    collector.info("fingerprint", "Отпечаток устройства готов")
+    if fingerprint is None:
+        fingerprint = ensure_fingerprint_and_proxy(
+            account.username,
+            country=normalize_country_code(proxy.country) or proxy.country or "US",
+            timezone_id=tz_id,
+        )
+        collector.info("fingerprint", "Отпечаток устройства готов")
 
     login_id = resolve_login_identifier(account)
     collector.info("mint", f"login_identifier={login_id}")
@@ -117,25 +116,16 @@ def mint_mobile_session(account: Account, db: Session) -> MintMobileSessionOut:
         session_id = _attempt(login_id)
     except HardCheckpoint as exc:
         collector.warn("login", f"Требуется подтверждение Instagram (challenge); {_elapsed()}")
-        collector.finish("warn", "Требуется подтверждение Instagram")
-        return MintMobileSessionOut(
-            run_id=collector.run_id,
+        return MintCoreResult(
             ok=False,
             challenge=True,
             error=str(exc) or "Требуется подтверждение Instagram",
-            logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
         )
     except AuthenticationError as exc:
         last_auth_error = exc
     except Exception as exc:  # noqa: BLE001
         collector.error("login", f"Мобильный вход не удался: {exc}; {_elapsed()}")
-        collector.finish("fail", "Вход не удался")
-        return MintMobileSessionOut(
-            run_id=collector.run_id,
-            ok=False,
-            error=str(exc),
-            logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
-        )
+        return MintCoreResult(ok=False, error=str(exc))
 
     if session_id is None and last_auth_error is not None:
         email = (account.email or "").strip()
@@ -152,38 +142,23 @@ def mint_mobile_session(account: Account, db: Session) -> MintMobileSessionOut:
                     "login",
                     f"Требуется подтверждение Instagram (challenge); {_elapsed()}",
                 )
-                collector.finish("warn", "Требуется подтверждение Instagram")
-                return MintMobileSessionOut(
-                    run_id=collector.run_id,
+                return MintCoreResult(
                     ok=False,
                     challenge=True,
                     error=str(exc) or "Требуется подтверждение Instagram",
-                    logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
                 )
             except AuthenticationError as exc:
                 last_auth_error = exc
             except Exception as exc:  # noqa: BLE001
                 collector.error("login", f"Мобильный вход не удался: {exc}; {_elapsed()}")
-                collector.finish("fail", "Вход не удался")
-                return MintMobileSessionOut(
-                    run_id=collector.run_id,
-                    ok=False,
-                    error=str(exc),
-                    logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
-                )
+                return MintCoreResult(ok=False, error=str(exc))
 
     if session_id is None:
         formatted = _format_auth_error(
             last_auth_error or AuthenticationError("ошибка аутентификации")
         )
         collector.error("login", f"Мобильный вход не удался: {formatted}; {_elapsed()}")
-        collector.finish("fail", formatted)
-        return MintMobileSessionOut(
-            run_id=collector.run_id,
-            ok=False,
-            error=formatted,
-            logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
-        )
+        return MintCoreResult(ok=False, error=formatted)
 
     account.session_id = session_id
     account.status = AccountStatus.active
@@ -194,10 +169,38 @@ def mint_mobile_session(account: Account, db: Session) -> MintMobileSessionOut:
         "session",
         f"Мобильный sessionid сохранён ({sessionid_diag_label(session_id)}); {_elapsed()}",
     )
-    collector.finish("ok", "Mobile-сессия готова к автопостингу")
+    return MintCoreResult(ok=True, session_id=session_id)
+
+
+def mint_mobile_session(account: Account, db: Session) -> MintMobileSessionOut:
+    """Password-login via mobile API, dump session file, store sessionid in DB."""
+    collector = DiagnosticCollector(
+        db,
+        kind=DiagnosticRunKind.mint_mobile_session,
+        account_id=account.id,
+    )
+    result = mint_mobile_session_into(collector, account, db)
+    if result.ok:
+        collector.finish("ok", "Mobile-сессия готова к автопостингу")
+        return MintMobileSessionOut(
+            run_id=collector.run_id,
+            ok=True,
+            session_id=result.session_id,
+            logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
+        )
+    if result.challenge:
+        collector.finish("warn", "Требуется подтверждение Instagram")
+        return MintMobileSessionOut(
+            run_id=collector.run_id,
+            ok=False,
+            challenge=True,
+            error=result.error,
+            logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
+        )
+    collector.finish("fail", result.error or "Вход не удался")
     return MintMobileSessionOut(
         run_id=collector.run_id,
-        ok=True,
-        session_id=session_id,
+        ok=False,
+        error=result.error,
         logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
     )

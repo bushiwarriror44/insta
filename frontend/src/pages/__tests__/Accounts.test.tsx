@@ -36,6 +36,7 @@ const apiMock = vi.hoisted(() => ({
     list: vi.fn(),
     create: vi.fn(),
     check: vi.fn(),
+    checkBatch: vi.fn(),
     update: vi.fn(),
     remove: vi.fn(),
   },
@@ -298,6 +299,45 @@ describe("Accounts page", () => {
       "https://www.instagram.com/alice/"
     );
     expect(instagramLink).toHaveAttribute("target", "_blank");
+  });
+
+  it("renders proxy check tab and calls checkBatch on Проверить все", async () => {
+    apiMock.proxies.list.mockResolvedValue([proxy, secondProxy]);
+    apiMock.proxies.checkBatch.mockResolvedValue({
+      results: [
+        {
+          ...proxy,
+          is_healthy: true,
+          instagram_reachable: true,
+          instagram_login_ok: true,
+          last_check_ms: 120,
+          check_detail: null,
+        },
+        {
+          ...secondProxy,
+          is_healthy: true,
+          instagram_reachable: true,
+          instagram_login_ok: true,
+          last_check_ms: 98,
+          check_detail: null,
+        },
+      ],
+      checked: 2,
+      healthy: 2,
+      failed: 0,
+    });
+    renderAccounts("/accounts?tab=proxy-check");
+    expect(await screen.findByTestId("accounts-tab-proxy-check")).toHaveAttribute(
+      "aria-selected",
+      "true"
+    );
+    expect(await screen.findByTestId("proxy-check-table")).toBeInTheDocument();
+    expect(screen.getByText("res-de-1")).toBeInTheDocument();
+    expect(screen.getByText("res-us-1")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("proxy-check-all"));
+    await waitFor(() =>
+      expect(apiMock.proxies.checkBatch).toHaveBeenCalledWith(undefined)
+    );
   });
 
   it("can reassign a proxy to an existing account", async () => {

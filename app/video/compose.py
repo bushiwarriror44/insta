@@ -50,25 +50,56 @@ class ComposeRequest:
     height: int = DEFAULT_HEIGHT
     fps: int = DEFAULT_FPS
     audio_fade_out_s: float = 1.5
+    #: Soft dissolve between clips. 0 keeps a hard concat (manual joins).
+    video_fade_s: float = 0.0
+    #: Per-clip lengths for xfade offsets; probed when omitted.
+    clip_durations: list[float] | None = None
 
 
-def _clip_filters(count: int, width: int, height: int, fps: int) -> str:
+def _normalise_clip(index: int, width: int, height: int, fps: int) -> str:
+    return (
+        f"[{index}:v]"
+        f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},"
+        f"setsar=1,fps={fps},format=yuv420p"
+        f"[v{index}]"
+    )
+
+
+def _clip_filters(
+    count: int,
+    width: int,
+    height: int,
+    fps: int,
+    *,
+    video_fade_s: float = 0.0,
+    clip_durations: list[float] | None = None,
+) -> str:
     """Scale, crop and normalise each clip, then join them.
 
     Cropping to fill rather than padding to fit: a letterboxed Reel with
     black bars down the sides reads as a mistake on a phone.
     """
-    parts = []
-    for index in range(count):
+    parts = [_normalise_clip(index, width, height, fps) for index in range(count)]
+    if video_fade_s <= 0 or count < 2:
+        joined = "".join(f"[v{index}]" for index in range(count))
+        parts.append(f"{joined}concat=n={count}:v=1:a=0[v]")
+        return ";".join(parts)
+
+    durations = list(clip_durations or [])
+    while len(durations) < count:
+        durations.append(10.0)
+    fade = min(float(video_fade_s), *(max(0.1, d / 3) for d in durations[:count]))
+    current = "[v0]"
+    out_len = float(durations[0])
+    for index in range(1, count):
+        offset = max(0.0, out_len - fade)
+        out = "[v]" if index == count - 1 else f"[x{index}]"
         parts.append(
-            f"[{index}:v]"
-            f"scale={width}:{height}:force_original_aspect_ratio=increase,"
-            f"crop={width}:{height},"
-            f"setsar=1,fps={fps},format=yuv420p"
-            f"[v{index}]"
+            f"{current}[v{index}]xfade=transition=fade:duration={fade:.3f}:offset={offset:.3f}{out}"
         )
-    joined = "".join(f"[v{index}]" for index in range(count))
-    parts.append(f"{joined}concat=n={count}:v=1:a=0[v]")
+        current = out
+        out_len = out_len + float(durations[index]) - fade
     return ";".join(parts)
 
 
@@ -126,8 +157,16 @@ def build_command(request: ComposeRequest, total: float | None = None) -> list[s
         # Loop the track so the footage decides the length, not the song.
         command += ["-stream_loop", "-1", "-i", str(request.audio)]
 
+    durations = request.clip_durations
+    if request.video_fade_s > 0 and durations is None:
+        durations = [clip_duration(clip) or 10.0 for clip in request.clips]
     filters = _clip_filters(
-        len(request.clips), request.width, request.height, request.fps
+        len(request.clips),
+        request.width,
+        request.height,
+        request.fps,
+        video_fade_s=request.video_fade_s,
+        clip_durations=durations,
     )
     audio_index = len(request.clips)
 

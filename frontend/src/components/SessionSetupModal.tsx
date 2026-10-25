@@ -362,8 +362,8 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
                 </div>
                 <p className="text-xs text-slate-400">
                   {isIg
-                    ? "Сервер выполнит вход через Playwright. Секрет TOTP — для 2FA Instagram."
-                    : "Headless Studio; при Google/TikTok 2FA откроется интерактивный браузер (VNC)."}
+                    ? "Пробуем способы по очереди; при ошибке — следующий. Playwright → mobile API → mint. TOTP — для 2FA."
+                    : "Пробуем способы по очереди; при ошибке — следующий. Headless Studio → при 2FA/сбое интерактивный браузер (VNC)."}
                 </p>
               </button>
               <button
@@ -397,16 +397,22 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
               {isIg ? (
                 <>
                   <li>Убедитесь, что прокси назначен и Instagram доступен.</li>
-                  <li>Нажмите «Создать сессию» — сервер выполнит вход через Playwright Chromium.</li>
+                  <li>
+                    Нажмите «Создать сессию» — сервер по очереди пробует Playwright, затем mobile
+                    API, затем mint mobile-сессии.
+                  </li>
                   <li>Если на аккаунте включена 2FA, укажите секрет TOTP в настройках аккаунта.</li>
-                  <li>После успеха sessionid сохранится в БД (без mobile-проверки).</li>
+                  <li>В логе видны строки attempt (method / status / next). Sessionid сохранится в БД.</li>
                 </>
               ) : (
                 <>
                   <li>Укажите пароль Google/TikTok и email в карточке аккаунта (для Google — поле email).</li>
-                  <li>Нажмите «Создать сессию» — headless откроет {studioLabel}.</li>
-                  <li>При 2FA/CAPTCHA переключитесь на «Через браузер» или дождитесь VNC из автовхода.</li>
-                  <li>После успеха cookies сохранятся в state.json.</li>
+                  <li>
+                    Нажмите «Создать сессию» — сначала headless {studioLabel}, при сбое откроется
+                    VNC.
+                  </li>
+                  <li>При 2FA/CAPTCHA дождитесь VNC или переключитесь на «Через браузер».</li>
+                  <li>В логе — attempt по каждому способу; cookies сохранятся в state.json.</li>
                 </>
               )}
             </ol>

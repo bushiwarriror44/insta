@@ -66,9 +66,10 @@ const FRAME_SIZES = [
   { id: "16:9", label: "16:9 · 1280×720", width: 1280, height: 720 },
 ] as const;
 
-const LOCAL_DURATIONS = [5, 10] as const;
+const LOCAL_DURATIONS = [5, 10, 20, 30, 60] as const;
 const CLOUD_DURATIONS = [5, 10, 15, 30] as const;
-type DurationS = (typeof CLOUD_DURATIONS)[number];
+const SLIDESHOW_DURATIONS = [5, 10] as const;
+type DurationS = (typeof LOCAL_DURATIONS)[number] | (typeof CLOUD_DURATIONS)[number];
 
 const DEFAULT_NEGATIVE_PROMPT =
   "текст, субтитры, водяной знак, логотип, UI, рамка, лишние руки, лишние пальцы, деформированные конечности, искажённое лицо, мутный кадр, низкое качество, артефакты, двоение, морфинг, тряска камеры, стоп-кадр, чёрные полосы, blurry, watermark, bad anatomy";
@@ -83,8 +84,14 @@ const PLATFORMS = [
   { id: "tiktok", label: "TikTok", duration: 15 },
 ] as const;
 
-function shortDurationOnly(backend: string, inputMode: RenderInputMode): boolean {
-  return backend === "local" || inputMode === "image_slideshow";
+function slideshowDurationOnly(inputMode: RenderInputMode): boolean {
+  return inputMode === "image_slideshow";
+}
+
+function durationChoices(backend: string, inputMode: RenderInputMode): readonly number[] {
+  if (slideshowDurationOnly(inputMode)) return SLIDESHOW_DURATIONS;
+  if (backend === "local") return LOCAL_DURATIONS;
+  return CLOUD_DURATIONS;
 }
 
 function backendLabel(name: string) {
@@ -166,10 +173,13 @@ export function Renders() {
   const [localOfferBusy, setLocalOfferBusy] = useState(false);
   const highlightRef = useRef<HTMLTableRowElement | null>(null);
 
-  const durations = shortDurationOnly(backend, inputMode) ? LOCAL_DURATIONS : CLOUD_DURATIONS;
+  const durations = durationChoices(backend, inputMode);
 
   useEffect(() => {
-    if (shortDurationOnly(backend, inputMode) && durationS > 10) setDurationS(10);
+    const allowed = durationChoices(backend, inputMode);
+    if (!allowed.includes(durationS)) {
+      setDurationS(allowed[allowed.length - 1] as DurationS);
+    }
   }, [backend, inputMode, durationS]);
 
   useEffect(() => {
@@ -520,7 +530,10 @@ export function Renders() {
                 const preset = PLATFORMS.find((item) => item.id === next);
                 if (!preset?.duration) return;
                 setFrameId("9:16-1080");
-                const cap = shortDurationOnly(backend, inputMode) ? 10 : preset.duration;
+                const allowed = durationChoices(backend, inputMode);
+                const want = preset.duration;
+                const cap =
+                  allowed.find((value) => value >= want) ?? allowed[allowed.length - 1];
                 setDurationS(cap as DurationS);
               }}
             >
@@ -708,11 +721,13 @@ export function Renders() {
           </div>
         </details>
         <p className="text-xs text-slate-500">
-          {shortDurationOnly(backend, inputMode)
-            ? "Local Wan длиннее 10 с не снимет. 480p: портрет 480×832, альбом 832×480."
-            : backend === "fal"
-              ? "fal снимет 5 или 10 с, ближайшее к выбранному."
-              : "Локальный Wan 1.3B снимает 480p и только 5 или 10 с. Размер выше задаёт ориентацию."}
+          {slideshowDurationOnly(inputMode)
+            ? "Ken Burns: до 10 с. 480p ориентация задаётся размером кадра."
+            : backend === "local"
+              ? "Дольше 10 с local собирает из сегментов Wan (общий сид и мягкий переход). 480p: портрет 480×832, альбом 832×480."
+              : backend === "fal"
+                ? "fal снимет 5 или 10 с, ближайшее к выбранному."
+                : "Локальный Wan 1.3B снимает 480p; дольше 10 с — склейка сегментов. Размер выше задаёт ориентацию."}
           {platform ? " 9:16, звук и поля под кнопки платформы. Файл остаётся mp4." : ""}
         </p>
         <div className="sticky bottom-0 z-10 -mx-5 -mb-5 border-t border-slate-800 bg-slate-950/95 px-5 py-3 backdrop-blur sm:static sm:mx-0 sm:mb-0 sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">

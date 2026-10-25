@@ -96,6 +96,38 @@ def test_health_check_record_updates_proxy_on_success(db_session, make_proxy):
     assert proxy.last_known_ip == "5.5.5.5"
     assert proxy.last_checked_at is not None
     assert proxy.last_geo_country == "US"
+    assert proxy.instagram_reachable is True
+    assert proxy.instagram_login_ok is True
+    assert proxy.last_check_ms is not None
+    assert proxy.last_check_ms >= 0
+    assert snapshot.latency_ms is not None
+    assert snapshot.latency_ms >= 0
+
+
+@respx.mock
+def test_health_check_full_snapshot_includes_step_latencies(monkeypatch):
+    clock = {"t": 1000.0}
+
+    def fake_monotonic() -> float:
+        cur = clock["t"]
+        clock["t"] += 0.05
+        return cur
+
+    monkeypatch.setattr("app.proxies.pool.time.monotonic", fake_monotonic)
+    respx.get(settings.proxy_health_url).mock(
+        return_value=httpx.Response(200, json={"ip": "1.2.3.4"})
+    )
+    respx.get("https://i.instagram.com/api/v1/zr/dual_tokens/").mock(
+        return_value=httpx.Response(200, text="{}")
+    )
+    _mock_login_page_route()
+    _mock_geo_json()
+    snap = health_check_cached("http://h:1", force=True, scope=HealthCheckScope.FULL)
+    assert snap.ok is True
+    assert snap.latency_ms is not None and snap.latency_ms > 0
+    assert snap.instagram_latency_ms is not None and snap.instagram_latency_ms > 0
+    assert snap.login_page_latency_ms is not None and snap.login_page_latency_ms > 0
+    assert snap.check_ms is not None and snap.check_ms > 0
 
 
 @respx.mock

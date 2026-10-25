@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import time
 import uuid
 from pathlib import Path
@@ -9,10 +10,9 @@ from pathlib import Path
 import httpx
 
 from app.config import Settings, get_settings
-import base64
-
 from app.generation.base import (
     INPUT_MODE_I2V,
+    INPUT_MODE_TEXT,
     INPUT_MODE_V2V,
     REF_MOTION_VIDEO,
     REF_START_IMAGE,
@@ -29,6 +29,15 @@ from app.generation.base import (
     VideoBackend,
 )
 from app.generation.download import raise_http, save_response
+from app.generation.local_longform import (
+    SEGMENT_CAP_S,
+    continuation_prompt,
+    segment_durations,
+    segment_request,
+    shared_seed,
+    stage_label,
+    stitch_segments,
+)
 from app.services.gateway_probe import wan_reachable
 from app.services.gpu_slot import hold_for_video
 from app.services.http import client as http_client
@@ -67,10 +76,75 @@ class LocalVideoBackend(VideoBackend):
         touch(self.settings)
         report = on_progress or (lambda _: None)
         report(Progress(STAGE_SUBMITTED))
-        headers: dict[str, str] = {"Content-Type": "application/json"}
-        if self.settings.wan_api_key:
-            headers["Authorization"] = f"Bearer {self.settings.wan_api_key}"
-        payload = {
+        if float(request.duration_s) > SEGMENT_CAP_S + 0.01:
+            return self._generate_longform(request, out_dir, report)
+        path = self._generate_once(request, out_dir, report)
+        return GenerationResult(
+            video_path=path,
+            generator="local",
+            backend=self.name,
+        )
+
+    def _generate_longform(
+        self,
+        request: GenerationRequest,
+        out_dir: Path,
+        report: ProgressCallback,
+    ) -> GenerationResult:
+        durations = segment_durations(request.duration_s)
+        seed = shared_seed(request)
+        total = float(request.duration_s)
+        count = len(durations)
+        clips: list[Path] = []
+        destination = out_dir / f"local-{uuid.uuid4().hex}.mp4"
+        try:
+            for index, duration in enumerate(durations, start=1):
+                report(Progress(stage_label(index, count)))
+                base = request if index == 1 else GenerationRequest(
+                    prompt=request.prompt,
+                    negative_prompt=request.negative_prompt,
+                    width=request.width,
+                    height=request.height,
+                    duration_s=duration,
+                    seed=seed,
+                    mode=INPUT_MODE_TEXT,
+                    references=[],
+                )
+                piece = segment_request(
+                    base,
+                    duration_s=duration,
+                    prompt=continuation_prompt(request.prompt, index, count, total),
+                    seed=seed,
+                )
+                clips.append(
+                    self._generate_once(
+                        piece, out_dir, report, filename_prefix="local-seg"
+                    )
+                )
+            report(Progress("склейка сегментов"))
+            path = stitch_segments(
+                clips,
+                destination,
+                width=max(480, int(request.width)),
+                height=max(480, int(request.height)),
+                clip_durations=durations,
+            )
+        except Exception:
+            for clip in clips:
+                clip.unlink(missing_ok=True)
+            raise
+        else:
+            for clip in clips:
+                if clip.resolve() != path.resolve():
+                    clip.unlink(missing_ok=True)
+        return GenerationResult(
+            video_path=path,
+            generator="local",
+            backend=self.name,
+        )
+
+    def _payload(self, request: GenerationRequest) -> dict:
+        payload: dict = {
             "prompt": request.prompt[:1500],
             "negative_prompt": request.negative_prompt[:500],
             "duration_s": request.duration_s,
@@ -93,7 +167,21 @@ class LocalVideoBackend(VideoBackend):
                 raise GenerationError("local V2V: нужен motion_video")
             payload["video_base64"] = base64.b64encode(ref.path.read_bytes()).decode("ascii")
             payload["video_mime"] = ref.mime
-        destination = out_dir / f"local-{uuid.uuid4().hex}.mp4"
+        return payload
+
+    def _generate_once(
+        self,
+        request: GenerationRequest,
+        out_dir: Path,
+        report: ProgressCallback,
+        *,
+        filename_prefix: str = "local",
+    ) -> Path:
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self.settings.wan_api_key:
+            headers["Authorization"] = f"Bearer {self.settings.wan_api_key}"
+        payload = self._payload(request)
+        destination = out_dir / f"{filename_prefix}-{uuid.uuid4().hex}.mp4"
         url = self.settings.wan_base_url.rstrip("/")
         try:
             with hold_for_video(self.settings):
@@ -101,26 +189,20 @@ class LocalVideoBackend(VideoBackend):
                 runtime.unload_loaded(self.settings)
                 if self._wan_async():
                     with http_client(self.settings, timeout=60.0, headers=headers) as client:
-                        path = self._generate_async(client, url, payload, destination, report)
-                else:
-                    with http_client(
-                        self.settings,
-                        timeout=self.settings.generation_timeout_seconds,
-                        headers=headers,
-                    ) as client:
-                        report(Progress(STAGE_RENDERING))
-                        response = client.post(url, json=payload)
-                        if response.status_code == 404:
-                            response = client.post(f"{url}/generate", json=payload)
-                        report(Progress(STAGE_DOWNLOADING))
-                        path = save_response(client, response, destination, name=self.name)
+                        return self._generate_async(client, url, payload, destination, report)
+                with http_client(
+                    self.settings,
+                    timeout=self.settings.generation_timeout_seconds,
+                    headers=headers,
+                ) as client:
+                    report(Progress(STAGE_RENDERING))
+                    response = client.post(url, json=payload)
+                    if response.status_code == 404:
+                        response = client.post(f"{url}/generate", json=payload)
+                    report(Progress(STAGE_DOWNLOADING))
+                    return save_response(client, response, destination, name=self.name)
         except httpx.RequestError as exc:
             raise GenerationError(f"local: {exc}", retryable=True) from exc
-        return GenerationResult(
-            video_path=path,
-            generator="local",
-            backend=self.name,
-        )
 
     def _wan_async(self) -> bool:
         if self.settings.wan_async:

@@ -21,6 +21,7 @@ import type {
   MintMobileSessionOut,
   PublicationOut,
   ProxyIn,
+  ProxyCheckBatchOut,
   ProxyOut,
   ProxyUpdate,
   UploadOut,
@@ -531,6 +532,11 @@ export const api = {
         `/api/proxies/${encodeURIComponent(label)}/check`,
         { method: "POST" }
       ),
+    checkBatch: (labels?: string[]) =>
+      request<ProxyCheckBatchOut>("/api/proxies/check-batch", {
+        method: "POST",
+        body: { labels: labels?.length ? labels : null },
+      }),
   },
 
   videos: {
