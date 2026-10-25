@@ -983,10 +983,49 @@ BROWSER_TOOLS = [
 ]
 
 
+# Full JSON schemas stay only for tools that need structured args from the model.
+# Everything else is name + short description so Salad TTFT fits the gateway window.
+FULL_SCHEMA_TOOLS = frozenset(
+    {
+        "ask_operator",
+        "create_account",
+        "create_accounts",
+        "create_proxy",
+        "create_proxies",
+        "update_account",
+        "update_proxy",
+        "enqueue_publish",
+        "diagnose",
+        "login_account",
+        "test_connection",
+    }
+)
+TOOL_DESC_MAX = 100
+
+
+def _compact_tool(spec: dict[str, Any]) -> dict[str, Any]:
+    fn = spec["function"]
+    name = fn["name"]
+    description = fn["description"]
+    if len(description) > TOOL_DESC_MAX:
+        description = description[: TOOL_DESC_MAX - 1].rstrip() + "…"
+    if name in FULL_SCHEMA_TOOLS:
+        parameters = fn["parameters"]
+    else:
+        parameters = {"type": "object", "additionalProperties": True}
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": parameters,
+        },
+    }
+
+
 def tool_specs(*, allow_browser: bool = False) -> list[dict[str, Any]]:
-    if allow_browser:
-        return [*TOOLS, *BROWSER_TOOLS]
-    return list(TOOLS)
+    raw = [*TOOLS, *BROWSER_TOOLS] if allow_browser else list(TOOLS)
+    return [_compact_tool(spec) for spec in raw]
 
 
 class AssistantError(Exception):
@@ -2540,7 +2579,13 @@ def _complete(
                     note_once(response.text)
                     stripped_effort = True
                     continue
-                if response.status_code in {520, 524} and not retried and not content and not thought and not calls:
+                if (
+                    response.status_code in {502, 520, 524}
+                    and not retried
+                    and not content
+                    and not thought
+                    and not calls
+                ):
                     response.read()
                     note_once(response.text)
                     retried = True
@@ -2815,7 +2860,7 @@ def _raise_for(response: httpx.Response, url: str) -> None:
     response.read()
     if response.status_code == 429:
         raise AssistantError("хост модели ограничил частоту", retryable=True)
-    if response.status_code == 524:
+    if response.status_code in {502, 524}:
         raise AssistantError(
             "шлюз Salad оборвал ответ по таймауту. Напишите ещё раз.",
             retryable=True,

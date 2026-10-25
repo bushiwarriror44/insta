@@ -150,6 +150,32 @@ def test_tool_specs_have_create_but_no_settings_writes():
         assert forbidden not in blob
 
 
+def test_tool_specs_are_compact_for_salad():
+    import json
+
+    from app.assistant.chat import (
+        FULL_SCHEMA_TOOLS,
+        TOOL_DESC_MAX,
+        TOOLS,
+        tool_specs,
+    )
+
+    specs = tool_specs()
+    assert {s["function"]["name"] for s in specs} == {t["function"]["name"] for t in TOOLS}
+    full_blob = json.dumps(TOOLS, ensure_ascii=False)
+    compact_blob = json.dumps(specs, ensure_ascii=False)
+    assert len(compact_blob) < len(full_blob) * 0.9
+    for spec in specs:
+        fn = spec["function"]
+        assert len(fn["description"]) <= TOOL_DESC_MAX
+        params = fn["parameters"]
+        if fn["name"] in FULL_SCHEMA_TOOLS:
+            assert "properties" in params
+            assert params.get("additionalProperties") is not True
+        else:
+            assert params == {"type": "object", "additionalProperties": True}
+
+
 def test_run_tool_has_no_settings_or_env_write_tools(db_session):
     for name in (
         "update_entry_path",
