@@ -2083,7 +2083,14 @@ def stream(
     ) as client:
         for _ in range(limit):
             said: list[str] = []
-            message = yield from _complete(client, settings, thread, said, tools=specs)
+            message = yield from _complete(
+                client,
+                settings,
+                thread,
+                said,
+                tools=specs,
+                include_think=bool(settings.agent_think),
+            )
             round_thought = str(message.pop("thinking", "") or "")
             cut = str(message.pop("cut", "") or "")
             if round_thought:
@@ -2099,25 +2106,22 @@ def stream(
                     if think_only:
                         partial = "\n".join(part.strip() for part in thoughts if part.strip())
                         prior = f"<think>{partial}"
-                        prompt = CONTINUE_THINK_PROMPT
-                        keep_think = True
                     else:
                         prior = reply.strip() or "…"
-                        prompt = CONTINUE_PROMPT
-                        keep_think = False
                     round_thread = [
                         *thread,
                         {"role": "assistant", "content": prior},
-                        {"role": "user", "content": prompt},
+                        {"role": "user", "content": CONTINUE_PROMPT},
                     ]
                     more_said: list[str] = []
+                    # Never re-enable think on continue: Salad cuts ~100s and think burns it.
                     message = yield from _complete(
                         client,
                         settings,
                         round_thread,
                         more_said,
                         tools=specs,
-                        include_think=keep_think,
+                        include_think=False,
                     )
                     more_thought = str(message.pop("thinking", "") or "")
                     cut = str(message.pop("cut", "") or "")
@@ -2336,16 +2340,18 @@ def _chat_body(
     settings: Settings,
     thread: list[dict[str, Any]],
     *,
-    include_think: bool = True,
+    include_think: bool | None = None,
     include_options: bool = True,
     tools: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    if include_think is None:
+        include_think = bool(settings.agent_think)
     body: dict[str, Any] = {
         "model": settings.agent_model,
         "messages": thread,
         "tools": tools if tools is not None else TOOLS,
         "temperature": 0.1,
-        "max_tokens": 1024,
+        "max_tokens": 2048,
         "stream": True,
     }
     # 32k context on a 24 GB card OOMs and Salad answers 520.
@@ -2464,7 +2470,7 @@ def _complete(
     said: list[str],
     *,
     tools: list[dict[str, Any]] | None = None,
-    include_think: bool = True,
+    include_think: bool | None = None,
 ) -> Iterator[Step]:
     from app.services.salad_idle import touch
 
@@ -2475,6 +2481,8 @@ def _complete(
     calls: dict[int, dict[str, Any]] = {}
     thinking = Thinking()
     include_options = True
+    if include_think is None:
+        include_think = bool(settings.agent_think)
     retried = False
     media_retried = False
     cut = False
@@ -2684,12 +2692,9 @@ def _complete(
 CUT_NOTE = "Ответ оборвался на шлюзе."
 CONTINUE_STATUS = "Продолжаю ответ…"
 CONTINUE_PROMPT = (
-    "Продолжи ответ с того места, где оборвался. "
-    "Не повторяй уже написанное. Не начинай сначала."
-)
-CONTINUE_THINK_PROMPT = (
-    "Рассуждение оборвалось на шлюзе. Продолжи его с этого места, "
-    "затем закрой </think> и дай ответ оператору. Не повторяй уже написанное."
+    "Ответ или рассуждение оборвались на шлюзе. "
+    "Продолжи с того места, где остановился, и сразу дай ответ оператору. "
+    "Не открывай новый блок рассуждений. Не повторяй уже написанное. Не начинай сначала."
 )
 MAX_CONTINUES = 3
 

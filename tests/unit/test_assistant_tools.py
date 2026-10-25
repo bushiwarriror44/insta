@@ -1669,11 +1669,15 @@ def test_decode_docker_log_stream_multiplexed():
     assert _decode_docker_log_stream(b"plain text") == "plain text"
 
 
-def test_chat_body_enables_think():
+def test_chat_body_think_and_max_tokens():
     from app.assistant.chat import _chat_body
     from app.config import Settings
 
     settings = Settings(_env_file=None)
+    assert settings.agent_think is False
+    default_body = _chat_body(settings, [])
+    assert "think" not in default_body
+    assert default_body["max_tokens"] == 2048
     body = _chat_body(settings, [], include_think=True)
     assert body["think"] is True
     assert body["options"]["num_ctx"] == 8192

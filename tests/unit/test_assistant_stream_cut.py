@@ -525,7 +525,7 @@ def test_stream_auto_continues_after_a_partial_cut(app_env, monkeypatch, db_sess
     def fake_complete(client, settings_obj, thread, said, **kwargs):
         if False:
             yield chat.Step(kind="token", text="")
-        think_flags.append(kwargs.get("include_think", True))
+        think_flags.append(kwargs.get("include_think"))
         n["i"] += 1
         if n["i"] == 1:
             said.append("первая часть")
@@ -556,8 +556,8 @@ def test_stream_auto_continues_after_a_partial_cut(app_env, monkeypatch, db_sess
     assert answer.reply == "первая часть и хвост"
     assert answer.cut == ""
     assert n["i"] == 2
-    assert any("Продолжи" in text for text in prompts)
-    assert think_flags[0] is True
+    assert any("Продолжи" in text or "оборвались" in text for text in prompts)
+    assert think_flags[0] is False
     assert think_flags[1] is False
 
 
@@ -585,7 +585,7 @@ def test_stream_resumes_a_cut_thought(app_env, monkeypatch, db_session):
     def fake_complete(client, settings_obj, thread, said, **kwargs):
         if False:
             yield chat.Step(kind="token", text="")
-        think_flags.append(kwargs.get("include_think", True))
+        think_flags.append(kwargs.get("include_think"))
         n["i"] += 1
         if n["i"] == 1:
             yield chat.Step(kind="think", text="проверяю воркер")
@@ -620,10 +620,12 @@ def test_stream_resumes_a_cut_thought(app_env, monkeypatch, db_session):
     assert answer.reply == "воркер запущен"
     assert "проверяю воркер" in answer.thinking
     assert "и логи" in answer.thinking
-    assert think_flags == [True, True]
+    # First round follows settings.agent_think (False); continue never re-enables think.
+    assert think_flags == [False, False]
     assert assistant_bits[0].startswith("<think>проверяю воркер")
     assert "</think>" not in assistant_bits[0]
-    assert any("Рассуждение оборвалось" in text for text in prompts)
+    assert any("оборвались" in text for text in prompts)
+    assert prompts[0] == chat.CONTINUE_PROMPT
 
 
 def test_stream_keeps_cut_after_continue_budget(app_env, monkeypatch, db_session):

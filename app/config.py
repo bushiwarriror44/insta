@@ -79,6 +79,8 @@ class Settings(BaseSettings):
     agent_backend: str = Field(default="openai-compat")
     agent_model: str = Field(default="qwen3:8b")
     agent_base_url: str = Field(default="http://localhost:11434/v1")
+    # Off by default: Salad's gateway cuts streams ~100s; think often burns the window.
+    agent_think: bool = Field(default=False)
     agent_timeout_seconds: float = Field(default=600.0)
     assistant_timeout_seconds: float = Field(default=180.0)
     agent_api_key: str = Field(default="")
