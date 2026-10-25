@@ -29,11 +29,18 @@ import { library, search, type PromptGroup } from "../api/prompts";
 import { CHAT_MANUAL, pageHint, toolHint } from "../lib/agentManual";
 import { emitAssistantMutate } from "../lib/assistantMutate";
 import { panelPath } from "../lib/panelHref";
+import { formSubmitError, submitSetupForm } from "../lib/setupFormSubmit";
 import {
   ACCOUNT_FORM_FIELDS,
   askFormIncomplete,
+  detectFormKind,
   fieldIsRequired,
+  optionLabel,
+  optionValue,
   PROXY_FORM_FIELDS,
+  PUBLISH_FORM_FIELDS,
+  withFieldOptions,
+  type FormKind,
 } from "../lib/setupForms";
 import { SHOW_ASSISTANT } from "../lib/uiEvents";
 import { retryGenerationOnLocal } from "../lib/pollGeneration";
@@ -262,6 +269,9 @@ interface Live {
   asks: string[];
   askFields: AskField[] | null;
   askAnswers: Record<string, string>;
+  formKind: FormKind | null;
+  formError: string | null;
+  formBusy: boolean;
   note: string | null;
   progressText: string | null;
   progressDetail: string | null;
@@ -281,6 +291,9 @@ function emptyLive(): Live {
     asks: [],
     askFields: null,
     askAnswers: {},
+    formKind: null,
+    formError: null,
+    formBusy: false,
     note: null,
     progressText: null,
     progressDetail: null,
@@ -697,6 +710,9 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         asks: [],
         askFields: null,
         askAnswers: {},
+        formKind: null,
+        formError: null,
+        formBusy: false,
         doing: [],
         doingName: null,
         writing: "",
@@ -805,10 +821,14 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                 return { ...prev, [id]: { ...current, pending: [...current.pending, step.text] } };
               });
             } else if (step.type === "ask") {
+              const fields = step.fields?.length ? step.fields : null;
               patchLive(id, {
                 asks: step.questions ?? [],
-                askFields: step.fields?.length ? step.fields : null,
+                askFields: fields,
                 askAnswers: {},
+                formKind: detectFormKind(fields, step.form_kind),
+                formError: null,
+                formBusy: false,
               });
             } else if (step.type === "error") {
               const wires = wireRef.current[id] ?? [];
@@ -852,17 +872,20 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
               if (step.asks?.length || step.fields?.length) {
                 setLive((prev) => {
                   const current = prev[id] ?? emptyLive();
+                  const fields = step.fields?.length
+                    ? step.fields
+                    : current.askFields?.length
+                      ? current.askFields
+                      : null;
                   return {
                     ...prev,
                     [id]: {
                       ...current,
                       asks: current.asks.length ? current.asks : step.asks ?? [],
-                      askFields:
-                        step.fields?.length
-                          ? step.fields
-                          : current.askFields?.length
-                            ? current.askFields
-                            : null,
+                      askFields: fields,
+                      formKind:
+                        detectFormKind(fields, step.form_kind) ?? current.formKind,
+                      formError: null,
                     },
                   };
                 });
@@ -966,6 +989,9 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const seconds = view.seconds;
   const asks = view.asks;
   const askFields = view.askFields;
+  const formKind = view.formKind;
+  const formError = view.formError;
+  const formBusy = view.formBusy;
   const askAnswers = view.askAnswers;
   const note = view.note;
   const progressText = view.progressText;
@@ -1118,8 +1144,35 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
     tail.current?.scrollIntoView?.({ block: "end" });
   }, [thread, writing, draftThink, doing, pending, asks, askAnswers]);
 
-  const answerAsks = (e: FormEvent) => {
+  const answerAsks = async (e: FormEvent) => {
     e.preventDefault();
+    if (!chat || formBusy) return;
+    const kind = formKind ?? detectFormKind(askFields);
+    if (kind && askFields?.length) {
+      if (askFormIncomplete(askFields, askAnswers)) return;
+      patchLive(chat.id, { formBusy: true, formError: null });
+      try {
+        const result = await submitSetupForm(kind, askAnswers);
+        const nextMessages: Said[] = [
+          ...chat.messages,
+          { role: "user", content: result.userLine },
+          { role: "assistant", content: result.assistantLine },
+        ];
+        replaceMessages(chat.id, nextMessages);
+        patchLive(chat.id, {
+          asks: [],
+          askFields: null,
+          askAnswers: {},
+          formKind: null,
+          formError: null,
+          formBusy: false,
+        });
+        emitAssistantMutate(result.created);
+      } catch (err) {
+        patchLive(chat.id, { formBusy: false, formError: formSubmitError(err) });
+      }
+      return;
+    }
     const lines = askFields?.length
       ? askFields
           .map((field) => ({ field, value: (askAnswers[field.id] ?? "").trim() }))
@@ -1152,18 +1205,80 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const hasAskForm = asks.length > 0 || (askFields?.length ?? 0) > 0;
   const open = thread.length > 0 || busy || hasAskForm || localSwitchOffer !== null;
 
-  const showSetupForm = (fields: AskField[], prompt: string) => {
+  const showSetupForm = (fields: AskField[], prompt: string, kind: FormKind) => {
     if (!chat || busy) return;
     patchLive(chat.id, {
       asks: [prompt],
       askFields: fields,
       askAnswers: {},
+      formKind: kind,
+      formError: null,
+      formBusy: false,
       note: null,
     });
     setHidden(false);
     writeHidden(false);
     setPlusOpen(false);
   };
+
+  useEffect(() => {
+    if (!chat?.id || !askFields?.length) return;
+    const kind = formKind ?? detectFormKind(askFields);
+    if (!kind) return;
+    let cancelled = false;
+    const chatId = chat.id;
+    void (async () => {
+      try {
+        if (kind === "account") {
+          const proxies = await api.proxies.list();
+          if (cancelled || !proxies.length) return;
+          setLive((prev) => {
+            const current = prev[chatId] ?? emptyLive();
+            if (!current.askFields?.length) return prev;
+            return {
+              ...prev,
+              [chatId]: {
+                ...current,
+                askFields: withFieldOptions(current.askFields, {
+                  proxy_label: proxies.map((p) => p.label),
+                }),
+              },
+            };
+          });
+          return;
+        }
+        if (kind === "publish") {
+          const [accounts, videos] = await Promise.all([
+            api.accounts.list(),
+            api.videos.list(),
+          ]);
+          if (cancelled) return;
+          setLive((prev) => {
+            const current = prev[chatId] ?? emptyLive();
+            if (!current.askFields?.length) return prev;
+            return {
+              ...prev,
+              [chatId]: {
+                ...current,
+                askFields: withFieldOptions(current.askFields, {
+                  account_id: accounts.map((a) => ({
+                    value: String(a.id),
+                    label: `@${a.username} · ${a.platform || "instagram"}`,
+                  })),
+                  filename: videos.map((v) => v.filename),
+                }),
+              },
+            };
+          });
+        }
+      } catch {
+        /* options stay empty; operator can still type if kind allows text */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [chat?.id, formKind, askFields?.map((f) => f.id).join(",")]);
 
   const loadGateway = async (opts?: { rotate?: boolean; enabled?: boolean }) => {
     if (!canGateway) return;
@@ -1608,8 +1723,21 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
             ) : null}
             {!busy && note && <p className="text-xs text-slate-400">{note}</p>}
             {!busy && hasAskForm && (
-              <form onSubmit={answerAsks} className="space-y-2 rounded-lg border border-slate-800 bg-slate-900/80 p-3">
-                <p className="text-xs text-slate-400">Нужны уточнения</p>
+              <form
+                onSubmit={(e) => void answerAsks(e)}
+                className="space-y-2 rounded-lg border border-slate-800 bg-slate-900/80 p-3"
+                data-testid="assistant-setup-form"
+                data-form-kind={formKind ?? ""}
+              >
+                <p className="text-xs text-slate-400">
+                  {formKind === "account"
+                    ? "Форма аккаунта"
+                    : formKind === "proxy"
+                      ? "Форма прокси"
+                      : formKind === "publish"
+                        ? "Форма публикации"
+                        : "Нужны уточнения"}
+                </p>
                 {askFields?.length
                   ? askFields.map((field) => (
                       <label key={field.id} className="block space-y-1">
@@ -1631,12 +1759,17 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                             <option value="">Выберите…</option>
                             {(field.options?.length
                               ? field.options
-                              : ["instagram", "youtube", "tiktok"]
-                            ).map((option) => (
-                              <option key={option} value={option}>
-                                {option}
-                              </option>
-                            ))}
+                              : field.id === "platform"
+                                ? ["instagram", "youtube", "tiktok"]
+                                : []
+                            ).map((option) => {
+                              const value = optionValue(option);
+                              return (
+                                <option key={value} value={value}>
+                                  {optionLabel(option)}
+                                </option>
+                              );
+                            })}
                           </select>
                         ) : (
                           <input
@@ -1665,17 +1798,23 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                         />
                       </label>
                     ))}
+                {formError ? (
+                  <p className="text-xs text-rose-400" data-testid="assistant-form-error">
+                    {formError}
+                  </p>
+                ) : null}
                 <button
                   type="submit"
                   className="btn-primary"
                   disabled={
-                    askFields?.length
+                    formBusy ||
+                    (askFields?.length
                       ? askFormIncomplete(askFields, askAnswers)
-                      : asks.some((_, i) => !(askAnswers[String(i)] ?? "").trim())
+                      : asks.some((_, i) => !(askAnswers[String(i)] ?? "").trim()))
                   }
                 >
                   <Send className="h-4 w-4" />
-                  Ответить
+                  {formKind ? (formBusy ? "Сохраняю…" : "Сохранить") : "Ответить"}
                 </button>
               </form>
             )}
@@ -1822,7 +1961,11 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                     role="menuitem"
                     className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800"
                     onClick={() => {
-                      showSetupForm(ACCOUNT_FORM_FIELDS, "Заполните данные аккаунта");
+                      showSetupForm(
+                        ACCOUNT_FORM_FIELDS,
+                        "Заполните данные аккаунта",
+                        "account"
+                      );
                     }}
                   >
                     Форма аккаунта
@@ -1832,10 +1975,25 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                     role="menuitem"
                     className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800"
                     onClick={() => {
-                      showSetupForm(PROXY_FORM_FIELDS, "Заполните данные прокси");
+                      showSetupForm(PROXY_FORM_FIELDS, "Заполните данные прокси", "proxy");
                     }}
                   >
                     Форма прокси
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800"
+                    data-testid="assistant-menu-publish-form"
+                    onClick={() => {
+                      showSetupForm(
+                        PUBLISH_FORM_FIELDS,
+                        "Заполните данные публикации",
+                        "publish"
+                      );
+                    }}
+                  >
+                    Форма публикации
                   </button>
                   {owner ? (
                     <button

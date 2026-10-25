@@ -33,4 +33,19 @@ describe("useGpuPresence", () => {
     await new Promise((r) => setTimeout(r, 30));
     expect(api.gpu.presence).not.toHaveBeenCalled();
   });
+
+  it("pings even when the tab is hidden", async () => {
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+    renderHook(() => useGpuPresence(true));
+    await waitFor(() => expect(api.gpu.presence).toHaveBeenCalled());
+  });
+
+  it("warns on presence failure without throwing", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(api.gpu.presence).mockRejectedValueOnce(new Error("unauthorized"));
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
+    renderHook(() => useGpuPresence(true));
+    await waitFor(() => expect(warn).toHaveBeenCalled());
+    warn.mockRestore();
+  });
 });

@@ -1,12 +1,16 @@
 import { ApiError, API_BASE, getAuthHeaders } from "./client";
 
+export type AskOption = string | { value: string; label: string };
+
 export type AskField = {
   id: string;
   label: string;
   kind?: "text" | "password" | "select";
-  options?: string[];
+  options?: AskOption[];
   required?: boolean;
 };
+
+export type FormKind = "account" | "proxy" | "publish";
 
 export type AssistantFocus = {
   account_id?: number;
@@ -34,7 +38,13 @@ export type AssistantStep =
   | { type: "token"; text: string }
   | { type: "think"; text: string }
   | { type: "image"; text: string }
-  | { type: "ask"; text?: string; questions: string[]; fields?: AskField[] }
+  | {
+      type: "ask";
+      text?: string;
+      questions: string[];
+      fields?: AskField[];
+      form_kind?: FormKind | string;
+    }
   | {
       type: "done";
       reply: string;
@@ -44,6 +54,7 @@ export type AssistantStep =
       images: string[];
       asks?: string[];
       fields?: AskField[];
+      form_kind?: FormKind | string;
       created?: { accounts?: number[]; proxies?: number[] };
       thinking?: string;
       cut?: string;

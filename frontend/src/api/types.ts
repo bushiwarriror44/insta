@@ -270,6 +270,7 @@ export interface AccountIn {
   backup_codes?: string | null;
   login_surface?: LoginSurface | null;
   account_line?: string | null;
+  vendor_line?: string | null;
   notes?: string | null;
 }
 

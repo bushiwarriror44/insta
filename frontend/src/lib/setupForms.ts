@@ -1,4 +1,6 @@
-import type { AskField } from "../api/assistant";
+import type { AskField, AskOption } from "../api/assistant";
+
+export type FormKind = "account" | "proxy" | "publish";
 
 /** Mirrors app/assistant/setup_fields.py — keep ids in sync. */
 export const ACCOUNT_FORM_FIELDS: AskField[] = [
@@ -31,6 +33,51 @@ export const PROXY_FORM_FIELDS: AskField[] = [
   { id: "country", label: "Страна", kind: "text", required: false },
 ];
 
+export const PUBLISH_FORM_FIELDS: AskField[] = [
+  { id: "account_id", label: "Аккаунт", kind: "select", required: true },
+  { id: "filename", label: "Файл из библиотеки", kind: "select", required: true },
+  { id: "title", label: "Заголовок", kind: "text", required: false },
+  { id: "caption", label: "Подпись / caption", kind: "text", required: false },
+  { id: "description", label: "Описание (YouTube)", kind: "text", required: false },
+  { id: "tags", label: "Теги", kind: "text", required: false },
+  {
+    id: "when",
+    label: "Когда (ISO или пусто = сейчас)",
+    kind: "text",
+    required: false,
+  },
+  {
+    id: "post_type",
+    label: "Тип поста",
+    kind: "select",
+    options: ["reel", "youtube_short", "tiktok"],
+    required: false,
+  },
+];
+
+export function optionValue(option: AskOption): string {
+  return typeof option === "string" ? option : option.value;
+}
+
+export function optionLabel(option: AskOption): string {
+  return typeof option === "string" ? option : option.label;
+}
+
+export function detectFormKind(
+  fields: AskField[] | null | undefined,
+  explicit?: string | null
+): FormKind | null {
+  const raw = (explicit || "").trim().toLowerCase();
+  if (raw === "account" || raw === "proxy" || raw === "publish") return raw;
+  const ids = new Set((fields ?? []).map((field) => field.id));
+  if (ids.has("account_id") && ids.has("filename")) return "publish";
+  if (ids.has("proxy_label") && ids.has("username") && ids.has("platform")) return "account";
+  if (ids.has("label") && ids.has("url") && !ids.has("username") && !ids.has("proxy_label")) {
+    return "proxy";
+  }
+  return null;
+}
+
 export function fieldIsRequired(field: AskField, answers: Record<string, string> = {}): boolean {
   if (field.id === "password") {
     const platform = (answers.platform ?? "").trim();
@@ -41,4 +88,15 @@ export function fieldIsRequired(field: AskField, answers: Record<string, string>
 
 export function askFormIncomplete(fields: AskField[], answers: Record<string, string>): boolean {
   return fields.some((field) => fieldIsRequired(field, answers) && !(answers[field.id] ?? "").trim());
+}
+
+export function withFieldOptions(
+  fields: AskField[],
+  updates: Record<string, AskOption[]>
+): AskField[] {
+  return fields.map((field) => {
+    const next = updates[field.id];
+    if (!next) return field;
+    return { ...field, options: next, kind: field.kind ?? "select" };
+  });
 }

@@ -1081,6 +1081,38 @@ def test_ask_operator_fields_fill_questions(db_session):
     assert result["fields"][0]["id"] == "proxy_label"
     assert result["fields"][2]["kind"] == "select"
     assert result["fields"][4]["kind"] == "password"
+    assert result["form_kind"] == "account"
+
+
+def test_ask_operator_publish_preset_sets_form_kind(db_session):
+    from app.assistant.setup_fields import PUBLISH_FORM_FIELDS
+
+    result, _opened = run_tool(
+        db_session,
+        "ask_operator",
+        {
+            "reason": "опубликовать",
+            "form_kind": "publish",
+            "fields": [dict(field) for field in PUBLISH_FORM_FIELDS],
+        },
+    )
+    assert result["ask"] is True
+    assert result["form_kind"] == "publish"
+    assert {field["id"] for field in result["fields"]} >= {"account_id", "filename"}
+
+
+def test_detect_form_kind_from_field_ids():
+    from app.assistant.setup_fields import (
+        ACCOUNT_FORM_FIELDS,
+        PROXY_FORM_FIELDS,
+        PUBLISH_FORM_FIELDS,
+        detect_form_kind,
+    )
+
+    assert detect_form_kind(ACCOUNT_FORM_FIELDS) == "account"
+    assert detect_form_kind(PROXY_FORM_FIELDS) == "proxy"
+    assert detect_form_kind(PUBLISH_FORM_FIELDS) == "publish"
+    assert detect_form_kind([{"id": "code", "label": "Код"}]) is None
 
 
 def test_ask_operator_rejects_empty(db_session):

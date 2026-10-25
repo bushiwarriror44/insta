@@ -140,23 +140,23 @@ def test_stale_presence_does_not_block(app_env, monkeypatch):
     _enable(monkeypatch)
     salad_idle.observe_status(settings, "running", now=START)
     salad_idle.touch_presence("tab-bbbb-2222", settings, now=START)
-    assert salad_idle.presence_alive(settings, now=START + timedelta(seconds=30)) is True
-    assert salad_idle.presence_alive(settings, now=START + timedelta(seconds=121)) is False
+    assert salad_idle.presence_alive(settings, now=START + timedelta(minutes=5)) is True
+    assert salad_idle.presence_alive(settings, now=START + timedelta(minutes=15, seconds=1)) is False
 
 
 def test_two_viewers_prune_independently(app_env, monkeypatch):
     _enable(monkeypatch)
     salad_idle.touch_presence("viewer-one-aaa", settings, now=START)
     salad_idle.touch_presence(
-        "viewer-two-bbb", settings, now=START + timedelta(seconds=90)
+        "viewer-two-bbb", settings, now=START + timedelta(minutes=5)
     )
-    assert salad_idle.presence_alive(settings, now=START + timedelta(seconds=100)) is True
-    # First viewer expired, second still within TTL.
+    assert salad_idle.presence_alive(settings, now=START + timedelta(minutes=6)) is True
+    # First viewer expired after 15m, second still within TTL.
     salad_idle.touch_presence(
-        "viewer-two-bbb", settings, now=START + timedelta(seconds=100)
+        "viewer-two-bbb", settings, now=START + timedelta(minutes=10)
     )
-    assert salad_idle.presence_alive(settings, now=START + timedelta(seconds=150)) is True
-    assert salad_idle.presence_alive(settings, now=START + timedelta(seconds=250)) is False
+    assert salad_idle.presence_alive(settings, now=START + timedelta(minutes=16)) is True
+    assert salad_idle.presence_alive(settings, now=START + timedelta(minutes=26)) is False
 
 
 def test_stopped_status_clears_running_since(app_env, monkeypatch):

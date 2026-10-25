@@ -85,10 +85,15 @@ Graph / YouTube Data API / TikTok Content Posting API и OAuth не исполь
 Ты не можешь удалять ничего. Если просят удалить — откажись.
 
 Неполная задача про аккаунт — `ask_operator` с полным пресетом fields аккаунта \
-(proxy_label, username, platform; password обязателен только для instagram; totp_seed и email по желанию). \
-Неполная задача про прокси — `ask_operator` с пресетом fields прокси (label, url; country по желанию). \
-Не выдумывай другие id полей. Данные уже текстом в чате — create_*, форму не дублируй. \
-Пока оператор не ответил сообщением «Уточнения: …» — не вызывай create_*. \
+(proxy_label, username, platform; password обязателен только для instagram; totp_seed и email по желанию) \
+и `form_kind=account`. \
+Неполная задача про прокси — `ask_operator` с пресетом fields прокси (label, url; country по желанию) \
+и `form_kind=proxy`. \
+Неполная публикация — `ask_operator` с пресетом publish \
+(account_id, filename, title/caption/description/tags/when/post_type) и `form_kind=publish`. \
+Не выдумывай другие id полей. Данные уже текстом в чате — create_* / enqueue_publish, форму не дублируй. \
+Пока оператор не ответил «Уточнения: …» и в истории нет «Форма аккаунта/прокси/публикации: …» — \
+не вызывай create_* / enqueue_publish. Если оператор уже написал «Форма …» с итогом — не создавай повторно. \
 Несколько аккаунтов или прокси в одном сообщении — `create_accounts` / `create_proxies` \
 (JSON-массив `items`, до 20). Если ни у одной строки нет обязательных полей — `ask_operator` с формой. \
 Частичный успех верни как есть: created и failed. \
@@ -570,9 +575,10 @@ TOOLS = [
     schema(
         "ask_operator",
         "Спросить оператора, когда не хватает обязательных полей. Не выдумывай значения. "
-        "Аккаунт — fields как пресет: proxy_label, username, platform (select), password, "
-        "totp_seed/email optional (required false). Прокси — label, url, country optional. "
-        "Если данные уже в чате — create_*, форму не дублируй. После «Уточнения: …» — create/update.",
+        "Аккаунт — fields пресет + form_kind=account. Прокси — form_kind=proxy. "
+        "Публикация — form_kind=publish (account_id, filename, caption…). "
+        "Если данные уже в чате — create_* / enqueue_publish, форму не дублируй. "
+        "После «Уточнения: …» или «Форма …» в истории — create/update/enqueue, не дублируй форму.",
         {
             "questions": {
                 "type": "array",
@@ -580,6 +586,11 @@ TOOLS = [
                 "description": "Короткие вопросы: чего не хватает",
             },
             "reason": {"type": "string", "description": "Зачем нужны ответы"},
+            "form_kind": {
+                "type": "string",
+                "enum": ["account", "proxy", "publish"],
+                "description": "Тип формы в чате; UI отправит в REST без повторного create_*",
+            },
             "fields": {
                 "type": "array",
                 "description": "Форма в чате: id, label, kind text|password|select, options для select",
@@ -1024,6 +1035,7 @@ class Answer:
     images: list[str] = field(default_factory=list)
     asks: list[str] = field(default_factory=list)
     fields: list[dict[str, Any]] = field(default_factory=list)
+    form_kind: str = ""
     created: dict[str, list[int]] = field(default_factory=lambda: {"accounts": [], "proxies": []})
     thinking: str = ""
     cut: str = ""
@@ -1619,6 +1631,8 @@ def _ask_fields(raw: Any) -> list[dict[str, Any]]:
 
 
 def _ask_operator(args: dict[str, Any]) -> dict[str, Any]:
+    from app.assistant.setup_fields import detect_form_kind
+
     fields = _ask_fields(args.get("fields"))
     raw = args.get("questions")
     if isinstance(raw, str):
@@ -1632,12 +1646,17 @@ def _ask_operator(args: dict[str, Any]) -> dict[str, Any]:
         questions = [field["label"] for field in fields]
     if not questions:
         raise ToolError("нужен хотя бы один вопрос или field")
-    return {
+    explicit = args.get("form_kind") if args.get("form_kind") is not None else args.get("form")
+    form_kind = detect_form_kind(fields, str(explicit).strip() if explicit is not None else None)
+    out: dict[str, Any] = {
         "ask": True,
         "questions": questions,
         "why": str(args.get("reason") or "").strip(),
         "fields": fields,
     }
+    if form_kind:
+        out["form_kind"] = form_kind
+    return out
 
 
 @dataclass
@@ -1646,6 +1665,7 @@ class Step:
     text: str = ""
     questions: list[str] = field(default_factory=list)
     fields: list[dict[str, Any]] = field(default_factory=list)
+    form_kind: str = ""
     name: str = ""
     ratio: float | None = None
     detail: str = ""
@@ -2210,10 +2230,26 @@ def stream(
                                     )
                                 )
                     if isinstance(result, dict) and result.get("ask"):
+                        from app.assistant.setup_fields import detect_form_kind
+
                         questions = list(result.get("questions") or [])
                         fields = list(result.get("fields") or [])
                         why = str(result.get("why") or "").strip()
-                        yield Step(kind="ask", text=why, questions=questions, fields=fields)
+                        form_kind = (
+                            detect_form_kind(
+                                fields,
+                                str(result.get("form_kind") or result.get("form") or "").strip()
+                                or None,
+                            )
+                            or ""
+                        )
+                        yield Step(
+                            kind="ask",
+                            text=why,
+                            questions=questions,
+                            fields=fields,
+                            form_kind=form_kind,
+                        )
                         yield Answer(
                             reply=why or "Нужны уточнения, чтобы продолжить.",
                             opened=opened,
@@ -2221,6 +2257,7 @@ def stream(
                             images=images,
                             asks=questions,
                             fields=fields,
+                            form_kind=form_kind,
                             created=created,
                         )
                         return

@@ -21,15 +21,19 @@ function clientId(): string {
   }
 }
 
-/** Ping the API while this tab is visible so Salad idle-stop stays off. */
+/** Ping the API while this panel tab is open so Salad idle-stop stays off.
+ *
+ * Continues in background tabs (`runWhenHidden`) — visibility gating would let
+ * the idle loop stop the GPU while the site is still loaded.
+ */
 export function useGpuPresence(enabled: boolean) {
   const ping = useCallback(async () => {
     try {
       await api.gpu.presence(clientId());
-    } catch {
-      /* presence is best-effort; idle loop tolerates gaps within TTL */
+    } catch (err) {
+      console.warn("gpu.presence failed", err);
     }
   }, []);
 
-  usePollWhenVisible(ping, PING_MS, enabled);
+  usePollWhenVisible(ping, PING_MS, enabled, undefined, true);
 }

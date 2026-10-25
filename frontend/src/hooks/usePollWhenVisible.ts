@@ -4,12 +4,15 @@ import { useEffect, useRef } from "react";
  *
  * `tick` is read from a ref so a new callback identity does not re-fetch.
  * Pass `restartKey` when a filter should start a new poll cycle right away.
+ * Pass `runWhenHidden` for keepalive loops (e.g. GPU presence) that must keep
+ * firing in a background tab.
  */
 export function usePollWhenVisible(
   tick: () => void | Promise<void>,
   ms: number,
   enabled = true,
-  restartKey?: unknown
+  restartKey?: unknown,
+  runWhenHidden = false
 ) {
   const tickRef = useRef(tick);
   tickRef.current = tick;
@@ -31,12 +34,13 @@ export function usePollWhenVisible(
     };
 
     const start = () => {
-      if (id != null || document.hidden) return;
+      if (id != null) return;
+      if (!runWhenHidden && document.hidden) return;
       id = window.setInterval(run, ms);
     };
 
     const onVis = () => {
-      if (document.hidden) {
+      if (!runWhenHidden && document.hidden) {
         stop();
         return;
       }
@@ -44,7 +48,7 @@ export function usePollWhenVisible(
       start();
     };
 
-    if (!document.hidden) {
+    if (runWhenHidden || !document.hidden) {
       run();
       start();
     }
@@ -54,5 +58,5 @@ export function usePollWhenVisible(
       stop();
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [ms, enabled, restartKey]);
+  }, [ms, enabled, restartKey, runWhenHidden]);
 }

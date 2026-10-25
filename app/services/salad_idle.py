@@ -33,7 +33,8 @@ log = get_logger(__name__)
 
 ACTIVITY_NAME = "gpu_activity.json"
 POLL_SECONDS = 60
-PRESENCE_TTL = timedelta(seconds=120)
+# Long enough to survive Chrome background timer throttling (often ≥1 min).
+PRESENCE_TTL = timedelta(minutes=15)
 _CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{8,80}$")
 
 

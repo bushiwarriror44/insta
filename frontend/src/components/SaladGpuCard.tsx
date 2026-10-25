@@ -84,7 +84,7 @@ export function SaladGpuCard() {
         шапке. Пока группа работает — идут GPU-часы. Не пользуешься — останови. Запуск после остановки снова качает
         образ.
         {gpu.configured && (gpu.idle_stop_minutes ?? 0) > 0
-          ? ` Авто-стоп через ${gpu.idle_stop_minutes} мин простоя (чат или local-рендер).`
+          ? ` Авто-стоп через ${gpu.idle_stop_minutes} мин простоя (нет открытой панели, чата и local-рендера).`
           : ""}
       </p>
       <div className="flex flex-wrap items-center gap-3">

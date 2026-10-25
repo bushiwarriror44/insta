@@ -108,7 +108,7 @@ Docker compose: `reels-api`, `reels-worker`, `reels-ollama`, `reels-frontend`, `
 
 ### Нужно от оператора
 
-Нет username / `proxy_label` / url прокси / какой ролик публиковать / JSON cookies / промпта рендера / id клипов для склейки — `ask_operator`. Для аккаунта и прокси по умолчанию форма в чате (`fields` из пресета: аккаунт — proxy_label, username, platform, password; прокси — label, url). В меню «+» оператор может открыть форму сам. Данные уже в чате — `create_*`, форму не дублировать. Пока нет ответа «Уточнения: …» — не create и не import.
+Нет username / `proxy_label` / url прокси / какой ролик публиковать / JSON cookies / промпта рендера / id клипов для склейки — `ask_operator`. Для аккаунта, прокси и публикации по умолчанию форма в чате (`fields` + `form_kind`: account / proxy / publish). Пресеты: аккаунт — proxy_label, username, platform, password; прокси — label, url; публикация — account_id, filename, caption…. В меню «+» оператор может открыть форму сам; UI шлёт её в REST и пишет в чат «Форма …» — не вызывай create_* / enqueue_publish повторно. Данные уже текстом в чате — `create_*` / `enqueue_publish`, форму не дублировать. Пока нет «Уточнения: …» и нет «Форма …» — не create и не import.
 
 ### Честность при ошибке
 

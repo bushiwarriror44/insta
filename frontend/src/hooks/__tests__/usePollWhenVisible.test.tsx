@@ -67,4 +67,25 @@ describe("usePollWhenVisible", () => {
     document.dispatchEvent(new Event("visibilitychange"));
     expect(tick).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps ticking while hidden when runWhenHidden is set", () => {
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+    const tick = vi.fn();
+    renderHook(() => usePollWhenVisible(tick, 1000, true, undefined, true));
+    expect(tick).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(3000);
+    expect(tick).toHaveBeenCalledTimes(4);
+  });
+
+  it("continues after visibilitychange to hidden when runWhenHidden is set", () => {
+    const tick = vi.fn();
+    renderHook(() => usePollWhenVisible(tick, 1000, true, undefined, true));
+    expect(tick).toHaveBeenCalledTimes(1);
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+    // visibilitychange itself triggers an immediate run
+    expect(tick).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(1000);
+    expect(tick).toHaveBeenCalledTimes(3);
+  });
 });

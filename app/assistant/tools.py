@@ -2132,10 +2132,18 @@ def publish_now(
     from app.services import worker_control
 
     if not filename and asset_id is None:
+        from app.assistant.setup_fields import PUBLISH_FORM_FIELDS
+
+        fields = [dict(field) for field in PUBLISH_FORM_FIELDS]
+        for field in fields:
+            if field.get("id") == "account_id":
+                field["options"] = [str(account_id)]
         return {
             "ask": True,
-            "questions": ["какой ролик из библиотеки (filename или asset_id)?"],
+            "questions": ["Заполните данные публикации"],
             "why": "чтобы опубликовать сейчас",
+            "fields": fields,
+            "form_kind": "publish",
         }
     connection = test_connection(db, account_id)
     if not connection.get("ok"):
@@ -3409,6 +3417,7 @@ def create_accounts(db: Session, items: Any, *, as_owner: bool = True) -> dict[s
             "questions": ["Заполните данные аккаунта"],
             "why": "чтобы добавить аккаунты",
             "fields": [dict(field) for field in ACCOUNT_FORM_FIELDS],
+            "form_kind": "account",
         }
     return {"created": created, "failed": failed}
 
@@ -3449,6 +3458,7 @@ def create_proxies(db: Session, items: Any) -> dict[str, Any]:
             "questions": ["Заполните данные прокси"],
             "why": "чтобы добавить прокси",
             "fields": [dict(field) for field in PROXY_FORM_FIELDS],
+            "form_kind": "proxy",
         }
     return {"created": created, "failed": failed}
 

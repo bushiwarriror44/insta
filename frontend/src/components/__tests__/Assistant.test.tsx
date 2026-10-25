@@ -10,8 +10,10 @@ import { ask } from "../../api/assistant";
 const useAuthMock = vi.hoisted(() => vi.fn());
 
 const apiMock = vi.hoisted(() => ({
-  accounts: { list: vi.fn() },
-  videos: { upload: vi.fn() },
+  accounts: { list: vi.fn(), create: vi.fn() },
+  proxies: { list: vi.fn(), create: vi.fn() },
+  videos: { list: vi.fn(), upload: vi.fn() },
+  jobs: { enqueue: vi.fn() },
   factory: { getGeneration: vi.fn() },
   gpu: { logs: vi.fn(), status: vi.fn() },
   llmGateway: { credentials: vi.fn(), rotate: vi.fn(), setEnabled: vi.fn() },
@@ -81,12 +83,24 @@ function renderDock(ui = <Assistant />, path = "/") {
 beforeEach(() => {
   window.localStorage.clear();
   useAuthMock.mockReturnValue({ role: "owner", state: "open", authRequired: true });
-  apiMock.accounts.list.mockResolvedValue([{ username: "alice" }]);
+  apiMock.accounts.list.mockResolvedValue([
+    { id: 10, username: "alice", platform: "instagram", status: "active" },
+  ]);
+  apiMock.accounts.create.mockResolvedValue({
+    id: 10,
+    username: "alice",
+    platform: "instagram",
+    status: "active",
+  });
+  apiMock.proxies.list.mockResolvedValue([{ id: 1, label: "res-1", url: "http://h", is_healthy: true }]);
+  apiMock.proxies.create.mockResolvedValue({ id: 1, label: "res-1", url: "http://h", is_healthy: true });
+  apiMock.videos.list.mockResolvedValue([{ filename: "clip.mp4", media_type: "video", size_bytes: 10 }]);
   apiMock.videos.upload.mockResolvedValue({
     filename: "paste.png",
     media_type: "image",
     size_bytes: 100,
   });
+  apiMock.jobs.enqueue.mockResolvedValue({ id: 99, status: "queued" });
   askMock.mockReset();
   askMock.mockResolvedValue(undefined);
   apiMock.gpu.status.mockReset();
@@ -381,22 +395,24 @@ describe("Assistant", () => {
     expect(followUp.at(-1)?.content).toContain("alice");
   });
 
-  it("renders a setup form from ask fields and sends field ids", async () => {
+  it("submits account setup form via REST without streaming", async () => {
     askMock.mockImplementationOnce(async (_messages, onStep) => {
       onStep({
         type: "ask",
         text: "заполните форму",
         questions: ["Метка прокси", "Username"],
+        form_kind: "account",
         fields: [
-          { id: "proxy_label", label: "Метка прокси", kind: "text" },
-          { id: "username", label: "Username", kind: "text" },
+          { id: "proxy_label", label: "Метка прокси", kind: "text", required: true },
+          { id: "username", label: "Username", kind: "text", required: true },
           {
             id: "platform",
             label: "Площадка",
             kind: "select",
             options: ["instagram", "youtube", "tiktok"],
+            required: true,
           },
-          { id: "password", label: "Пароль", kind: "password" },
+          { id: "password", label: "Пароль", kind: "password", required: false },
         ],
       });
       onStep({
@@ -407,6 +423,19 @@ describe("Assistant", () => {
         used: ["ask_operator"],
         images: [],
         asks: ["Метка прокси", "Username"],
+        form_kind: "account",
+        fields: [
+          { id: "proxy_label", label: "Метка прокси", kind: "text", required: true },
+          { id: "username", label: "Username", kind: "text", required: true },
+          {
+            id: "platform",
+            label: "Площадка",
+            kind: "select",
+            options: ["instagram", "youtube", "tiktok"],
+            required: true,
+          },
+          { id: "password", label: "Пароль", kind: "password", required: false },
+        ],
       });
     });
     const user = userEvent.setup();
@@ -417,15 +446,18 @@ describe("Assistant", () => {
     await user.type(screen.getByLabelText("Username"), "alice");
     await user.selectOptions(screen.getByLabelText("Площадка"), "instagram");
     await user.type(screen.getByLabelText("Пароль"), "secret");
-    await user.click(screen.getByRole("button", { name: /^ответить$/i }));
-    await waitFor(() => expect(askMock).toHaveBeenCalledTimes(2));
-    const followUp = askMock.mock.calls[1][0] as Array<{ role: string; content: string }>;
-    const body = followUp.at(-1)?.content ?? "";
-    expect(body).toContain("Уточнения:");
-    expect(body).toContain("proxy_label: res-1");
-    expect(body).toContain("username: alice");
-    expect(body).toContain("platform: instagram");
-    expect(body).toContain("password: secret");
+    await user.click(screen.getByRole("button", { name: /^сохранить$/i }));
+    await waitFor(() => expect(apiMock.accounts.create).toHaveBeenCalled());
+    expect(askMock).toHaveBeenCalledTimes(1);
+    expect(apiMock.accounts.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        username: "alice",
+        proxy_label: "res-1",
+        platform: "instagram",
+        password: "secret",
+      })
+    );
+    expect(await screen.findByText(/аккаунт @alice создан/i)).toBeInTheDocument();
   });
 
   it("opens the proxy setup form from the plus menu", async () => {
@@ -435,6 +467,20 @@ describe("Assistant", () => {
     await user.click(await screen.findByRole("menuitem", { name: /форма прокси/i }));
     expect(await screen.findByLabelText(/url \(http/i)).toBeInTheDocument();
     expect(screen.getByText(/необязательно/i)).toBeInTheDocument();
+    expect(screen.getByTestId("assistant-setup-form")).toHaveAttribute("data-form-kind", "proxy");
+  });
+
+  it("opens the publish form from the plus menu", async () => {
+    const user = userEvent.setup();
+    renderDock();
+    await user.click(await screen.findByRole("button", { name: /^ещё$/i }));
+    await user.click(await screen.findByTestId("assistant-menu-publish-form"));
+    expect(await screen.findByTestId("assistant-setup-form")).toHaveAttribute(
+      "data-form-kind",
+      "publish"
+    );
+    expect(await screen.findByLabelText(/^аккаунт$/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/файл из библиотеки/i)).toBeInTheDocument();
   });
 
   it("allows optional ask fields to stay empty", async () => {
@@ -442,6 +488,7 @@ describe("Assistant", () => {
       onStep({
         type: "ask",
         questions: ["данные"],
+        form_kind: "proxy",
         fields: [
           { id: "label", label: "Метка прокси", kind: "text", required: true },
           {
@@ -461,6 +508,7 @@ describe("Assistant", () => {
         used: ["create_proxies"],
         images: [],
         asks: ["данные"],
+        form_kind: "proxy",
         fields: [
           { id: "label", label: "Метка прокси", kind: "text", required: true },
           {
@@ -479,10 +527,16 @@ describe("Assistant", () => {
     await user.click(screen.getByRole("button", { name: /^спросить$/i }));
     await user.type(await screen.findByLabelText("Метка прокси"), "px-1");
     await user.type(screen.getByLabelText(/url \(http/i), "http://u:p@h:1");
-    await user.click(await screen.findByRole("button", { name: /^ответить$/i }));
-    await waitFor(() => expect(askMock).toHaveBeenCalledTimes(2));
-    const body = (askMock.mock.calls[1][0] as Array<{ content: string }>).at(-1)?.content ?? "";
-    expect(body).not.toContain("country:");
+    await user.click(await screen.findByRole("button", { name: /^сохранить$/i }));
+    await waitFor(() => expect(apiMock.proxies.create).toHaveBeenCalled());
+    expect(askMock).toHaveBeenCalledTimes(1);
+    expect(apiMock.proxies.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        label: "px-1",
+        url: "http://u:p@h:1",
+        country: null,
+      })
+    );
   });
 
   it("spins a sparkle while the agent is working", async () => {

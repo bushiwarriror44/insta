@@ -170,28 +170,31 @@ def talk_streaming(
                 viewer_role=viewer_role,
             ):
                 if isinstance(step, Answer):
-                    yield _event(
-                        {
-                            "type": "done",
-                            "reply": step.reply,
-                            "open_url": step.opened.as_url() if step.opened else None,
-                            "opened": step.opened.what if step.opened else None,
-                            "used": step.used,
-                            "images": step.images,
-                            "asks": step.asks,
-                            "fields": step.fields,
-                            "created": step.created,
-                            "thinking": step.thinking,
-                            "cut": step.cut,
-                            "offer_local_switch": step.offer_local_switch,
-                        }
-                    )
+                    done_payload: dict = {
+                        "type": "done",
+                        "reply": step.reply,
+                        "open_url": step.opened.as_url() if step.opened else None,
+                        "opened": step.opened.what if step.opened else None,
+                        "used": step.used,
+                        "images": step.images,
+                        "asks": step.asks,
+                        "fields": step.fields,
+                        "created": step.created,
+                        "thinking": step.thinking,
+                        "cut": step.cut,
+                        "offer_local_switch": step.offer_local_switch,
+                    }
+                    if step.form_kind:
+                        done_payload["form_kind"] = step.form_kind
+                    yield _event(done_payload)
                 elif isinstance(step, Step):
                     payload_step: dict = {"type": step.kind, "text": step.text}
                     if step.questions:
                         payload_step["questions"] = step.questions
                     if step.fields:
                         payload_step["fields"] = step.fields
+                    if step.form_kind:
+                        payload_step["form_kind"] = step.form_kind
                     if step.name:
                         payload_step["name"] = step.name
                     if step.detail:
