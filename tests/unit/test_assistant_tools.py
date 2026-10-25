@@ -1676,13 +1676,18 @@ def test_chat_body_think_and_max_tokens():
     settings = Settings(_env_file=None)
     assert settings.agent_think is False
     default_body = _chat_body(settings, [])
-    assert "think" not in default_body
+    assert default_body["think"] is False
+    assert default_body["reasoning_effort"] == "none"
+    assert default_body["reasoning"] == {"effort": "none"}
     assert default_body["max_tokens"] == 2048
     body = _chat_body(settings, [], include_think=True)
     assert body["think"] is True
+    assert "reasoning_effort" not in body
     assert body["options"]["num_ctx"] == 8192
     assert body["temperature"] == 0.1
-    assert "think" not in _chat_body(settings, [], include_think=False)
+    off = _chat_body(settings, [], include_think=False)
+    assert off["think"] is False
+    assert off["reasoning_effort"] == "none"
 
 
 def test_approve_retry_and_cancel_job(db_session, make_account, tmp_path):

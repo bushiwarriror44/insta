@@ -49,6 +49,7 @@ def test_complete_treats_length_as_a_cut(app_env, monkeypatch):
             [{"role": "user", "content": "hi"}],
             [],
             tools=[],
+            include_think=True,
         )
         try:
             while True:
@@ -186,6 +187,7 @@ def test_complete_splits_reasoning_from_the_answer(app_env, monkeypatch):
             [{"role": "user", "content": "hi"}],
             said,
             tools=[],
+            include_think=True,
         )
         try:
             while True:
@@ -197,6 +199,31 @@ def test_complete_splits_reasoning_from_the_answer(app_env, monkeypatch):
     assert message["cut"] == ""
     assert said == ["потом"]
     assert kinds == ["think", "think", "token"]
+
+
+def test_complete_drops_reasoning_when_think_disabled(app_env, monkeypatch):
+    monkeypatch.setattr(settings, "agent_base_url", "https://example/v1", raising=True)
+    said: list[str] = []
+    kinds: list[str] = []
+    with httpx.Client(transport=ThinkThenAnswer()) as client:
+        gen = _complete(
+            client,
+            settings,
+            [{"role": "user", "content": "hi"}],
+            said,
+            tools=[],
+            include_think=False,
+        )
+        try:
+            while True:
+                kinds.append(next(gen).kind)
+        except StopIteration as stop:
+            message = stop.value
+    assert message["thinking"] == ""
+    assert message["content"] == "потом"
+    assert said == ["потом"]
+    assert kinds == ["token"]
+    assert "think" not in kinds
 
 
 class PlainCut(httpx.BaseTransport):
@@ -260,7 +287,7 @@ def test_complete_retries_415_without_extra_fields(app_env, monkeypatch):
     assert message["content"] == "ок"
     assert transport.second is not None
     sent = json.loads(transport.second.content.decode())
-    assert "think" not in sent
+    assert sent.get("think") is False
     assert "options" not in sent
     assert "application/json" in transport.second.headers["content-type"]
 
@@ -324,7 +351,7 @@ def test_complete_retries_when_the_body_is_the_media_phrase(app_env, monkeypatch
     assert "Unsupported" not in message["content"]
     assert transport.second is not None
     sent = json.loads(transport.second.content.decode())
-    assert "think" not in sent
+    assert sent.get("think") is False
     assert "options" not in sent
 
 
@@ -462,7 +489,7 @@ def test_complete_holds_a_split_media_phrase(app_env, monkeypatch):
     assert all("Unsupported" not in step.text for step in steps)
     assert transport.second is not None
     sent = json.loads(transport.second.content.decode())
-    assert "think" not in sent
+    assert sent.get("think") is False
     assert "options" not in sent
 
 

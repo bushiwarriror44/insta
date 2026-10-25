@@ -2360,6 +2360,11 @@ def _chat_body(
         body["options"] = {"num_ctx": 8192}
     if include_think:
         body["think"] = True
+    else:
+        # Qwen3 defaults to thinking; /v1 ignores omitting `think` — force off.
+        body["think"] = False
+        body["reasoning_effort"] = "none"
+        body["reasoning"] = {"effort": "none"}
     return body
 
 
@@ -2485,6 +2490,7 @@ def _complete(
         include_think = bool(settings.agent_think)
     retried = False
     media_retried = False
+    stripped_effort = False
     cut = False
     while True:
         body = _chat_body(
@@ -2494,6 +2500,9 @@ def _complete(
             include_options=include_options,
             tools=tools,
         )
+        if stripped_effort and not include_think:
+            body.pop("reasoning_effort", None)
+            body.pop("reasoning", None)
         held: list[str] = []
         media_line = False
         length_cut = False
@@ -2520,6 +2529,16 @@ def _complete(
                     response.read()
                     note_once(response.text)
                     include_think = False
+                    continue
+                if (
+                    response.status_code == 400
+                    and not include_think
+                    and not stripped_effort
+                    and ("reasoning_effort" in body or "reasoning" in body)
+                ):
+                    response.read()
+                    note_once(response.text)
+                    stripped_effort = True
                     continue
                 if response.status_code in {520, 524} and not retried and not content and not thought and not calls:
                     response.read()
@@ -2550,14 +2569,16 @@ def _complete(
                         for key in ("reasoning", "thinking", "reasoning_content"):
                             extra = delta.get(key)
                             if isinstance(extra, str) and extra:
-                                thought.append(extra)
-                                yield Step(kind="think", text=extra)
+                                if include_think:
+                                    thought.append(extra)
+                                    yield Step(kind="think", text=extra)
                         piece = delta.get("content") or ""
                         if piece:
                             for kind, text in thinking.feed(piece):
                                 if kind == "think":
-                                    thought.append(text)
-                                    yield Step(kind="think", text=text)
+                                    if include_think:
+                                        thought.append(text)
+                                        yield Step(kind="think", text=text)
                                     continue
                                 outcome = _hold_token(held, content, said, text)
                                 if outcome is None:
@@ -2590,8 +2611,9 @@ def _complete(
                 raise
             for kind, text in thinking.flush():
                 if kind == "think":
-                    thought.append(text)
-                    yield Step(kind="think", text=text)
+                    if include_think:
+                        thought.append(text)
+                        yield Step(kind="think", text=text)
                 else:
                     outcome = _hold_token(held, content, said, text)
                     if outcome is None:
@@ -2643,8 +2665,9 @@ def _complete(
         else:
             for kind, text in thinking.flush():
                 if kind == "think":
-                    thought.append(text)
-                    yield Step(kind="think", text=text)
+                    if include_think:
+                        thought.append(text)
+                        yield Step(kind="think", text=text)
                     continue
                 outcome = _hold_token(held, content, said, text)
                 if outcome is None:
