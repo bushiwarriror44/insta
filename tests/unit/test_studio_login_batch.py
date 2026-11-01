@@ -1,7 +1,7 @@
 """Tests for batch Studio login helpers."""
 from __future__ import annotations
 
-from app.accounts.studio_login_batch import list_studio_accounts, run_studio_login_batch
+from app.accounts.studio_login_service import list_studio_accounts, run_studio_login_batch
 from app.db import Platform
 
 

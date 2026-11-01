@@ -5,6 +5,7 @@ import asyncio
 import time
 from typing import Callable, Optional
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.accounts.account_diagnostics import log_account_credentials, proxy_log_line
@@ -16,12 +17,13 @@ from app.accounts.connection_ladder import (
 )
 from app.accounts.cookie_formats import studio_session_ready
 from app.accounts.login_identifier import resolve_login_identifier
+from app.accounts.playwright_session import clear_studio_playwright_state
 from app.api.schemas import DiagnosticLogLineOut, FirstLoginOut
 from app.behavior.studio_playwright import studio_login
 from app.behavior.warmup_playwright import playwright_browsers_available
 from app.browser.vnc_stack import vnc_stack_available
 from app.config import settings
-from app.db import Account, DiagnosticRunKind, Proxy
+from app.db import Account, DiagnosticRunKind, Platform, Proxy
 from app.diagnostics.collector import DiagnosticCollector
 
 StatusCallback = Callable[[str, Optional[str]], None]
@@ -337,3 +339,82 @@ def run_studio_login(
         status="fail",
         error=result.error,
     )
+
+
+def list_studio_accounts(
+    db: Session,
+    *,
+    imported_only: bool = False,
+    username: str | None = None,
+) -> list[Account]:
+    q = select(Account).where(Account.platform.in_([Platform.youtube, Platform.tiktok]))
+    if username:
+        q = q.where(Account.username == username)
+    accounts = list(db.scalars(q.order_by(Account.platform, Account.username)))
+    if imported_only:
+        mobile_ids = {
+            p.id for p in db.scalars(select(Proxy).where(Proxy.label.like("am-mobile-%")))
+        }
+        accounts = [a for a in accounts if a.proxy_id in mobile_ids]
+    return accounts
+
+
+def run_studio_login_batch(
+    db: Session,
+    accounts: list[Account],
+    *,
+    force: bool = False,
+    allow_vnc_fallback: bool = False,
+    on_status: StatusCallback | None = None,
+) -> list[dict]:
+    rows: list[dict] = []
+    for account in accounts:
+        platform = _platform_value(account)
+        if not (account.password or "").strip():
+            rows.append(
+                {
+                    "username": account.username,
+                    "platform": platform,
+                    "ok": False,
+                    "error": "пароль не задан в БД",
+                }
+            )
+            continue
+        if not account.proxy_id:
+            rows.append(
+                {
+                    "username": account.username,
+                    "platform": platform,
+                    "ok": False,
+                    "error": "нет прокси",
+                }
+            )
+            continue
+        if force:
+            clear_studio_playwright_state(account.username, platform)
+        try:
+            out = run_studio_login(
+                account,
+                db,
+                on_status=on_status,
+                allow_vnc_fallback=allow_vnc_fallback,
+            )
+            rows.append(
+                {
+                    "username": account.username,
+                    "platform": platform,
+                    "ok": out.ok,
+                    "challenge": out.challenge,
+                    "error": (out.error or "")[:400] or None,
+                }
+            )
+        except Exception as exc:
+            rows.append(
+                {
+                    "username": account.username,
+                    "platform": platform,
+                    "ok": False,
+                    "error": f"{type(exc).__name__}: {exc}"[:300],
+                }
+            )
+    return rows

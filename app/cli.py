@@ -452,7 +452,10 @@ def cmd_studio_login_batch(
     _bootstrap()
     import json
 
-    from app.accounts.studio_login_batch import list_studio_accounts, run_studio_login_batch
+    from app.accounts.studio_login_service import (
+        list_studio_accounts,
+        run_studio_login_batch,
+    )
 
     def on_status(title: str, detail: str | None) -> None:
         if detail:

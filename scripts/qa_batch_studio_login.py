@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.accounts.studio_login_batch import list_studio_accounts, run_studio_login_batch
+from app.accounts.studio_login_service import list_studio_accounts, run_studio_login_batch
 from app.db import SessionLocal, init_db
 
 
