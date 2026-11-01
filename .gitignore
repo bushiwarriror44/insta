@@ -77,6 +77,7 @@ Desktop.ini
 # --- Docker / deploy artifacts ---
 *.tar.gz
 *.zip
+!deploy/migration-bundle-export.tar.gz
 
 # --- Misc ---
 *.bak
