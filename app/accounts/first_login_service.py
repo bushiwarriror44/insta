@@ -485,7 +485,7 @@ def run_account_first_login(
             run_id=collector.run_id,
             ok=False,
             challenge=True,
-            browser_tab_hint=False,
+            browser_tab_hint=True,
             challenge_code_file=_challenge_code_file(account.username),
             error=result.error or "Требуется подтверждение Instagram",
             login_debug_available=_login_debug_available(account.username, result),

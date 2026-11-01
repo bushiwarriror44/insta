@@ -1152,7 +1152,8 @@ async def _async_first_login(
                 await browser.close()
                 return FirstLoginResult(
                     ok=False,
-                    error="Требуется 2FA — укажите TOTP seed в настройках аккаунта",
+                    challenge=True,
+                    error="Требуется 2FA — укажите TOTP seed в настройках аккаунта или войдите через браузер",
                     login_debug_saved=login_debug_saved,
                     page_url=page.url,
                 )

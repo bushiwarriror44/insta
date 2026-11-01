@@ -71,6 +71,13 @@ export function isSessionExpired(auth: Pick<InstagramAuthStepOut, "error" | "err
 export const SESSION_EXPIRED_MOBILE_HINT =
   "Мобильный API отклонил web-cookie из Dolphin. Автопостинг возможен через пароль аккаунта (очередь сама войдёт без мёртвого sessionid) или — рекомендуется — один раз нажмите «Подготовить к автопостингу», чтобы создать стабильную мобильную сессию (нужны пароль и при 2FA — TOTP). Проверка только cookies и экспорт в Dolphin не требуют мобильный API.";
 
+function firstLoginNeedsInteractiveBrowser(data: FirstLoginOut | null | undefined): boolean {
+  if (!data || data.ok) return false;
+  if (data.challenge || data.browser_tab_hint) return true;
+  const err = (data.error || "").toLowerCase();
+  return err.includes("2fa") || err.includes("totp") || err.includes("двухфактор");
+}
+
 function UserHintPanel({
   hint,
   onHintAction,
@@ -96,13 +103,23 @@ function UserHintPanel({
         </ol>
       ) : null}
       {onHintAction && hint.action_label ? (
-        <button
-          type="button"
-          className="mt-2 text-xs font-medium underline decoration-dotted underline-offset-2 hover:opacity-100 opacity-90"
-          onClick={onHintAction}
-        >
-          {hint.action_label}
-        </button>
+        hint.action_key === "open_session_browser" ? (
+          <button
+            type="button"
+            className="btn btn-sm btn-primary mt-3"
+            onClick={onHintAction}
+          >
+            {hint.action_label}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="mt-2 text-xs font-medium underline decoration-dotted underline-offset-2 hover:opacity-100 opacity-90"
+            onClick={onHintAction}
+          >
+            {hint.action_label}
+          </button>
+        )
       ) : null}
     </div>
   );
@@ -226,11 +243,14 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
         push(`@${account.username}: сессия создана`, "success");
       } else if (hint) {
         pushUserHintToast(hint, push, hintCallbacks);
-        if (data.challenge) {
+        if (firstLoginNeedsInteractiveBrowser(data)) {
           setConnectionMode("browser");
         }
-      } else if (data.challenge) {
-        push("Требуется подтверждение — переключитесь на вход через браузер", "info");
+      } else if (firstLoginNeedsInteractiveBrowser(data)) {
+        push("Требуется подтверждение или 2FA — откройте браузер", "info", {
+          label: "Открыть браузер",
+          onClick: () => setConnectionMode("browser"),
+        });
         setConnectionMode("browser");
       } else {
         push(data.error ?? "Автовход не удался", "error");
@@ -480,21 +500,26 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
               Instagram».
             </p>
             ) : null}
-            {firstLoginResult?.challenge ? (
-              <div className="rounded-lg border border-amber-500/50 bg-amber-950/40 p-3 text-xs text-amber-100 space-y-2">
+            {firstLoginNeedsInteractiveBrowser(firstLoginResult) ? (
+              <div className="rounded-lg border border-amber-500/50 bg-amber-950/40 p-3 text-xs text-amber-100 space-y-3">
                 <p>
-                  {isIg ? "Instagram" : studioLabel} запросил подтверждение.{" "}
-                  <button
-                    type="button"
-                    className="underline hover:text-amber-50"
-                    onClick={() => setConnectionMode("browser")}
-                  >
-                    Перейти к входу через браузер
-                  </button>
+                  {(firstLoginResult?.error || "").toLowerCase().includes("2fa") ||
+                  (firstLoginResult?.error || "").toLowerCase().includes("totp")
+                    ? "Instagram запросил двухфакторную авторизацию (2FA). Автовход не завершён — войдите в браузере через прокси аккаунта."
+                    : isIg
+                      ? "Instagram запросил подтверждение (код из почты, 2FA или проверка). Завершите вход в браузере."
+                      : `${studioLabel} запросил подтверждение — откройте браузер (VNC).`}
                 </p>
-                {isIg && account ? (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-primary w-full sm:w-auto"
+                  onClick={() => setConnectionMode("browser")}
+                >
+                  Открыть браузер
+                </button>
+                {isIg && firstLoginResult?.challenge && account ? (
                   <p className="font-mono text-[11px] text-amber-200/90">
-                    Код:{" "}
+                    Код из почты:{" "}
                     <span className="text-amber-50">
                       {firstLoginResult.challenge_code_file ??
                         `data/challenges/${account.username}.code`}
@@ -504,8 +529,6 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
                     <span className="text-amber-50">
                       python -m app.cli provide-code {account.username} КОД
                     </span>
-                    {" · "}
-                    first-login --verification-code КОД
                   </p>
                 ) : null}
               </div>

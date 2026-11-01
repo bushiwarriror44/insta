@@ -133,6 +133,22 @@ def test_hint_connection_session_missing():
     assert "сесс" in hint.title.lower() or "сесс" in hint.message.lower()
 
 
+def test_hint_first_login_2fa_open_browser():
+    out = FirstLoginOut(
+        run_id=9,
+        ok=False,
+        challenge=True,
+        browser_tab_hint=True,
+        error="Требуется 2FA — укажите TOTP seed",
+        logs=[],
+    )
+    hint = hint_for_first_login(out, _account())
+    assert hint is not None
+    assert hint.action_key == "open_session_browser"
+    assert hint.action_label == "Открыть браузер"
+    assert "двухфактор" in hint.title.lower()
+
+
 def test_hint_connection_challenge_required():
     now = datetime.now(timezone.utc)
     out = AccountConnectionTestOut(
@@ -160,6 +176,8 @@ def test_hint_connection_challenge_required():
     assert hint is not None
     assert hint.severity == "warn"
     assert "проверк" in hint.title.lower()
+    assert hint.action_key == "open_session_browser"
+    assert hint.action_label == "Открыть браузер"
 
 
 def test_hint_connection_rate_limited():

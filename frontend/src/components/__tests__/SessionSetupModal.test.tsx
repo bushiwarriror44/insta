@@ -188,6 +188,27 @@ describe("SessionSetupModal", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /Запустить браузер/i })).toBeInTheDocument()
     );
+    expect(screen.getByRole("button", { name: /Открыть браузер/i })).toBeInTheDocument();
+  });
+
+  it("shows open browser for 2FA error from auto login", async () => {
+    apiMock.accounts.firstLogin.mockResolvedValue({
+      run_id: 8,
+      ok: false,
+      challenge: true,
+      browser_tab_hint: true,
+      session_imported: false,
+      error: "Требуется 2FA — укажите TOTP seed",
+      logs: [],
+    });
+    renderModal();
+    fireEvent.click(screen.getByRole("button", { name: /Автоматически/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Создать сессию/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/двухфакторн/i)).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Открыть браузер/i }));
+    expect(screen.getByRole("button", { name: /Запустить браузер/i })).toBeInTheDocument();
   });
 
   it("shows toast from API user_hint on failed auto login", async () => {

@@ -100,18 +100,30 @@ export function pickUserHint(
 
 export function fallbackFirstLoginHint(data: FirstLoginOut): AccountUserHintOut | null {
   if (data.ok) return null;
-  if (data.challenge) {
+  const err = (data.error || "").toLowerCase();
+  if (
+    data.challenge ||
+    data.browser_tab_hint ||
+    err.includes("2fa") ||
+    err.includes("totp") ||
+    err.includes("двухфактор")
+  ) {
+    const twoFactor =
+      err.includes("2fa") || err.includes("totp") || err.includes("двухфактор");
     return {
-      severity: "info",
-      title: "Нужно подтверждение",
-      message: "Instagram запросил код из почты или 2FA.",
+      severity: twoFactor ? "warn" : "info",
+      title: twoFactor ? "Требуется двухфакторная авторизация" : "Нужно подтверждение",
+      message: twoFactor
+        ? "Завершите вход в Instagram через браузер (2FA) или добавьте секрет TOTP в карточке."
+        : "Instagram запросил код из почты, 2FA или проверку.",
       steps: [
-        "Введите код в форме агента или откройте вкладку «Через браузер».",
-        "Проверьте пароль почты в карточке аккаунта, если код не приходит.",
+        "Нажмите «Открыть браузер» ниже.",
+        "В noVNC войдите и сохраните сессию.",
       ],
+      action_key: "open_session_browser",
+      action_label: "Открыть браузер",
     };
   }
-  const err = (data.error || "").toLowerCase();
   if (err.includes("поля формы входа")) {
     return {
       severity: "warn",
