@@ -751,13 +751,24 @@ class BrowserSessionManager:
         autofill_login: bool,
     ) -> None:
         value = _account_platform_value(account)
+        nav_status: dict[str, Any] = {}
         if value == "youtube":
             session.log("info", "goto", "Открываю YouTube Studio")
-            await _try_goto_url(page, "https://studio.youtube.com", username=session.username)
+            await _try_goto_url(
+                page,
+                "https://studio.youtube.com",
+                username=session.username,
+                nav_status=nav_status,
+            )
             return
         if value == "tiktok":
             session.log("info", "goto", "Открываю TikTok Studio")
-            await _try_goto_url(page, "https://www.tiktok.com/tiktokstudio/upload", username=session.username)
+            await _try_goto_url(
+                page,
+                "https://www.tiktok.com/tiktokstudio/upload",
+                username=session.username,
+                nav_status=nav_status,
+            )
             return
         await self._maybe_open_instagram(
             session,

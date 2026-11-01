@@ -672,6 +672,50 @@ async def test_try_goto_url_stops_after_successful_commit(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "platform,expected_url",
+    [
+        ("youtube", "https://studio.youtube.com"),
+        ("tiktok", "https://www.tiktok.com/tiktokstudio/upload"),
+    ],
+)
+async def test_maybe_open_home_studio_passes_nav_status_to_try_goto_url(
+    platform, expected_url, monkeypatch
+):
+    from types import SimpleNamespace
+
+    import app.browser.session_manager as sm
+
+    captured: dict = {}
+
+    async def fake_try_goto_url(page, url, *, username, nav_status):
+        captured["url"] = url
+        captured["username"] = username
+        captured["nav_status"] = nav_status
+        return True
+
+    monkeypatch.setattr(sm, "_try_goto_url", fake_try_goto_url)
+
+    mgr = BrowserSessionManager()
+    session = sm.BrowserSessionState(username="studio_user")
+    account = SimpleNamespace(username="studio_user", platform=platform)
+    proxy = MagicMock()
+
+    await mgr._maybe_open_home(
+        session,
+        account,
+        proxy,
+        page=AsyncMock(),
+        need_login=True,
+        autofill_login=False,
+    )
+
+    assert captured["url"] == expected_url
+    assert captured["username"] == "studio_user"
+    assert isinstance(captured["nav_status"], dict)
+
+
+@pytest.mark.asyncio
 async def test_start_session_autofill_uses_fast_path(monkeypatch):
     from app.config import settings
     import app.browser.session_manager as sm
