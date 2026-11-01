@@ -42,7 +42,6 @@ from rich.console import Console
 from rich.table import Table
 from sqlalchemy import select
 
-from app.accounts.challenge import write_code
 from app.accounts.session_manager import clear_session_file, ensure_fingerprint_and_proxy
 from app.config import settings
 from app.geo.timezone_normalize import (
@@ -367,11 +366,22 @@ def cmd_studio_login(
         "--force",
         help="Удалить cookies Studio на диске и выполнить вход заново (email/пароль из БД)",
     ),
+    headless_only: bool = typer.Option(
+        True,
+        "--headless-only/--allow-vnc",
+        help="Только headless (по умолчанию). --allow-vnc: при 2FA ждать VNC до 10 мин (для UI)",
+    ),
 ) -> None:
     """Headless YouTube/TikTok Studio login using email and password from the account row."""
     _bootstrap()
     from app.accounts.playwright_session import clear_studio_playwright_state
     from app.accounts.studio_login_service import run_studio_login
+
+    def on_status(title: str, detail: str | None) -> None:
+        if detail:
+            console.print(f"[dim]{title}:[/dim] {detail}")
+        else:
+            console.print(f"[dim]{title}[/dim]")
 
     with SessionLocal() as db:
         account = db.scalar(select(Account).where(Account.username == username))
@@ -392,12 +402,23 @@ def cmd_studio_login(
                 "[red]Пароль не задан в БД — обновите через add-account[/red]"
             )
             raise typer.Exit(code=1)
+        login_id = (account.email or "").strip() or "—"
+        console.print(
+            f"[dim]Headless Studio ({platform}), прокси из БД, "
+            f"логин: {login_id[:3]}…[/dim]"
+        )
         if force:
             if clear_studio_playwright_state(username, platform):
-                console.print("[dim]Старые cookies Studio удалены — вход с данными из БД[/dim]")
+                console.print("[dim]Старые cookies Studio удалены[/dim]")
             else:
-                console.print("[dim]Файл cookies Studio не найден — выполняю вход[/dim]")
-        out = run_studio_login(account, db)
+                console.print("[dim]Файл cookies Studio не найден[/dim]")
+        console.print("[dim]Chromium через прокси — до ~3 мин, без вывода это нормально…[/dim]")
+        out = run_studio_login(
+            account,
+            db,
+            on_status=on_status,
+            allow_vnc_fallback=not headless_only,
+        )
         if out.ok:
             console.print(f"[green]Studio-вход для {username} ({platform}) выполнен[/green]")
             return
@@ -608,6 +629,8 @@ def cmd_ask(prompt: str = typer.Argument(..., help="Text instruction for the loc
 def cmd_provide_code(username: str, code: str) -> None:
     """Drop a challenge code for an account that's currently waiting."""
     _bootstrap()
+    from app.accounts.challenge import write_code
+
     write_code(username, code)
     console.print(f"[green]Код для {username} записан[/green]")
 
@@ -764,6 +787,21 @@ def cmd_preflight() -> None:
             console.print(f"[yellow]проверка:[/yellow] {item}")
         raise typer.Exit(code=1)
     console.print("[green]проверка ок[/green]")
+
+
+@app.command("browser-stop")
+def cmd_browser_stop(username: str) -> None:
+    """Stop interactive noVNC browser session for an account (frees RAM)."""
+    _bootstrap()
+    import asyncio
+
+    from app.browser.session_manager import browser_session_manager
+
+    async def _stop() -> None:
+        await browser_session_manager.stop_session(username)
+
+    asyncio.run(_stop())
+    console.print(f"[green]Браузер для @{username} остановлен (если был запущен)[/green]")
 
 
 @app.command("browser-vnc-diag")

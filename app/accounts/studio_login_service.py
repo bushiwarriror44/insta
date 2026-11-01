@@ -204,6 +204,7 @@ def run_studio_login(
     db: Session,
     *,
     on_status: StatusCallback | None = None,
+    allow_vnc_fallback: bool = True,
 ) -> FirstLoginOut:
     collector = DiagnosticCollector(
         db,
@@ -305,12 +306,22 @@ def run_studio_login(
         ladder.fail(
             METHOD_STUDIO_HEADLESS,
             error=result.error or "challenge",
-            next_method=METHOD_VNC,
+            next_method=METHOD_VNC if allow_vnc_fallback else None,
         )
         collector.warn(
             "browser",
             result.error or "Headless: нужно подтверждение или ручной вход",
         )
+        if not allow_vnc_fallback:
+            return _finish(
+                collector,
+                ok=False,
+                summary=result.error or "Headless: нужно подтверждение или ручной вход",
+                status="warn",
+                challenge=bool(result.challenge or not result.ok),
+                browser_tab_hint=True,
+                error=result.error,
+            )
         if on_status:
             on_status("Challenge", "перехожу на интерактивный браузер")
         return _run_vnc_fallback(
