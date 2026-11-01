@@ -50,6 +50,17 @@ YouTube/TikTok Studio: headless вход с **email и паролем из ст�
 docker compose exec reels-api python -m app.cli studio-login AuraBluekudsv --force
 ```
 
+Пакетно (все импортированные YT/TT на `am-mobile-*`, по очереди ~3 мин на аккаунт):
+
+```text
+docker compose stop reels-worker
+docker compose exec reels-api python -m app.cli studio-login-batch --imported-only --force
+docker compose exec reels-api python scripts/qa_studio_liveness_batch.py --imported-only
+docker compose start reels-worker
+```
+
+Альтернатива: `python scripts/qa_batch_studio_login.py --imported-only --force`
+
 ### `first-login USER`
 
 Stealth Playwright: для **Instagram** — логин из карточки; для **YouTube/TikTok** — то же, что `studio-login` (без `--force`).

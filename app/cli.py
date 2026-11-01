@@ -434,6 +434,75 @@ def cmd_studio_login(
         raise typer.Exit(code=1)
 
 
+@app.command("studio-login-batch")
+def cmd_studio_login_batch(
+    imported_only: bool = typer.Option(
+        True,
+        "--imported-only/--all",
+        help="Только am-mobile-* (по умолчанию) или все YT/TT",
+    ),
+    force: bool = typer.Option(
+        True,
+        "--force/--reuse-cookies",
+        help="Перед входом удалить cookies Studio (по умолчанию force)",
+    ),
+    username: Optional[str] = typer.Option(None, "--username", help="Один аккаунт"),
+) -> None:
+    """Headless Studio login for many accounts (email/password from DB, sequential)."""
+    _bootstrap()
+    import json
+
+    from app.accounts.studio_login_batch import list_studio_accounts, run_studio_login_batch
+
+    def on_status(title: str, detail: str | None) -> None:
+        if detail:
+            console.print(f"[dim]  {title}:[/dim] {detail}")
+        else:
+            console.print(f"[dim]  {title}[/dim]")
+
+    with SessionLocal() as db:
+        accounts = list_studio_accounts(
+            db,
+            imported_only=imported_only,
+            username=username,
+        )
+        if not accounts:
+            console.print("[red]Нет аккаунтов YouTube/TikTok по фильтру[/red]")
+            raise typer.Exit(code=1)
+        console.print(
+            f"[bold]Studio batch:[/bold] {len(accounts)} аккаунт(ов), "
+            f"force={'да' if force else 'нет'}, headless-only"
+        )
+        rows: list[dict] = []
+        for account in accounts:
+            platform = _account_platform_name(account)
+            console.print(f"\n[bold]=== @{account.username} ({platform}) ===[/bold]")
+            batch_rows = run_studio_login_batch(
+                db,
+                [account],
+                force=force,
+                allow_vnc_fallback=False,
+                on_status=on_status,
+            )
+            rows.extend(batch_rows)
+            row = batch_rows[0]
+            if row.get("ok"):
+                console.print(f"[green]OK[/green]\t{account.username}")
+            else:
+                console.print(
+                    f"[yellow]FAIL[/yellow]\t{account.username}\t{row.get('error') or ''}"
+                )
+        out_path = settings.data_dir / "qa_studio_login_summary.json"
+        out_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+        ok_count = sum(1 for r in rows if r.get("ok"))
+        console.print(f"\n[bold]Итого:[/bold] {ok_count}/{len(rows)} OK → {out_path}")
+        if ok_count < len(rows):
+            console.print(
+                "[yellow]Для FAIL с 2FA — вход через «Браузер» в панели, затем liveness batch[/yellow]"
+            )
+            raise typer.Exit(code=1)
+
+
 @app.command("first-login")
 def cmd_first_login(
     username: str,
