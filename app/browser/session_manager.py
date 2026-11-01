@@ -87,6 +87,12 @@ def _account_platform_value(account) -> str:
     return "instagram"
 
 
+def _studio_desktop_geometry(platform_value: str) -> tuple[int, int] | None:
+    if platform_value in ("youtube", "tiktok"):
+        return (settings.browser_studio_vnc_width, settings.browser_studio_vnc_height)
+    return None
+
+
 async def _platform_logged_in(context, page, platform: str) -> bool:
     if platform == "instagram":
         return await _is_logged_in(context, page)
@@ -539,11 +545,16 @@ class BrowserSessionManager:
             display = self._next_display()
             rfb_port, ws_port = allocate_ports(display)
             lightweight = settings.browser_lightweight
+            desktop_geometry = _studio_desktop_geometry(platform_value)
             vnc = VncStack(
                 display=display,
                 rfb_port=rfb_port,
                 ws_port=ws_port,
-                screen=vnc_screen_size(resolved_surface, lightweight=lightweight),
+                screen=vnc_screen_size(
+                    resolved_surface,
+                    lightweight=lightweight,
+                    desktop_geometry=desktop_geometry,
+                ),
                 lightweight=lightweight,
             )
             session = BrowserSessionState(
@@ -692,12 +703,17 @@ class BrowserSessionManager:
         display_env = os.environ.copy()
         display_env["DISPLAY"] = vnc_stack_display(session)
         lightweight = settings.browser_lightweight
+        desktop_geometry = _studio_desktop_geometry(platform_value)
 
         session.pw = await async_playwright().start()
         session.browser = await session.pw.chromium.launch(
             headless=False,
             ignore_default_args=["--enable-automation"],
-            args=browser_launch_args(surface, lightweight=lightweight),
+            args=browser_launch_args(
+                surface,
+                lightweight=lightweight,
+                desktop_geometry=desktop_geometry,
+            ),
             proxy=proxy_arg,
             env=display_env,
         )
@@ -709,6 +725,7 @@ class BrowserSessionManager:
             timezone_id=tz_id,
             storage_state_path=str(state_file) if has_saved_session else None,
             lightweight=lightweight,
+            desktop_geometry=desktop_geometry,
         )
 
         session.context = await session.browser.new_context(**context_kwargs)

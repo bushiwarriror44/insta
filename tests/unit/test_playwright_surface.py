@@ -79,8 +79,19 @@ def test_playwright_context_kwargs_desktop():
 def test_vnc_screen_size():
     assert ps.vnc_screen_size("mobile") == "430x932x24"
     assert ps.vnc_screen_size("desktop") == "1280x800x24"
+    assert ps.vnc_screen_size("desktop", desktop_geometry=(1024, 640)) == "1024x640x24"
     assert ps.vnc_screen_size("mobile", lightweight=True) == "430x932x24"
     assert ps.vnc_screen_size("desktop", lightweight=True) == "1280x800x24"
+
+
+def test_browser_launch_args_studio_desktop_geometry():
+    args = ps.browser_launch_args("desktop", desktop_geometry=(1024, 640))
+    assert any("1024,640" in arg for arg in args)
+
+
+def test_playwright_context_kwargs_studio_desktop_viewport():
+    kwargs = ps.playwright_context_kwargs("desktop", desktop_geometry=(1024, 640))
+    assert kwargs["viewport"] == {"width": 1024, "height": 640}
 
 
 def test_browser_launch_args_lightweight_adds_performance_flags():

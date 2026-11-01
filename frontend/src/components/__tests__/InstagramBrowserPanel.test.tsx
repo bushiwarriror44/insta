@@ -105,6 +105,19 @@ describe("InstagramBrowserPanel", () => {
     expect(screen.getByText(/Быстрый переход в Instagram/i)).toBeInTheDocument();
   });
 
+  it("uses economical noVNC quality and compression in iframe src", async () => {
+    render(
+      <ToastProvider>
+        <InstagramBrowserPanel username="alice" adminToken="tok" />
+      </ToastProvider>
+    );
+
+    const iframe = await screen.findByTitle(/Браузер Instagram alice/i);
+    const src = iframe.getAttribute("src") ?? "";
+    expect(src).toContain("quality=3");
+    expect(src).toContain("compression=8");
+  });
+
   it("shows live TOTP code and copy buttons", async () => {
     const { copyTextToClipboard } = await import("../DiagnosticLogPanel");
     const copySpy = vi.mocked(copyTextToClipboard);

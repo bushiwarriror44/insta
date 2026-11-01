@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     browser_goto_timeout_sec: int = Field(default=25, ge=10, le=90)
     browser_auto_open_instagram: bool = Field(default=True)
     browser_autofill_on_start: bool = Field(default=False)
+    browser_studio_vnc_width: int = Field(default=1024, ge=800, le=1280)
+    browser_studio_vnc_height: int = Field(default=640, ge=480, le=800)
 
     scheduler_tz: str = Field(default="UTC")
     worker_poll_interval_sec: int = Field(default=20, ge=5)

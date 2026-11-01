@@ -6,6 +6,11 @@ from typing import Any, Literal
 LoginSurface = Literal["mobile", "desktop"]
 
 _DEFAULT_SURFACE: LoginSurface = "mobile"
+_DEFAULT_DESKTOP: tuple[int, int] = (1280, 800)
+
+
+def _resolve_desktop_geometry(desktop_geometry: tuple[int, int] | None) -> tuple[int, int]:
+    return desktop_geometry if desktop_geometry is not None else _DEFAULT_DESKTOP
 
 
 def resolve_playwright_surface(value: str | None) -> LoginSurface:
@@ -43,11 +48,17 @@ _LIGHTWEIGHT_CHROMIUM_ARGS = [
 ]
 
 
-def browser_launch_args(surface: LoginSurface, *, lightweight: bool = False) -> list[str]:
+def browser_launch_args(
+    surface: LoginSurface,
+    *,
+    lightweight: bool = False,
+    desktop_geometry: tuple[int, int] | None = None,
+) -> list[str]:
     if surface == "mobile":
         window_size = "430,932"
     else:
-        window_size = "1280,800"
+        w, h = _resolve_desktop_geometry(desktop_geometry)
+        window_size = f"{w},{h}"
     args = [
         "--disable-blink-features=AutomationControlled",
         "--no-sandbox",
@@ -62,7 +73,12 @@ def browser_launch_args(surface: LoginSurface, *, lightweight: bool = False) -> 
     return args
 
 
-def vnc_screen_size(surface: LoginSurface, *, lightweight: bool = False) -> str:
+def vnc_screen_size(
+    surface: LoginSurface,
+    *,
+    lightweight: bool = False,
+    desktop_geometry: tuple[int, int] | None = None,
+) -> str:
     """Xvfb screen geometry for headed sessions.
 
     Keep 24-bit color: 16-bit often breaks Chromium rendering on minimal Xvfb.
@@ -70,7 +86,8 @@ def vnc_screen_size(surface: LoginSurface, *, lightweight: bool = False) -> str:
     _ = lightweight
     if surface == "mobile":
         return "430x932x24"
-    return "1280x800x24"
+    w, h = _resolve_desktop_geometry(desktop_geometry)
+    return f"{w}x{h}x24"
 
 
 def vnc_mobile_viewport() -> dict[str, int]:
@@ -114,11 +131,11 @@ def playwright_context_kwargs(
     timezone_id: str = "UTC",
     storage_state_path: str | None = None,
     lightweight: bool = False,
+    desktop_geometry: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
     """Build Playwright ``browser.new_context`` kwargs for the given surface."""
     from app.behavior.warmup_playwright import (
         _desktop_ua,
-        _desktop_viewport,
         _ua_for_device,
         _viewport_from_resolution,
     )
@@ -152,11 +169,13 @@ def playwright_context_kwargs(
             },
         }
     else:
+        w, h = _resolve_desktop_geometry(desktop_geometry)
+        viewport = {"width": w, "height": h}
         context = {
             "locale": resolved_locale,
             "timezone_id": timezone_id,
             "user_agent": _desktop_ua(),
-            "viewport": _desktop_viewport(),
+            "viewport": viewport,
             "device_scale_factor": 1,
             "has_touch": False,
             "is_mobile": False,

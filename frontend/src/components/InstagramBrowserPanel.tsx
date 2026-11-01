@@ -195,8 +195,8 @@ export function InstagramBrowserPanel({
       autoconnect: "true",
       resize: "scale",
       path: vncPath,
-      quality: "6",
-      compression: "2",
+      quality: "3",
+      compression: "8",
     });
     if (adminToken) {
       params.set("token", adminToken);

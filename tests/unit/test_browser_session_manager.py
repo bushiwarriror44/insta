@@ -495,6 +495,46 @@ async def test_start_session_youtube_forces_desktop(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_start_session_youtube_uses_studio_vnc_screen(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.config import settings
+    import app.browser.session_manager as sm
+
+    monkeypatch.setattr(settings, "browser_vnc_enabled", True)
+    monkeypatch.setattr(settings, "browser_studio_vnc_width", 1024)
+    monkeypatch.setattr(settings, "browser_studio_vnc_height", 640)
+    monkeypatch.setattr(sm, "vnc_stack_available", lambda: True)
+    monkeypatch.setattr(sm, "playwright_browsers_available", lambda: True)
+    monkeypatch.setattr(sm, "health_check_cached", lambda *a, **k: None)
+
+    captured: dict = {}
+
+    class FakeVnc:
+        def __init__(self, **kwargs):
+            captured["screen"] = kwargs.get("screen")
+
+        async def start(self):
+            return None
+
+    monkeypatch.setattr(sm, "VncStack", FakeVnc)
+
+    async def fake_launch(session, account, proxy, *, autofill_login, surface):
+        captured["launch_surface"] = surface
+
+    mgr = BrowserSessionManager()
+    account = SimpleNamespace(username="ytuser", platform="youtube", login_surface="mobile")
+    proxy = MagicMock(url="http://u:p@1.2.3.4:8080", timezone="UTC", country="US")
+
+    monkeypatch.setattr(mgr, "_launch_browser", fake_launch)
+    monkeypatch.setattr(mgr, "_poll_session", AsyncMock())
+    monkeypatch.setattr(mgr, "_auto_stop", AsyncMock())
+
+    await mgr.start_session(account, proxy, surface="mobile")
+    assert captured["screen"] == "1024x640x24"
+
+
+@pytest.mark.asyncio
 async def test_open_instagram_browser_no_about_blank_on_goto_failure():
     import app.browser.session_manager as sm
 

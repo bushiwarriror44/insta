@@ -80,4 +80,6 @@ Instagram-app User-Agent в Chromium Studio **не** подставляется.
 
 Нужны `BROWSER_VNC_ENABLED=true` и стек в контейнере. Старт: `POST /api/accounts/{username}/browser/start`. Код 2FA: `.../browser/code`. Сохранение: `.../browser/save`. Диагностика: `python -m app.cli browser-vnc-diag`.
 
+Производительность noVNC: в UI заданы **quality=3** и **compression=8** (меньше трафика, грубее картинка). YouTube/TikTok используют компактный desktop **1024×640** на Xvfb (`BROWSER_STUDIO_VNC_WIDTH` / `BROWSER_STUDIO_VNC_HEIGHT`); Instagram desktop остаётся 1280×800.
+
 Tools run-режима: `start_browser`, `browser_status`, `save_browser_session`, `submit_browser_code`.
