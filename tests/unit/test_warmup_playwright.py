@@ -186,6 +186,9 @@ class FakePage:
                     return 1
                 return 0
 
+            async def is_visible(self_inner):
+                return (await self_inner.count()) > 0
+
             async def wait_for(self_inner, *_a, **_kw):
                 return None
 
@@ -598,3 +601,40 @@ def test_try_resolve_email_challenge_submits_code(monkeypatch):
     )
     assert ok is True
     assert calls["submit"] == 1
+
+
+def test_playwright_browsers_available_uses_root_helper(monkeypatch, tmp_path, app_env):
+    (tmp_path / "chromium-1").mkdir()
+    monkeypatch.setattr(wp, "_playwright_browsers_root", lambda: tmp_path)
+    assert wp.playwright_browsers_available() is True
+
+
+def test_first_visible_selector_skips_non_visible():
+    class _Loc:
+        def __init__(self, visible: bool):
+            self._visible = visible
+
+        async def count(self):
+            return 1
+
+        async def is_visible(self):
+            return self._visible
+
+    class _Page:
+        def locator(self, selector: str):
+            visible = selector == 'input[name="username"]'
+
+            class _Wrap:
+                first = _Loc(visible)
+
+            return _Wrap()
+
+    import asyncio
+
+    found = asyncio.run(
+        wp._first_visible_selector(
+            _Page(),
+            ['input[name="email"]', 'input[name="username"]'],
+        )
+    )
+    assert found == 'input[name="username"]'

@@ -179,6 +179,10 @@ def build_client(
     client.set_country_code(fingerprint.country_code)
     client.set_timezone_offset(fingerprint.timezone_offset)
 
+    from instagrapi import config as ig_config
+
+    client.set_app(ig_config.DEFAULT_APP_VERSION)
+
     client.set_proxy(proxy_url)
 
     if challenge_handler is not None:

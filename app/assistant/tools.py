@@ -1135,6 +1135,13 @@ def diagnose(db: Session, *, tail: int = DIAGNOSE_LOG_TAIL) -> dict[str, Any]:
     running = worker_control.status()
     beat = worker_status(db)
     ollama = runtime.probe(settings)
+    wan_url = (settings.wan_base_url or "").strip()
+    wan_worker: dict[str, Any] = {"configured": bool(wan_url)}
+    if wan_url:
+        from app.services.gateway_probe import wan_async_capable, wan_reachable
+
+        wan_worker["reachable"] = bool(wan_reachable(settings))
+        wan_worker["async_ok"] = wan_async_capable(settings)
     log_path = Path(settings.log_file) if settings.log_file else None
     app_log, app_log_reason = _tail_log(log_path, tail)
     foreign_alive = beat.known and not beat.stale and not running.alive
@@ -1168,6 +1175,7 @@ def diagnose(db: Session, *, tail: int = DIAGNOSE_LOG_TAIL) -> dict[str, Any]:
         },
         "errors": list_errors(db),
         "render_backends": list_render_backends(),
+        "wan_worker": wan_worker,
         "app_log": app_log,
         "app_log_reason": app_log_reason,
     }
@@ -1784,14 +1792,25 @@ def test_proxy(db: Session, proxy_label: str) -> dict[str, Any]:
     }
 
 
-def test_connection(db: Session, account_id: int, *, probe_mobile: bool = False) -> dict[str, Any]:
+def test_connection(db: Session, account_id: int, *, probe_mobile: bool = False, probe_studio: bool = False) -> dict[str, Any]:
+    from app.accounts.account_hints import enrich_connection_test_out
     from app.accounts.connection_test import run_account_connection_test
 
     account = _account(db, account_id)
     platform = _account_platform(account)
     if probe_mobile and platform != "instagram":
         raise ToolError("probe_mobile только для Instagram")
-    out = run_account_connection_test(account, db, probe_mobile=bool(probe_mobile))
+    if probe_studio and platform not in ("youtube", "tiktok"):
+        raise ToolError("probe_studio только для YouTube и TikTok")
+    out = enrich_connection_test_out(
+        run_account_connection_test(
+            account,
+            db,
+            probe_mobile=bool(probe_mobile),
+            probe_studio=bool(probe_studio),
+        ),
+        account,
+    )
     proxy_err = out.proxy_health.error if out.proxy_health else None
     auth_err = out.instagram_auth.error if out.instagram_auth else None
     payload: dict[str, Any] = {
@@ -1810,8 +1829,17 @@ def test_connection(db: Session, account_id: int, *, probe_mobile: bool = False)
         payload["instagram_ok"] = out.instagram_auth.ok if out.instagram_auth else False
     else:
         payload["session_ok"] = out.instagram_auth.ok if out.instagram_auth else False
-        if out.overall_ok:
+        if out.studio_liveness_ok is not None:
+            payload["studio_liveness_ok"] = out.studio_liveness_ok
+            if out.studio_liveness_error:
+                payload["studio_liveness_error"] = out.studio_liveness_error
+        elif out.overall_ok:
             payload["note"] = "cookies Studio на диске (живость на сервере не проверялась)"
+    if getattr(out, "user_hint", None) is not None:
+        payload["user_hint"] = out.user_hint.model_dump()
+        payload["next_steps"] = list(out.user_hint.steps)
+        if not out.overall_ok:
+            payload["operator_message"] = f"{out.user_hint.title}: {out.user_hint.message}"
     return payload
 
 
@@ -2272,6 +2300,8 @@ def _account_session_source(account: Account) -> str:
 
 
 def _login_result_payload(account: Account, out) -> dict[str, Any]:
+    from app.accounts.account_hints import hint_for_first_login
+
     lines = [f"{line.level}: {line.message}" for line in (out.logs or [])[-8:]]
     kind = _login_log_kind(account)
     platform = _account_platform(account)
@@ -2316,6 +2346,30 @@ def _login_result_payload(account: Account, out) -> dict[str, Any]:
                     "required": True,
                 }
             ]
+    user_hint = getattr(out, "user_hint", None)
+    if user_hint is not None:
+        payload["user_hint"] = user_hint.model_dump()
+        payload["next_steps"] = list(user_hint.steps)
+    else:
+        computed = hint_for_first_login(out, account)
+        if computed is not None:
+            payload["user_hint"] = computed.to_api_dict()
+            payload["next_steps"] = list(computed.steps)
+            if not out.ok and computed.message and not payload.get("why"):
+                payload["why"] = computed.message
+            user_hint = computed
+    if not out.ok:
+        hint_title = None
+        hint_message = None
+        if user_hint is not None:
+            if hasattr(user_hint, "title"):
+                hint_title = user_hint.title
+                hint_message = user_hint.message
+            elif isinstance(user_hint, dict):
+                hint_title = user_hint.get("title")
+                hint_message = user_hint.get("message")
+        if hint_title and hint_message:
+            payload["operator_message"] = f"{hint_title}: {hint_message}"
     return payload
 
 
@@ -2429,6 +2483,15 @@ def ensure_account_session(
             "session": session_info,
             "connection_test": conn,
             "next_actions": [] if overall else ["login_account", "account_logs"],
+            **(
+                {
+                    "user_hint": conn["user_hint"],
+                    "next_steps": conn.get("next_steps", []),
+                    "operator_message": conn.get("operator_message"),
+                }
+                if conn.get("user_hint")
+                else {}
+            ),
         }
     login_out = login_account(
         db,
@@ -2450,6 +2513,23 @@ def ensure_account_session(
         "connection_test": conn,
         "account_logs_hint": login_out.get("account_logs_hint"),
         "next_actions": [] if overall else ["account_logs"],
+        **(
+            {
+                "user_hint": conn.get("user_hint") or login_out.get("user_hint"),
+                "next_steps": conn.get("next_steps") or login_out.get("next_steps", []),
+                "operator_message": conn.get("operator_message")
+                or login_out.get("operator_message")
+                or (
+                    f"{login_out['user_hint']['title']}: {login_out['user_hint']['message']}"
+                    if isinstance(login_out.get("user_hint"), dict)
+                    and login_out["user_hint"].get("title")
+                    and login_out["user_hint"].get("message")
+                    else None
+                ),
+            }
+            if (conn.get("user_hint") or login_out.get("user_hint"))
+            else {}
+        ),
     }
 
 
@@ -2636,6 +2716,12 @@ def create_render(
         name = one_word(backend)
     if name not in available_backends():
         raise ToolError(f"неизвестный бэкенд {name!r}")
+    if name == "local" and (settings.wan_base_url or "").strip():
+        from app.generation.wan_remote import local_async_required_detail
+        from app.services.gateway_probe import wan_async_capable
+
+        if wan_async_capable(settings) is False:
+            raise ToolError(local_async_required_detail(settings))
     if account_id is not None:
         _account(db, account_id)
     seconds = 5.0 if duration_s is None else float(duration_s)
@@ -3018,11 +3104,9 @@ def wait_render(
     if job is None:
         raise ToolError(f"рендера {job_id} нет")
     if timeout_s is None:
-        timeout_s = (
-            float(settings.generation_timeout_seconds) + 120.0
-            if (job.backend or "").strip().lower() == "local"
-            else 900.0
-        )
+        from app.generation.wan_limits import wait_render_timeout_s
+
+        timeout_s = wait_render_timeout_s(settings, job)
     deadline = time.monotonic() + max(0.0, float(timeout_s))
     interval = max(0.05, float(poll_s))
     terminal = {

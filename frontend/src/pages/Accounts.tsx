@@ -50,6 +50,7 @@ type ProxyCheckFilter = "" | "ok" | "bad" | "geo-mismatch" | "ig-bad";
 import { useToast } from "../context/ToastContext";
 import { usePollWhenVisible } from "../hooks/usePollWhenVisible";
 import { useAssistantMutate } from "../lib/assistantMutate";
+import { resolveConnectionHint, pushUserHintToast } from "../lib/accountHints";
 import type {
   AccountConnectionTestOut,
   AccountIn,
@@ -1974,18 +1975,26 @@ function ConnectionModal({
       });
       setResult(data);
       onResult?.(account, data);
-      if (!data.instagram_auth.ok && isSessionMissing(data.instagram_auth)) {
-        if (isInstagram(account)) {
-          onOpenSessionSetup(account);
-          return;
-        }
+      const hint = resolveConnectionHint(data);
+      const hintCallbacks = {
+        onOpenSessionSetup: () => onOpenSessionSetup(account),
+        onAttachProxy: () => onOpenProxy(),
+      };
+      if (data.overall_ok && data.proxy_health?.geo_mismatch && hint) {
+        push(`@${account.username}: cookies установлены`, "success");
+        pushUserHintToast(hint, push, hintCallbacks);
+      } else if (data.overall_ok && !hint) {
+        push(`@${account.username}: cookies установлены`, "success");
+      } else if (hint) {
+        pushUserHintToast(hint, push, hintCallbacks);
+      } else {
+        push(
+          data.overall_ok
+            ? `@${account.username}: проверка пройдена`
+            : `@${account.username}: обнаружены проблемы с подключением`,
+          data.overall_ok ? "success" : "error"
+        );
       }
-      push(
-        data.overall_ok
-          ? `@${account.username}: cookies установлены`
-          : `@${account.username}: обнаружены проблемы с подключением`,
-        data.overall_ok ? "success" : "error"
-      );
     } catch (err) {
       push((err as Error).message, "error");
       setHistoryTick((n) => n + 1);
@@ -2010,18 +2019,23 @@ function ConnectionModal({
       });
       setResult(data);
       onResult?.(account, data);
-      if (!data.instagram_auth.ok && isSessionMissing(data.instagram_auth)) {
-        if (isInstagram(account)) {
-          onOpenSessionSetup(account);
-          return;
-        }
+      const hint = resolveConnectionHint(data);
+      const hintCallbacks = {
+        onOpenSessionSetup: () => onOpenSessionSetup(account),
+        onAttachProxy: () => onOpenProxy(),
+      };
+      if (data.overall_ok && !hint) {
+        push(`@${account.username}: готов к автопостингу`, "success");
+      } else if (hint) {
+        pushUserHintToast(hint, push, hintCallbacks);
+      } else {
+        push(
+          data.overall_ok
+            ? `@${account.username}: готов к автопостингу`
+            : `@${account.username}: mobile API отклонил сессию`,
+          data.overall_ok ? "success" : "error"
+        );
       }
-      push(
-        data.overall_ok
-          ? `@${account.username}: готов к автопостингу`
-          : `@${account.username}: mobile API отклонил сессию`,
-        data.overall_ok ? "success" : "error"
-      );
     } catch (err) {
       push((err as Error).message, "error");
       setHistoryTick((n) => n + 1);

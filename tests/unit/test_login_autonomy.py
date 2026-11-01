@@ -104,6 +104,9 @@ def test_ig_challenge_payload_no_browser_actions(db_session, make_account):
     assert payload["next_actions"] == ["submit_login_code", "login_account"]
     assert payload.get("ask") is True
     assert payload["fields"][0]["id"] == "verification_code"
+    assert payload.get("user_hint")
+    assert payload.get("next_steps")
+    assert payload.get("operator_message")
 
 
 def test_ensure_account_session_blocked_when_vnc_in_progress(db_session, make_account, make_proxy):

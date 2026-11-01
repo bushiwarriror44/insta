@@ -298,6 +298,42 @@ def cmd_refresh_app_versions(
     )
 
 
+@app.command("sync-device-app-profiles")
+def cmd_sync_device_app_profiles(
+    username: str | None = typer.Option(
+        None,
+        "--username",
+        help="Single account; default: all Instagram usernames in DB.",
+    ),
+) -> None:
+    """Patch persisted device_*.json app_version/version_code from instagrapi defaults."""
+    _bootstrap()
+    from sqlalchemy import select
+
+    from app.accounts.device_factory import default_instagram_app_profile, patch_device_app_profile_file
+    from app.db import Account, Platform, SessionLocal
+
+    ver, code, _ = default_instagram_app_profile()
+    updated = 0
+    with SessionLocal() as db:
+        if username:
+            names = [username]
+        else:
+            names = list(
+                db.scalars(
+                    select(Account.username).where(Account.platform == Platform.instagram).order_by(Account.username)
+                )
+            )
+    for name in names:
+        if patch_device_app_profile_file(name):
+            updated += 1
+            console.print(f"[green]Обновлён[/green] device_{name}.json")
+    console.print(
+        f"[cyan]Профиль приложения:[/cyan] {ver} ({code}); "
+        f"обновлено файлов: {updated}/{len(names)}"
+    )
+
+
 @app.command("install-playwright")
 def cmd_install_playwright(
     browser: str = typer.Option("chromium", "--browser", help="Playwright browser to install."),
@@ -317,10 +353,21 @@ def cmd_install_playwright(
 
 
 @app.command("first-login")
-def cmd_first_login(username: str) -> None:
+def cmd_first_login(
+    username: str,
+    verification_code: Optional[str] = typer.Option(
+        None,
+        "--verification-code",
+        help="Код email/SMS challenge (или заранее: provide-code USER CODE)",
+    ),
+) -> None:
     """Perform a stealth Playwright first login. Use for fresh accounts."""
     _bootstrap()
+    from app.accounts.challenge import write_code
     from app.accounts.first_login_service import run_account_first_login
+
+    if verification_code:
+        write_code(username, verification_code)
 
     with SessionLocal() as db:
         account = db.scalar(select(Account).where(Account.username == username))
@@ -337,6 +384,13 @@ def cmd_first_login(username: str) -> None:
         if out.ok:
             console.print(f"[green]Первый вход для {username} выполнен[/green]")
             return
+        if out.challenge:
+            console.print(
+                f"[yellow]Нужен код подтверждения для {username}. "
+                f"Файл: data/challenges/{username}.code "
+                f"или: python -m app.cli provide-code {username} КОД "
+                f"или повтор с --verification-code[/yellow]"
+            )
         console.print(
             f"[yellow]Первый вход для {username} завершился с предупреждениями. "
             f"{out.error or 'Смотрите логи.'}[/yellow]"
@@ -616,6 +670,15 @@ def cmd_preflight() -> None:
         issues.append(
             "кэш браузера playwright пуст (выполните install-playwright)"
         )
+    import os
+
+    strict_pw = os.environ.get("PREFLIGHT_STRICT_PLAYWRIGHT", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if strict_pw and not playwright_browsers_available():
+        issues.append("PREFLIGHT_STRICT_PLAYWRIGHT: Chromium обязателен")
 
     import shutil
 
@@ -704,6 +767,82 @@ def shutil_which(cmd: str) -> str | None:
     import shutil
 
     return shutil.which(cmd)
+
+
+@app.command("export-migration-bundle")
+def cmd_export_migration_bundle(
+    out: Path = typer.Option(
+        Path("data/migration-bundle-export.tar.gz"),
+        "--out",
+        help="Output .tar.gz (contains secrets)",
+    ),
+    platform: str = typer.Option("all", "--platform", help="instagram,youtube,tiktok or all"),
+) -> None:
+    """Pack accounts, proxies, and session files for merge import on another server."""
+    _bootstrap()
+    from app.db import Platform
+    from app.services.migration_bundle import export_migration_bundle
+
+    def _platforms(raw: str) -> set[Platform] | None:
+        if raw.strip().lower() in ("all", "*", ""):
+            return None
+        return {Platform(p.strip().lower()) for p in raw.split(",") if p.strip()}
+
+    with SessionLocal() as db:
+        result = export_migration_bundle(db, out, platforms=_platforms(platform))
+    console.print(
+        f"[green]экспорт[/green] accounts={result.account_count} proxies={result.proxy_count} "
+        f"files={result.file_count} → {result.bundle_path}"
+    )
+
+
+@app.command("import-migration-bundle")
+def cmd_import_migration_bundle(
+    archive: Path = typer.Argument(..., help=".tar.gz bundle"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    prefix: str = typer.Option("qa-", "--prefix"),
+    merge_session_files: bool = typer.Option(False, "--merge-session-files"),
+    force_session_files: bool = typer.Option(False, "--force-session-files"),
+    report: Path = typer.Option(
+        Path("data/migration_import_report.json"),
+        "--report",
+    ),
+) -> None:
+    """Merge bundle into current DB and data/ (does not replace whole database)."""
+    _bootstrap()
+    import shutil
+
+    from app.services.migration_bundle import (
+        ImportOptions,
+        import_migration_bundle,
+        load_bundle_from_archive,
+    )
+
+    bundle_root, is_temp = load_bundle_from_archive(archive)
+    temp_parent = bundle_root.parent if is_temp else None
+    opts = ImportOptions(
+        dry_run=dry_run,
+        prefix=prefix,
+        merge_session_files=merge_session_files,
+        force_session_files=force_session_files,
+    )
+    try:
+        with SessionLocal() as db:
+            rep = import_migration_bundle(db, bundle_root, opts)
+    finally:
+        if is_temp and temp_parent is not None:
+            shutil.rmtree(temp_parent, ignore_errors=True)
+
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(json.dumps(rep.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+    console.print(
+        f"[green]импорт[/green] added={len(rep.accounts_added)} skipped={len(rep.accounts_skipped)} "
+        f"files={len(rep.files_copied)} errors={len(rep.errors)} report={report}"
+    )
+    if rep.errors:
+        for err in rep.errors:
+            console.print(f"[red]{err}[/red]")
+        raise typer.Exit(code=1)
 
 
 @app.command("export-account")

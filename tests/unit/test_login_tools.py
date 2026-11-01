@@ -60,3 +60,39 @@ def test_login_account_routes_studio(db_session, make_account, make_proxy, monke
     assert out["ok"] is True
     assert out["run_id"] == 77
     assert "studio_login" in out["account_logs_hint"]
+
+
+def test_login_account_payload_includes_user_hint_on_failure(
+    db_session, make_account, make_proxy, monkeypatch
+):
+    from app.api.schemas import AccountUserHintOut, FirstLoginOut
+
+    proxy = make_proxy(label="px-hint")
+    account = make_account(username="hintuser", proxy=proxy)
+    hint = AccountUserHintOut(
+        severity="error",
+        title="Тест",
+        message="Подсказка",
+        steps=["Шаг 1"],
+    )
+
+    def _fake_run(acc, db, *, surface=None, on_status=None):
+        return FirstLoginOut(
+            run_id=1,
+            ok=False,
+            error="fail",
+            challenge=False,
+            session_imported=False,
+            logs=[],
+            user_hint=hint,
+        )
+
+    monkeypatch.setattr(
+        "app.accounts.login_orchestrator.run_autonomous_account_login",
+        _fake_run,
+    )
+    out = tools.login_account(db_session, account.id)
+    assert out.get("user_hint")
+    assert out["user_hint"]["title"] == "Тест"
+    assert out.get("next_steps") == ["Шаг 1"]
+    assert out.get("operator_message") == "Тест: Подсказка"

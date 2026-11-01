@@ -20,9 +20,15 @@ _SALAD_GATEWAY = (
 )
 
 _WAN_TIMEOUT = (
-    "процесс Wan на GPU не уложился в 30 минут. "
-    "Панель запустит следующую попытку, если они ещё есть."
+    "Wan на GPU не завершился до лимита панели (GENERATION_TIMEOUT_SECONDS, "
+    "часто 15–32 мин). Для local Salad 5 с обычно нужно 10–25 мин, не секунды; "
+    "быстрее — бэкенд fal или auto с FAL_API_KEY. Следующая попытка — если остались."
 )
+
+
+def _wan_wait_timeout(text: str) -> bool:
+    low = text.lower()
+    return "wan timed out" in low or "таймаут ожидания wan" in low
 
 _GPU_BUSY = (
     "GPU уже рендерит другой ролик. Дождитесь его или Stop/Start группы Salad. "
@@ -49,7 +55,7 @@ def enrich_generation_error(message: str, *, backend: str | None = None) -> str:
         if not text:
             return _GPU_BUSY
         return f"{text} — {_GPU_BUSY}"
-    if "wan timed out" in text.lower():
+    if _wan_wait_timeout(text):
         if _WAN_TIMEOUT in text:
             return text
         return f"{text} — {_WAN_TIMEOUT}"

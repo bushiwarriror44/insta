@@ -474,6 +474,47 @@ def test_youtube_connection_ok_without_instagram_reach(db_session, make_account,
     assert out.session_storage.session_source == "playwright"
 
 
+def test_youtube_probe_studio_sets_liveness_without_breaking_overall(
+    db_session, make_account, monkeypatch, app_env
+):
+    from datetime import datetime, timezone
+
+    from app.accounts.connection_test import run_account_connection_test
+    from app.accounts.playwright_session import save_playwright_state
+    from app.behavior.studio_playwright import StudioLivenessResult
+    from app.db.models import Platform
+    from app.proxies.pool import HealthSnapshot
+
+    account = make_account(username="ytlive", platform=Platform.youtube)
+    save_playwright_state(
+        "ytlive",
+        {"cookies": [{"name": "SID", "value": "x", "domain": ".youtube.com"}], "origins": []},
+    )
+    snapshot = HealthSnapshot(
+        ok=True,
+        ip="1.2.3.4",
+        country="US",
+        instagram_reachable=False,
+        instagram_login_reachable=False,
+        checked_at=datetime.now(timezone.utc),
+    )
+    monkeypatch.setattr(
+        "app.accounts.connection_test.health_check_record",
+        lambda db, proxy: (True, snapshot, None),
+    )
+    monkeypatch.setattr(
+        "app.behavior.studio_playwright.probe_studio_session_liveness",
+        lambda **kw: StudioLivenessResult(
+            ok=False,
+            error="Cookies на диске есть, но Studio перенаправил на вход",
+        ),
+    )
+    out = run_account_connection_test(account, db_session, probe_studio=True)
+    assert out.overall_ok is True
+    assert out.studio_liveness_ok is False
+    assert out.studio_liveness_error
+
+
 def test_youtube_connection_fails_without_state(db_session, make_account, monkeypatch):
     from datetime import datetime, timezone
 

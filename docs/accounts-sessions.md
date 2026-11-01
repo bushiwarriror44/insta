@@ -15,7 +15,7 @@
 | `active_hour_start` / `active_hour_end` | часы активности в TZ аккаунта; конец строго больше начала |
 | `timezone` | IANA; при создании часто берётся с прокси |
 | `caption_profile` | стиль подписи: `nature` / `lifestyle` / `fitness` / `food` / `travel`, **не** прокси |
-| `hold_for_review` | тумблер «проверка»: новая публикация из **чата** → `awaiting_review`, пока не `approve_job`. UI «запланировать» ставит `queued`. `publish_now` после успешной проверки сам одобряет |
+| `hold_for_review` | тумблер «проверка»: enqueue (UI/API/чат) → `awaiting_review`, пока не `approve_job`. `publish_now` после ok `test_connection` сам одобряет → `queued` |
 | `login_surface` | `mobile` или `desktop` — эмуляция Playwright / `first_login`, **только Instagram** |
 | `cooldown_until` | мягкий бан / пауза площадки |
 
@@ -67,6 +67,14 @@ Instagram-app User-Agent в Chromium Studio **не** подставляется.
 - YouTube/TikTok: прокси + Playwright state; `instagram_reachable` **не** валит Studio.
 
 `publish_now` сначала делает ту же проверку; если не ok — задачу не ставит, ошибку цитирует.
+
+Для YouTube/TikTok опционально **`probe_studio=true`**: headless открытие Studio с cookies на диске; поле `studio_liveness_ok` (при `false` — warn hint, `overall_ok` может остаться true).
+
+## Playwright / Docker (§0.7)
+
+- **Windows host:** `PLAYWRIGHT_BROWSERS_PATH=%LOCALAPPDATA%\ms-playwright` после `python -m app.cli install-playwright`.
+- **Docker (`reels-api` / `reels-worker`):** volume `playwright-browsers` смонтирован в `/ms-playwright`; env `PLAYWRIGHT_BROWSERS_PATH=/ms-playwright`. Один раз: `scripts/setup_docker_playwright.ps1` (или `.sh`) → `install-playwright` + `preflight`.
+- **Staging gate:** `PREFLIGHT_STRICT_PLAYWRIGHT=1` — `preflight` падает, если Chromium не установлен.
 
 ## Живой браузер (VNC)
 

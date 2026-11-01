@@ -611,12 +611,18 @@ def resume_account(username: str, db: Session = Depends(get_db)) -> AccountOut:
 def test_account_connection(
     username: str,
     probe_mobile: bool = Query(default=False),
+    probe_studio: bool = Query(default=False),
     db: Session = Depends(get_db),
 ) -> AccountConnectionTestOut:
     account = db.scalar(select(Account).where(Account.username == username))
     if account is None:
         raise HTTPException(status_code=404, detail=f"Аккаунт «{username}» не найден")
-    return run_account_connection_test(account, db, probe_mobile=probe_mobile)
+    from app.accounts.account_hints import enrich_connection_test_out
+
+    out = run_account_connection_test(
+        account, db, probe_mobile=probe_mobile, probe_studio=probe_studio
+    )
+    return enrich_connection_test_out(out, account)
 
 
 @router.post("/{username}/first-login", response_model=FirstLoginOut)
@@ -636,11 +642,16 @@ def account_first_login(
             detail="Браузер Chromium не установлен — на сервере выполните install-playwright",
         )
     platform = _account_platform_value(account)
+    from app.accounts.account_hints import enrich_first_login_out
+
     if platform in ("youtube", "tiktok"):
         from app.accounts.studio_login_service import run_studio_login
 
-        return run_studio_login(account, db)
-    return run_account_first_login(account, db, surface=login_surface)
+        return enrich_first_login_out(run_studio_login(account, db), account)
+    return enrich_first_login_out(
+        run_account_first_login(account, db, surface=login_surface),
+        account,
+    )
 
 
 @router.post("/{username}/mint-mobile-session", response_model=MintMobileSessionOut)

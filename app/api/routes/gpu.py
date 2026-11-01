@@ -11,7 +11,7 @@ from app.api.deps import AuthDep, DocsOwnerDep
 from app.api.schemas import GpuLogsOut, GpuOut, GpuPresenceIn, GpuPresenceOut, LogTailOut
 from app.config import Settings, get_settings
 from app.services import salad_gpu, salad_idle
-from app.services.gateway_probe import ollama_reachable, wan_reachable
+from app.services.gateway_probe import ollama_reachable, wan_async_capable, wan_reachable
 
 router = APIRouter(prefix="/api/gpu", tags=["gpu"])
 
@@ -77,6 +77,12 @@ def _connect(
     return "boot", f"Запуск ({state.status})", counts, 0.3
 
 
+def _wan_async_ok(settings: Settings, *, wan_ok: bool | None) -> bool | None:
+    if wan_ok is not True:
+        return None
+    return wan_async_capable(settings)
+
+
 def _payload(state: salad_gpu.GroupState | None, settings: Settings) -> GpuOut:
     ready = salad_gpu.configured(settings)
     if state is None:
@@ -85,6 +91,7 @@ def _payload(state: salad_gpu.GroupState | None, settings: Settings) -> GpuOut:
             configured=ready,
             detail=detail,
             wan_ok=_wan_ok(settings),
+            wan_async_ok=_wan_async_ok(settings, wan_ok=_wan_ok(settings)),
             idle_stop_minutes=int(settings.salad_idle_stop_minutes),
         )
     booting = (
@@ -116,6 +123,7 @@ def _payload(state: salad_gpu.GroupState | None, settings: Settings) -> GpuOut:
         stopping_count=state.stopping_count,
         chat_ok=chat_ok,
         wan_ok=wan_ok,
+        wan_async_ok=_wan_async_ok(settings, wan_ok=wan_ok),
         detail=detail,
         idle_stop_minutes=int(settings.salad_idle_stop_minutes),
         deploy_started_at=started,
@@ -208,6 +216,7 @@ def read_gpu() -> GpuOut:
             detail=str(exc),
             chat_ok=chat_ok,
             wan_ok=wan_ok,
+            wan_async_ok=_wan_async_ok(settings, wan_ok=wan_ok),
             idle_stop_minutes=int(settings.salad_idle_stop_minutes),
         )
 

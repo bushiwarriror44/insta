@@ -127,11 +127,23 @@ class Settings(BaseSettings):
     hf_space_api_name: str = Field(default="predict")
     generation_poll_seconds: float = Field(default=5.0)
     generation_timeout_seconds: float = Field(default=1920.0)
+    # Async POST to Wan (I2V base64). Separate from poll timeout.
+    generation_submit_timeout_seconds: float = Field(default=180.0, ge=60, le=600)
     daily_spend_cap_usd: float = Field(default=0.0, ge=0)
     outbound_proxy: str = Field(default="")
     floppydata_api_key: str = Field(default="")
     floppydata_base_url: str = Field(default="https://api.floppydata.net")
     media_dir: Path = Field(default=Path("data/videos/source"))
+
+    def effective_generation_timeout(self) -> float:
+        from app.generation.wan_limits import effective_generation_timeout
+
+        return effective_generation_timeout(self)
+
+    def poll_timeout_ms(self) -> int:
+        from app.generation.wan_limits import WAN_WORKER_BUFFER_S
+
+        return int((self.effective_generation_timeout() + WAN_WORKER_BUFFER_S) * 1000)
 
     @property
     def cors_allowed_origins(self) -> list[str]:

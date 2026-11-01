@@ -8,6 +8,7 @@ export type GenerationPollRow = {
   asset_id?: number | null;
   last_error?: string | null;
   offer_local_switch?: boolean;
+  poll_timeout_ms?: number;
 };
 
 export async function retryGenerationOnLocal(jobId: number): Promise<GenerationPollRow> {
@@ -20,10 +21,20 @@ export async function pollGenerationUntilDone(
   options?: { intervalMs?: number; timeoutMs?: number }
 ): Promise<GenerationPollRow> {
   const intervalMs = options?.intervalMs ?? 2000;
-  const timeoutMs = options?.timeoutMs ?? 1_020_000;
-  const deadline = Date.now() + timeoutMs;
+  let deadline =
+    Date.now() + (options?.timeoutMs ?? 2_040_000);
+  let deadlineFromApi = false;
   for (;;) {
     const row = await api.factory.getGeneration(jobId);
+    if (
+      !deadlineFromApi &&
+      options?.timeoutMs === undefined &&
+      row.poll_timeout_ms &&
+      row.poll_timeout_ms > 0
+    ) {
+      deadline = Date.now() + row.poll_timeout_ms;
+      deadlineFromApi = true;
+    }
     if (TERMINAL.has(row.status)) {
       return row;
     }

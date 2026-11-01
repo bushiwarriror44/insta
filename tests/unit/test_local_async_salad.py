@@ -49,6 +49,10 @@ def _generate(backend: LocalVideoBackend, client: MagicMock, out_dir: Path):
         patch("app.generation.local.runtime.unload_loaded"),
         patch("app.generation.local.touch"),
         patch("app.generation.local.http_client", return_value=client),
+        patch(
+            "app.generation.local.effective_generation_timeout",
+            side_effect=lambda s: float(s.generation_timeout_seconds),
+        ),
     ):
         return backend.generate(GenerationRequest(prompt="fog over a ridge"), out_dir)
 
@@ -59,17 +63,38 @@ def test_salad_host_submits_async_then_downloads(tmp_path: Path):
     client.post.return_value = httpx.Response(202, json={"job_id": "abc"})
     client.get.side_effect = [
         httpx.Response(524, text="timeout"),
-        httpx.Response(200, json={"status": "running", "error": ""}),
-        httpx.Response(200, json={"status": "done", "error": ""}),
+        httpx.Response(200, json={"status": "running", "error": "", "elapsed_s": 125}),
+        httpx.Response(200, json={"status": "done", "error": "", "elapsed_s": 130}),
         httpx.Response(200, content=MP4, headers={"content-type": "video/mp4"}),
     ]
-    result = _generate(backend, client, tmp_path)
+    stages: list[str] = []
+
+    def note(progress):
+        stages.append(progress.stage)
+
+    with (
+        patch.object(backend, "healthcheck", return_value=True),
+        patch("app.generation.local.hold_for_video", _hold),
+        patch("app.generation.local.runtime.unload_loaded"),
+        patch("app.generation.local.touch"),
+        patch("app.generation.local.http_client", return_value=client),
+        patch(
+            "app.generation.local.effective_generation_timeout",
+            side_effect=lambda s: float(s.generation_timeout_seconds),
+        ),
+    ):
+        result = backend.generate(
+            GenerationRequest(prompt="fog over a ridge"),
+            tmp_path,
+            on_progress=note,
+        )
     assert result.video_path.is_file()
     assert result.video_path.read_bytes() == MP4
     assert client.post.call_args.kwargs["headers"]["X-Async"] == "1"
     assert client.post.call_args.args[0].endswith("/generate")
     assert "/jobs/abc" in client.get.call_args_list[1].args[0]
     assert client.get.call_args_list[-1].args[0].endswith("/jobs/abc/file")
+    assert any("2 мин" in stage for stage in stages)
 
 
 def test_wan_async_flag_polls_a_direct_gpu(tmp_path: Path):
@@ -155,12 +180,25 @@ def _load_generate_server(tmp_path: Path):
 def test_generate_server_async_job_returns_the_file(tmp_path: Path, monkeypatch):
     module = _load_generate_server(tmp_path)
 
-    def fake_run(cmd, **_kwargs):
-        out = Path(cmd[cmd.index("--save_file") + 1])
-        out.write_bytes(MP4)
-        return subprocess.CompletedProcess(cmd, 0, "", "")
+    class _FakeProc:
+        def __init__(self, cmd, **_kwargs):
+            out = Path(cmd[cmd.index("--save_file") + 1])
+            out.write_bytes(MP4)
+            self.returncode = 0
 
-    monkeypatch.setattr(module.subprocess, "run", fake_run)
+        def poll(self):
+            return 0
+
+        def communicate(self, timeout=None):
+            return "", ""
+
+        def kill(self):
+            pass
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(module.subprocess, "Popen", _FakeProc)
     from fastapi.testclient import TestClient
 
     client = TestClient(module.app)
@@ -183,3 +221,18 @@ def test_generate_server_async_job_returns_the_file(tmp_path: Path, monkeypatch)
     assert downloaded.content == MP4
     assert module.lock.acquire(blocking=False)
     module.lock.release()
+
+
+def test_generate_server_cancel_marks_job_failed(tmp_path: Path):
+    module = _load_generate_server(tmp_path)
+    module.jobs["abc"] = {
+        "status": "running",
+        "error": "",
+        "path": "",
+        "work": "",
+        "started_at": time.monotonic(),
+    }
+    body = module.cancel_job("abc")
+    assert body["status"] == "failed"
+    assert module.jobs["abc"]["status"] == "failed"
+    assert module.jobs["abc"]["error"] == "cancelled"

@@ -2,7 +2,7 @@
 
 Метод: для каждого блока — **(A)** тесты, **(B)** ручной smoke UI/API, **(C)** аудит кода. Статус: OK / FAIL / GAP.
 
-Связанные документы: [overview.md](overview.md), [assistant-handbook.md](assistant-handbook.md), [accounts-sessions.md](accounts-sessions.md), [generation.md](generation.md), [costs.md](costs.md), [qa-api-coverage.md](qa-api-coverage.md).
+Связанные документы: [overview.md](overview.md), [assistant-handbook.md](assistant-handbook.md), [accounts-sessions.md](accounts-sessions.md), [qa-accounts-publish-checklist.md](qa-accounts-publish-checklist.md), [generation.md](generation.md), [costs.md](costs.md), [qa-api-coverage.md](qa-api-coverage.md).
 
 ## Последний автоматический прогон (2026-09-30)
 

@@ -33,6 +33,54 @@ class StudioLoginResult:
     page_url: str | None = None
 
 
+@dataclass
+class StudioLivenessResult:
+    ok: bool
+    challenge: bool = False
+    error: str | None = None
+    page_url: str | None = None
+
+
+def evaluate_studio_liveness(
+    *,
+    page_url: str,
+    platform: StudioPlatform,
+    needs_login: bool,
+    challenge: bool,
+) -> StudioLivenessResult:
+    """Pure check after navigating to Studio with stored cookies."""
+    url = page_url or ""
+    if challenge:
+        return StudioLivenessResult(
+            ok=False,
+            challenge=True,
+            error="Studio или Google запросили подтверждение (2FA / CAPTCHA)",
+            page_url=url,
+        )
+    if needs_login:
+        return StudioLivenessResult(
+            ok=False,
+            error="Cookies на диске есть, но Studio перенаправил на вход",
+            page_url=url,
+        )
+    if platform == "youtube":
+        if "studio.youtube.com" not in url.lower():
+            return StudioLivenessResult(
+                ok=False,
+                error="Не удалось открыть YouTube Studio с текущими cookies",
+                page_url=url,
+            )
+    else:
+        lower = url.lower()
+        if "tiktokstudio" not in lower and "tiktok.com" not in lower:
+            return StudioLivenessResult(
+                ok=False,
+                error="Не удалось открыть TikTok Studio с текущими cookies",
+                page_url=url,
+            )
+    return StudioLivenessResult(ok=True, page_url=url)
+
+
 def _studio_url(platform: StudioPlatform) -> str:
     return YOUTUBE_STUDIO_URL if platform == "youtube" else TIKTOK_STUDIO_URL
 
@@ -291,3 +339,86 @@ def studio_login(
     except Exception as exc:  # noqa: BLE001
         logger.error("studio.login_failed", username=username, platform=platform, error=str(exc))
         return StudioLoginResult(ok=False, error=str(exc))
+
+
+async def _async_probe_studio_session_liveness(
+    *,
+    username: str,
+    proxy_url: str,
+    platform: StudioPlatform,
+    locale: str = "en-US",
+    timezone_id: str = "UTC",
+    headless: bool = True,
+) -> StudioLivenessResult:
+    if not studio_session_ready(username, platform):
+        return StudioLivenessResult(ok=False, error="Cookies Studio на диске не найдены")
+    if not (proxy_url or "").strip():
+        return StudioLivenessResult(ok=False, error="нужен прокси")
+    if not playwright_browsers_available():
+        return StudioLivenessResult(ok=False, error="Chromium не установлен")
+
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError as exc:
+        return StudioLivenessResult(ok=False, error=f"playwright не установлен: {exc}")
+
+    state_file = playwright_state_path(username, platform)
+    storage = str(state_file) if state_file.exists() else None
+    proxy = _parse_proxy(proxy_url)
+    target = _studio_url(platform)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=headless, proxy=proxy)
+        try:
+            context = await browser.new_context(
+                locale=locale,
+                timezone_id=timezone_id,
+                storage_state=storage,
+            )
+            page = await context.new_page()
+            await page.goto(target, wait_until="domcontentloaded", timeout=_NAV_TIMEOUT_MS)
+            await asyncio.sleep(2.0)
+            challenge = await _detect_studio_challenge(page, platform)
+            needs_login = platform == "youtube" and "accounts.google.com" in (page.url or "")
+            if platform == "tiktok":
+                needs_login = needs_login or await page.locator('input[type="password"]').count() > 0
+            return evaluate_studio_liveness(
+                page_url=page.url or "",
+                platform=platform,
+                needs_login=needs_login,
+                challenge=challenge,
+            )
+        finally:
+            await browser.close()
+
+
+def probe_studio_session_liveness(
+    *,
+    username: str,
+    proxy_url: str,
+    platform: StudioPlatform,
+    locale: str = "en_US",
+    timezone_id: str = "UTC",
+    headless: bool | None = None,
+) -> StudioLivenessResult:
+    """Open Studio with stored Playwright state and detect login/challenge redirects."""
+    headless = settings.playwright_headless if headless is None else headless
+    try:
+        return asyncio.run(
+            _async_probe_studio_session_liveness(
+                username=username,
+                proxy_url=proxy_url,
+                platform=platform,
+                locale=locale.replace("_", "-"),
+                timezone_id=timezone_id,
+                headless=headless,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "studio.liveness_probe_failed",
+            username=username,
+            platform=platform,
+            error=str(exc),
+        )
+        return StudioLivenessResult(ok=False, error=str(exc))

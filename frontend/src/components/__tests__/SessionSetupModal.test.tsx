@@ -190,6 +190,30 @@ describe("SessionSetupModal", () => {
     );
   });
 
+  it("shows toast from API user_hint on failed auto login", async () => {
+    apiMock.accounts.firstLogin.mockResolvedValue({
+      run_id: 3,
+      ok: false,
+      challenge: false,
+      session_imported: false,
+      logs: [],
+      user_hint: {
+        severity: "warn",
+        title: "Пароль почты",
+        message: "Не удалось получить код через IMAP.",
+        steps: ["Проверьте email_password в карточке аккаунта."],
+      },
+    });
+    renderModal();
+    fireEvent.click(screen.getByRole("button", { name: /Автоматически/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Создать сессию/i }));
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Пароль почты: Не удалось получить код через IMAP/i)
+      ).toBeInTheDocument()
+    );
+  });
+
   it("shows helpful toast on 405 Method Not Allowed", async () => {
     apiMock.accounts.firstLogin.mockRejectedValue(
       new ApiError(405, "Method Not Allowed")

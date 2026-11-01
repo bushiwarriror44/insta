@@ -686,7 +686,7 @@ TOOLS = [
     ),
     schema(
         "test_connection",
-        "Проверить прокси и сессию. Instagram: cookies/sessionid. YouTube/TikTok: Playwright state на диске, без instagram_reachable.",
+        "Проверить прокси и сессию. В ответе есть user_hint и next_steps — процитируй message и первый шаг оператору.",
         {
             "account_id": {"type": "integer"},
             "probe_mobile": {"type": "boolean"},
@@ -767,7 +767,7 @@ TOOLS = [
     ),
     schema(
         "login_account",
-        "Автовход по платформе: Instagram (браузер, IMAP, API); YouTube/TikTok (Studio headless, при 2FA — VNC). run_id + steps_summary.",
+        "Автовход по платформе. При ok=false смотри user_hint.message и next_steps — озвучь оператору по-русски.",
         {
             "account_id": {"type": "integer"},
             "username": {"type": "string"},
@@ -778,7 +778,7 @@ TOOLS = [
     ),
     schema(
         "ensure_account_session",
-        "Проверить сессию; если нет — login_account, затем test_connection. Для «войди и подготовь к постингу».",
+        "Проверить/создать сессию. При сбое используй user_hint и next_steps из ответа.",
         {
             "account_id": {"type": "integer"},
             "username": {"type": "string"},
@@ -2114,6 +2114,7 @@ def stream(
     images: list[str] = []
     created = _empty_created()
     asked: set[tuple[str, str]] = set()
+    last_operator_message: str | None = None
 
     with http_client(
         settings,
@@ -2171,7 +2172,9 @@ def stream(
                     if message.get("tool_calls") and not cut:
                         break
                 yield Answer(
-                    reply=_clean(reply),
+                    reply=_clean(
+                        merge_operator_message_into_reply(reply, last_operator_message)
+                    ),
                     opened=opened,
                     used=used,
                     images=images,
@@ -2243,6 +2246,9 @@ def stream(
                     if outcome is None:
                         continue
                     result, went = outcome.result, outcome.went
+                    om = _operator_message_from_tool_result(result)
+                    if om:
+                        last_operator_message = om
                     if went is not None:
                         opened = went
                         if went.screenshot_url:
@@ -2278,6 +2284,9 @@ def stream(
                         questions = list(result.get("questions") or [])
                         fields = list(result.get("fields") or [])
                         why = str(result.get("why") or "").strip()
+                        why = merge_operator_message_into_reply(
+                            why, _operator_message_from_tool_result(result)
+                        )
                         form_kind = (
                             detect_form_kind(
                                 fields,
@@ -2946,6 +2955,27 @@ BOLD = re.compile(r"\*\*(.+?)\*\*|__(.+?)__", re.S)
 ITALIC = re.compile(r"(?<![\w*])\*(?!\s)([^*\n]+?)(?<!\s)\*(?![\w*])")
 HEADING = re.compile(r"^#{1,6}\s+", re.M)
 LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+
+
+def _operator_message_from_tool_result(result: Any) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    if result.get("ok") is True:
+        return None
+    msg = str(result.get("operator_message") or "").strip()
+    return msg or None
+
+
+def merge_operator_message_into_reply(reply: str, operator_message: str | None) -> str:
+    om = (operator_message or "").strip()
+    if not om:
+        return reply
+    base = reply.strip()
+    if om in base:
+        return base
+    if base:
+        return f"{base}\n\n{om}"
+    return om
 
 
 def _clean(content: str) -> str:

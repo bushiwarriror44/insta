@@ -245,6 +245,15 @@ class DiagnosticRunOut(BaseModel):
     finished_at: Optional[datetime] = None
 
 
+class AccountUserHintOut(BaseModel):
+    severity: Literal["info", "warn", "error"]
+    title: str
+    message: str
+    steps: list[str] = Field(default_factory=list)
+    action_key: Optional[str] = None
+    action_label: Optional[str] = None
+
+
 class AccountConnectionTestOut(BaseModel):
     username: str
     proxy_assigned: bool
@@ -256,6 +265,9 @@ class AccountConnectionTestOut(BaseModel):
     checked_at: datetime
     run_id: int
     logs: list[DiagnosticLogLineOut] = Field(default_factory=list)
+    user_hint: Optional[AccountUserHintOut] = None
+    studio_liveness_ok: Optional[bool] = None
+    studio_liveness_error: Optional[str] = None
 
 
 class FirstLoginOut(BaseModel):
@@ -263,11 +275,13 @@ class FirstLoginOut(BaseModel):
     ok: bool
     challenge: bool = False
     browser_tab_hint: bool = False
+    challenge_code_file: Optional[str] = None
     session_imported: bool = False
     connection_test: Optional[AccountConnectionTestOut] = None
     error: Optional[str] = None
     login_debug_available: bool = False
     logs: list[DiagnosticLogLineOut] = Field(default_factory=list)
+    user_hint: Optional[AccountUserHintOut] = None
 
 
 class MintMobileSessionOut(BaseModel):
@@ -632,6 +646,7 @@ class GpuOut(BaseModel):
     stopping_count: int = 0
     chat_ok: bool = False
     wan_ok: Optional[bool] = None
+    wan_async_ok: Optional[bool] = None
     detail: str = ""
     idle_stop_minutes: int = 0
     deploy_started_at: Optional[datetime] = None

@@ -339,6 +339,10 @@ class FakeInstagrapiClient:
         self._record("set_timezone_offset", offset)
         self.timezone_offset = offset
 
+    def set_app(self, app=None, seed=None, hydrate_incomplete_profile=False) -> bool:
+        self._record("set_app", app, seed=seed, hydrate_incomplete_profile=hydrate_incomplete_profile)
+        return True
+
     def set_proxy(self, url: str) -> None:
         self._record("set_proxy", url)
         self.proxy_url = url

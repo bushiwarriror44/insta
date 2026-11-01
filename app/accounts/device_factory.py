@@ -100,10 +100,27 @@ _GEO_PROFILES: dict[str, dict[str, Any]] = {
 # ``python -m app.cli refresh-app-versions`` (the CLI updates this list in
 # memory for the running process and validates the structure on disk).
 _APP_VERSIONS: list[tuple[str, str]] = [
-    ("428.0.0.47.67", "961145276"),
     ("446.0.0.49.77", "385211303"),
     ("448.0.0.0.20", "1065560286"),
+    ("449.0.0.52.84", "1079242191"),
 ]
+
+
+def default_instagram_app_profile() -> tuple[str, str, str | None]:
+    """Return (app_version, version_code, bloks_versioning_id) from installed instagrapi."""
+    try:
+        from instagrapi import config as ig_config
+
+        version = ig_config.DEFAULT_APP_VERSION
+        profile = ig_config.APP_SETTINGS.get(version) or {}
+        code = str(profile.get("version_code", "")).strip()
+        bloks = profile.get("bloks_versioning_id")
+        bloks_str = str(bloks).strip() if bloks else None
+        if version and code:
+            return version, code, bloks_str
+    except Exception:
+        pass
+    return _APP_VERSIONS[-1][0], _APP_VERSIONS[-1][1], None
 
 
 def load_app_versions_from_file(path: Path) -> list[tuple[str, str]]:
@@ -347,3 +364,64 @@ def rotate_session_uuids(fp: DeviceFingerprint) -> DeviceFingerprint:
     uuids["client_session_id"] = str(uuid.uuid4())
     uuids["pigeon_session_id"] = f"UFS-{uuid.uuid4()}-0"
     return fp
+
+
+def patch_device_app_profile(
+    fp: DeviceFingerprint,
+    *,
+    app_version: str | None = None,
+    version_code: str | None = None,
+    bloks_versioning_id: str | None = None,
+) -> bool:
+    """Update Instagram app version fields on disk fingerprint without rotating UUIDs."""
+    if app_version is None or version_code is None:
+        default_ver, default_code, default_bloks = default_instagram_app_profile()
+        app_version = app_version or default_ver
+        version_code = version_code or default_code
+        if bloks_versioning_id is None:
+            bloks_versioning_id = default_bloks
+
+    ds = fp.settings.setdefault("device_settings", {})
+    changed = False
+    if ds.get("app_version") != app_version:
+        ds["app_version"] = app_version
+        changed = True
+    if ds.get("version_code") != version_code:
+        ds["version_code"] = version_code
+        changed = True
+    if bloks_versioning_id and fp.settings.get("bloks_versioning_id") != bloks_versioning_id:
+        fp.settings["bloks_versioning_id"] = bloks_versioning_id
+        changed = True
+
+    locale = fp.locale or ds.get("locale") or "en_US"
+    user_agent = _build_user_agent(
+        app_version=app_version,
+        version_code=version_code,
+        locale=locale,
+        dpi=str(ds.get("dpi", "420dpi")),
+        resolution=str(ds.get("resolution", "1080x2400")),
+        manufacturer=str(ds.get("manufacturer", "google")),
+        model=str(ds.get("model", "Pixel 8")),
+        codename=str(ds.get("device", "device")),
+        android_version=int(ds.get("android_version", 34)),
+        android_release=str(ds.get("android_release", "14")),
+        chipset=str(ds.get("cpu", "cpu")),
+    )
+    if fp.user_agent != user_agent:
+        fp.user_agent = user_agent
+        changed = True
+    if fp.settings.get("user_agent") != user_agent:
+        fp.settings["user_agent"] = user_agent
+        changed = True
+    return changed
+
+
+def patch_device_app_profile_file(username: str) -> bool:
+    """Load, patch app profile, save. Returns True if file was updated."""
+    fp = load_fingerprint(username)
+    if fp is None:
+        return False
+    if not patch_device_app_profile(fp):
+        return False
+    save_fingerprint(username, fp)
+    return True

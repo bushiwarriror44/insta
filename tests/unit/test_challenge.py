@@ -14,6 +14,7 @@ def test_write_code_creates_file(app_env):
     path = ch_module.CHALLENGES_DIR / "alice.code"
     assert path.exists()
     assert path.read_text(encoding="utf-8") == "123456"
+    assert ch_module.challenge_code_display_path("alice") == "data/challenges/alice.code"
 
 
 def test_handler_picks_up_code_and_deletes_file(app_env):
@@ -58,6 +59,19 @@ def test_handler_invokes_on_request_and_swallows_callback_error(app_env):
     code = handler("carol", "EMAIL")
     assert code == "0001"
     assert seen == [("carol", "EMAIL")]
+
+
+def test_handler_uses_bound_username_for_code_file_when_ig_passes_email(app_env):
+    """Login via email makes instagrapi pass email into handler; ops still use account username."""
+    handler = ch_module.make_handler("bob", timeout_sec=5)
+
+    def _drop():
+        time.sleep(0.05)
+        ch_module.write_code("bob", "112233")
+
+    threading.Thread(target=_drop, daemon=True).start()
+    code = handler("bob@example.com", "EMAIL")
+    assert code == "112233"
 
 
 def test_handler_clears_existing_stale_file(app_env):

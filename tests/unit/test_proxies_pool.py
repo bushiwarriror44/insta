@@ -185,7 +185,8 @@ def test_health_check_record_does_not_overwrite_manual_country(db_session, make_
     _mock_geo_json("PL", "Europe/Warsaw")
     ok, _snapshot, err = health_check_record(db_session, proxy)
     assert ok is True
-    assert err is None
+    assert err is not None
+    assert "не совпадает" in err
     db_session.refresh(proxy)
     assert proxy.country == "DE"
     assert proxy.timezone == "Europe/Berlin"
@@ -365,7 +366,8 @@ def test_geo_mismatch_does_not_disable_proxy(db_session, make_proxy):
     ok, snapshot, err = health_check_record(db_session, proxy)
     assert ok is True
     assert snapshot is not None
-    assert err is None
+    assert err is not None
+    assert "не совпадает" in err
     db_session.refresh(proxy)
     assert proxy.last_geo_country == "NL"
     assert proxy.country == "DE"

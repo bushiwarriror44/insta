@@ -64,6 +64,7 @@ def test_build_client_applies_settings_and_proxy_in_order(app_env, fake_client_c
         "set_country",
         "set_country_code",
         "set_timezone_offset",
+        "set_app",
         "set_proxy",
     ]
     assert names[: len(expected_prefix)] == expected_prefix

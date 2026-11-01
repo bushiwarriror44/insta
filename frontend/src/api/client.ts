@@ -28,6 +28,8 @@ import type {
   VideoOut,
 } from "./types";
 
+import { PLAYWRIGHT_INSTALL_HINT } from "../lib/accountHints";
+
 const RAW_BASE = (import.meta.env.VITE_API_BASE ?? "").trim();
 export const API_BASE = RAW_BASE.replace(/\/$/, "");
 const BASE = API_BASE;
@@ -77,8 +79,8 @@ export function formatApiError(err: unknown): string {
     }
     return "Требуется авторизация (401). Войдите в панель с ADMIN_TOKEN.";
   }
-  if (err.status === 503 && detail.toLowerCase().includes("playwright")) {
-    return `${detail} Выполните на сервере: docker compose exec reels-api python -m app.cli install-playwright`;
+  if (err.status === 503 && /playwright|chromium|browser|install-playwright/i.test(detail)) {
+    return `${detail} ${PLAYWRIGHT_INSTALL_HINT}`;
   }
   return detail || `HTTP ${err.status}`;
 }
@@ -388,20 +390,20 @@ export const api = {
       ),
     testConnection: (
       username: string,
-      opts?: { probeMobile?: boolean }
-    ) =>
-      request<AccountConnectionTestOut>(
+      opts?: { probeMobile?: boolean; probeStudio?: boolean }
+    ) => {
+      const query: Record<string, string> = {};
+      if (opts?.probeMobile === true) query.probe_mobile = "true";
+      else if (opts?.probeMobile === false) query.probe_mobile = "false";
+      if (opts?.probeStudio === true) query.probe_studio = "true";
+      return request<AccountConnectionTestOut>(
         `/api/accounts/${encodeURIComponent(username)}/test-connection`,
         {
           method: "POST",
-          query:
-            opts?.probeMobile === true
-              ? { probe_mobile: "true" }
-              : opts?.probeMobile === false
-                ? { probe_mobile: "false" }
-                : undefined,
+          query: Object.keys(query).length ? query : undefined,
         }
-      ),
+      );
+    },
     firstLogin: (username: string, opts?: { loginSurface?: import("./types").LoginSurface }) =>
       request<FirstLoginOut>(
         `/api/accounts/${encodeURIComponent(username)}/first-login`,
@@ -676,6 +678,7 @@ export const api = {
           backend?: string;
           asset_id?: number | null;
           offer_local_switch?: boolean;
+          poll_timeout_ms?: number;
         }>
       >("/api/generations"),
     getGeneration: (id: number) =>
@@ -691,6 +694,7 @@ export const api = {
         backend?: string;
         asset_id?: number | null;
         offer_local_switch?: boolean;
+        poll_timeout_ms?: number;
       }>(`/api/generations/${id}`),
     backends: () => request<import("./types").RenderBackendOut[]>("/api/generations/backends"),
     createGeneration: (body: {

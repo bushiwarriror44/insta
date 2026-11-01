@@ -1029,6 +1029,9 @@ describe("Accounts page", () => {
         probeMobile: false,
       })
     );
+    fireEvent.click(
+      within(connModal).getByRole("button", { name: /настроить сессию/i })
+    );
     await waitFor(() =>
       expect(
         screen.getByRole("heading", { name: /настройка сессии · @alice/i })

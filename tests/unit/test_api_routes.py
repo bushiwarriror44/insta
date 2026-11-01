@@ -228,7 +228,7 @@ def test_proxies_delete_blocked_when_in_use(api_client):
     )
     res = api_client.delete("/api/proxies/px-busy")
     assert res.status_code == 409
-    assert "account" in res.json()["detail"].lower()
+    assert "акк" in res.json()["detail"].lower() or "переназначьте" in res.json()["detail"].lower()
 
 
 def test_accounts_create_autofills_timezone_from_proxy(api_client):
@@ -532,7 +532,7 @@ def test_accounts_update_proxy_rejects_missing_account(api_client):
     )
     res = api_client.put("/api/accounts/missing/proxy", json={"proxy_label": "px-one"})
     assert res.status_code == 404
-    assert "not found" in res.json()["detail"].lower()
+    assert "не найден" in res.json()["detail"].lower()
 
 
 def test_accounts_create_with_session_id_sets_has_session_id(api_client):
@@ -600,7 +600,7 @@ def test_accounts_update_session_rejects_missing_account(api_client):
         json={"session_id": "c" * 40},
     )
     assert res.status_code == 404
-    assert "not found" in res.json()["detail"].lower()
+    assert "не найден" in res.json()["detail"].lower()
 
 
 def test_accounts_get_session_from_database(api_client):
@@ -983,7 +983,7 @@ def test_accounts_update_proxy_rejects_missing_proxy(api_client):
 
     res = api_client.put("/api/accounts/alice/proxy", json={"proxy_label": "ghost"})
     assert res.status_code == 400
-    assert "proxy" in res.json()["detail"].lower()
+    assert "прокси" in res.json()["detail"].lower() or "ghost" in res.json()["detail"].lower()
 
 
 def test_accounts_patch_notes(api_client):
@@ -1772,7 +1772,7 @@ def test_enqueue_rejects_wrong_media_type(api_client):
         },
     )
     assert res.status_code == 400
-    assert "requires a video" in res.json()["detail"]
+    assert "видеофайл" in res.json()["detail"].lower()
 
 
 def test_publications_list_and_refresh_stats(api_client, db_session, make_account, monkeypatch):

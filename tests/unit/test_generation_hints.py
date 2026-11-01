@@ -63,9 +63,16 @@ def test_enrich_524_names_the_salad_gateway_not_the_worker():
 
 def test_enrich_wan_timeout_does_not_blame_the_url():
     msg = enrich_generation_error("local: wan timed out", backend="local")
-    assert "30 минут" in msg
     assert "WAN_BASE_URL" not in msg
-    assert "следующую попытку" in msg
+    assert "GENERATION_TIMEOUT" in msg or "лимита панели" in msg
+    assert "fal" in msg.lower() or "auto" in msg.lower()
+
+
+def test_enrich_poll_timeout_russian_does_not_blame_wan_base_url():
+    msg = enrich_generation_error("local: таймаут ожидания Wan", backend="local")
+    assert "WAN_BASE_URL" not in msg
+    assert "Локальный рендер: проверьте" not in msg
+    assert "fal" in msg.lower() or "auto" in msg.lower()
 
 
 def test_enrich_409_names_a_busy_gpu_not_the_worker():

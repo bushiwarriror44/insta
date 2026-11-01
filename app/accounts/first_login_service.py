@@ -46,6 +46,12 @@ PLAYWRIGHT_UNAVAILABLE_SUMMARY = (
 )
 
 
+def _challenge_code_file(username: str) -> str:
+    from app.accounts.challenge import challenge_code_display_path
+
+    return challenge_code_display_path(username)
+
+
 def _format_auth_error(exc: AuthenticationError) -> str:
     msg = str(exc).strip().lower()
     if is_account_not_found_error(msg):
@@ -135,6 +141,7 @@ def _try_mint_fallback(
             ok=False,
             challenge=True,
             browser_tab_hint=True,
+            challenge_code_file=_challenge_code_file(account.username),
             error=mint.error or "Требуется подтверждение Instagram",
             logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
         )
@@ -210,6 +217,7 @@ def _try_api_login_fallback(
                 ok=False,
                 challenge=True,
                 browser_tab_hint=True,
+                challenge_code_file=_challenge_code_file(account.username),
                 error=str(exc) or "Требуется подтверждение Instagram",
                 logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
             ),
@@ -244,6 +252,7 @@ def _try_api_login_fallback(
                         ok=False,
                         challenge=True,
                         browser_tab_hint=True,
+                        challenge_code_file=_challenge_code_file(account.username),
                         error=str(exc) or "Требуется подтверждение Instagram",
                         logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
                     ),
@@ -477,6 +486,7 @@ def run_account_first_login(
             ok=False,
             challenge=True,
             browser_tab_hint=False,
+            challenge_code_file=_challenge_code_file(account.username),
             error=result.error or "Требуется подтверждение Instagram",
             login_debug_available=_login_debug_available(account.username, result),
             logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],

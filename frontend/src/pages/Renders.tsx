@@ -66,6 +66,8 @@ const FRAME_SIZES = [
   { id: "16:9", label: "16:9 · 1280×720", width: 1280, height: 720 },
 ] as const;
 
+const LOCAL_FRAME_IDS = new Set<string>(["9:16-720", "16:9"]);
+
 const LOCAL_DURATIONS = [5, 10, 20, 30, 60] as const;
 const CLOUD_DURATIONS = [5, 10, 15, 30] as const;
 const SLIDESHOW_DURATIONS = [5, 10] as const;
@@ -143,7 +145,8 @@ export function Renders() {
   const [accounts, setAccounts] = useState<AccountOut[]>([]);
   const [backends, setBackends] = useState<RenderBackendOut[]>([]);
   const [prompt, setPrompt] = useState("");
-  const [backend, setBackend] = useState("local");
+  const [backend, setBackend] = useState("auto");
+  const backendDefaultApplied = useRef(false);
   const [accountId, setAccountId] = useState<number | "">("");
   const [frameId, setFrameId] = useState<(typeof FRAME_SIZES)[number]["id"]>("9:16-720");
   const [durationS, setDurationS] = useState<DurationS>(5);
@@ -174,6 +177,24 @@ export function Renders() {
   const highlightRef = useRef<HTMLTableRowElement | null>(null);
 
   const durations = durationChoices(backend, inputMode);
+  const frameSizes =
+    backend === "local"
+      ? FRAME_SIZES.filter((size) => LOCAL_FRAME_IDS.has(size.id))
+      : FRAME_SIZES;
+
+  useEffect(() => {
+    if (backendDefaultApplied.current || backends.length === 0) return;
+    backendDefaultApplied.current = true;
+    const fal = backends.find((item) => item.name === "fal" && item.healthy);
+    if (fal) setBackend("fal");
+  }, [backends]);
+
+  useEffect(() => {
+    if (backend !== "local") return;
+    if (!LOCAL_FRAME_IDS.has(frameId)) {
+      setFrameId("9:16-720");
+    }
+  }, [backend, frameId]);
 
   useEffect(() => {
     const allowed = durationChoices(backend, inputMode);
@@ -432,7 +453,11 @@ export function Renders() {
                 <button
                   key={engine.name}
                   type="button"
-                  title={engine.detail || engine.licence}
+                  title={
+                    engine.name === "local"
+                      ? "10–25 мин на Salad · Wan 480p"
+                      : engine.output_note || engine.detail || engine.licence
+                  }
                   aria-pressed={backend === engine.name}
                   onClick={() => setBackend(engine.name)}
                   className={clsx(
@@ -552,7 +577,7 @@ export function Renders() {
               value={frameId}
               onChange={(e) => setFrameId(e.target.value as (typeof FRAME_SIZES)[number]["id"])}
             >
-              {FRAME_SIZES.map((size) => (
+              {frameSizes.map((size) => (
                 <option key={size.id} value={size.id}>
                   {size.label}
                 </option>
@@ -724,7 +749,9 @@ export function Renders() {
           {slideshowDurationOnly(inputMode)
             ? "Ken Burns: до 10 с. 480p ориентация задаётся размером кадра."
             : backend === "local"
-              ? "Дольше 10 с local собирает из сегментов Wan (общий сид и мягкий переход). 480p: портрет 480×832, альбом 832×480."
+              ? durationS > 10
+                ? "Local >10 с: несколько проходов Wan + склейка — может занять час+. Wan 480p (480×832 / 832×480), не 1080."
+                : "Salad local: обычно 10–25 мин на 5–10 с. Wan 1.3B → 480p (480×832 / 832×480)."
               : backend === "fal"
                 ? "fal снимет 5 или 10 с, ближайшее к выбранному."
                 : "Локальный Wan 1.3B снимает 480p; дольше 10 с — склейка сегментов. Размер выше задаёт ориентацию."}

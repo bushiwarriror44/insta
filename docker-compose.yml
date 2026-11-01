@@ -59,6 +59,7 @@ services:
       OLLAMA_AUTOSTART: "false"
       WORKER_AUTOSTART: "false"
       PLAYWRIGHT_HEADLESS: "true"
+      PLAYWRIGHT_BROWSERS_PATH: "/ms-playwright"
     command: ["run-worker"]
     healthcheck:
       test: ["CMD-SHELL", "python -m app.cli status > /tmp/healthcheck.log 2>&1 || exit 1"]
@@ -88,6 +89,7 @@ services:
       OLLAMA_AUTOSTART: "false"
       WORKER_AUTOSTART: "false"
       PLAYWRIGHT_HEADLESS: "true"
+      PLAYWRIGHT_BROWSERS_PATH: "/ms-playwright"
     env_file:
       - .env
     volumes:

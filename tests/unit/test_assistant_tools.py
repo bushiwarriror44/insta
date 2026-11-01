@@ -294,7 +294,7 @@ def test_enqueue_publish_rejects_path_traversal(db_session, make_account, app_en
     try:
         enqueue_publish(db_session, account_id=account.id, filename="../clip.mp4")
     except ToolError as exc:
-        assert "not found" in str(exc).lower() or "File" in str(exc)
+        assert "не найден" in str(exc).lower()
     else:
         raise AssertionError("expected ToolError")
 
@@ -707,8 +707,14 @@ def test_test_proxies_partial_labels(db_session, make_proxy, monkeypatch):
 
 
 def test_test_connections_two_accounts(db_session, make_account, monkeypatch):
-    from types import SimpleNamespace
+    from datetime import datetime, timezone
 
+    from app.api.schemas import (
+        AccountConnectionTestOut,
+        InstagramAuthStepOut,
+        ProxyHealthStepOut,
+        SessionStorageStepOut,
+    )
     from app.assistant.tools import test_connections
 
     ann = make_account(username="ann")
@@ -716,13 +722,30 @@ def test_test_connections_two_accounts(db_session, make_account, monkeypatch):
 
     def fake_run(account, db, probe_mobile=False):
         ok = account.username == "ann"
-        return SimpleNamespace(
+        return AccountConnectionTestOut(
             username=account.username,
-            overall_ok=ok,
+            proxy_assigned=True,
             proxy_label="px",
-            proxy_health=SimpleNamespace(ok=ok, error=None if ok else "down"),
-            instagram_auth=SimpleNamespace(ok=ok, error=None if ok else "auth"),
+            proxy_health=ProxyHealthStepOut(
+                ok=ok,
+                error=None if ok else "down",
+                instagram_reachable=True,
+            ),
+            session_storage=SessionStorageStepOut(
+                has_session_id=ok,
+                session_file_exists=False,
+                device_file_exists=True,
+                session_source="database" if ok else "none",
+            ),
+            instagram_auth=InstagramAuthStepOut(
+                ok=ok,
+                method="sessionid" if ok else "none",
+                error=None if ok else "auth",
+            ),
+            overall_ok=ok,
+            checked_at=datetime.now(timezone.utc),
             run_id=1,
+            logs=[],
         )
 
     monkeypatch.setattr("app.accounts.connection_test.run_account_connection_test", fake_run)
@@ -736,23 +759,38 @@ def test_test_connections_two_accounts(db_session, make_account, monkeypatch):
 def test_publish_now_does_not_enqueue_when_connection_fails(
     db_session, make_account, monkeypatch
 ):
-    from types import SimpleNamespace
+    from datetime import datetime, timezone
 
     from sqlalchemy import select
 
+    from app.api.schemas import (
+        AccountConnectionTestOut,
+        InstagramAuthStepOut,
+        ProxyHealthStepOut,
+        SessionStorageStepOut,
+    )
     from app.assistant.tools import publish_now
     from app.db.models import PostJob
 
     account = make_account(username="alice")
 
     def fake_run(account, db, probe_mobile=False):
-        return SimpleNamespace(
+        return AccountConnectionTestOut(
             username=account.username,
-            overall_ok=False,
+            proxy_assigned=True,
             proxy_label="px",
-            proxy_health=SimpleNamespace(ok=False, error="proxy down"),
-            instagram_auth=SimpleNamespace(ok=False, error="skip"),
+            proxy_health=ProxyHealthStepOut(ok=False, error="proxy down"),
+            session_storage=SessionStorageStepOut(
+                has_session_id=False,
+                session_file_exists=False,
+                device_file_exists=False,
+                session_source="none",
+            ),
+            instagram_auth=InstagramAuthStepOut(ok=False, method="none", error="skip"),
+            overall_ok=False,
+            checked_at=datetime.now(timezone.utc),
             run_id=1,
+            logs=[],
         )
 
     monkeypatch.setattr("app.accounts.connection_test.run_account_connection_test", fake_run)
@@ -780,8 +818,9 @@ def test_publish_now_enqueues_when_connection_ok(
         return SimpleNamespace(
             username=account.username,
             overall_ok=True,
+            proxy_assigned=True,
             proxy_label="px",
-            proxy_health=SimpleNamespace(ok=True, error=None),
+            proxy_health=SimpleNamespace(ok=True, error=None, geo_mismatch=False),
             instagram_auth=SimpleNamespace(ok=True, error=None),
             run_id=1,
         )
@@ -890,23 +929,43 @@ def test_update_account_session_id_refuses_youtube(db_session, make_account):
 def test_publish_now_youtube_skips_job_without_studio_cookies(
     db_session, make_account, monkeypatch
 ):
-    from types import SimpleNamespace
+    from datetime import datetime, timezone
 
     from sqlalchemy import select
 
+    from app.api.schemas import (
+        AccountConnectionTestOut,
+        InstagramAuthStepOut,
+        ProxyHealthStepOut,
+        SessionStorageStepOut,
+    )
     from app.assistant.tools import publish_now
     from app.db.models import Platform, PostJob
 
     account = make_account(username="ytpub", platform=Platform.youtube)
 
     def fake_run(account, db, probe_mobile=False):
-        return SimpleNamespace(
+        return AccountConnectionTestOut(
             username=account.username,
-            overall_ok=False,
+            proxy_assigned=True,
             proxy_label="px",
-            proxy_health=SimpleNamespace(ok=True, error=None),
-            instagram_auth=SimpleNamespace(ok=False, error="Playwright state не найден"),
+            proxy_health=ProxyHealthStepOut(ok=True, instagram_reachable=False),
+            session_storage=SessionStorageStepOut(
+                has_session_id=False,
+                session_file_exists=False,
+                device_file_exists=False,
+                session_source="none",
+            ),
+            instagram_auth=InstagramAuthStepOut(
+                ok=False,
+                method="none",
+                error="Playwright state не найден",
+                error_code="session_missing",
+            ),
+            overall_ok=False,
+            checked_at=datetime.now(timezone.utc),
             run_id=1,
+            logs=[],
         )
 
     monkeypatch.setattr("app.accounts.connection_test.run_account_connection_test", fake_run)
@@ -934,8 +993,9 @@ def test_publish_now_youtube_enqueues_short(
         return SimpleNamespace(
             username=account.username,
             overall_ok=True,
+            proxy_assigned=True,
             proxy_label="px",
-            proxy_health=SimpleNamespace(ok=True, error=None),
+            proxy_health=SimpleNamespace(ok=True, error=None, geo_mismatch=False),
             instagram_auth=SimpleNamespace(ok=True, error=None),
             run_id=1,
         )
@@ -967,8 +1027,9 @@ def test_publish_now_tiktok_enqueues_post(
         return SimpleNamespace(
             username=account.username,
             overall_ok=True,
+            proxy_assigned=True,
             proxy_label="px",
-            proxy_health=SimpleNamespace(ok=True, error=None),
+            proxy_health=SimpleNamespace(ok=True, error=None, geo_mismatch=False),
             instagram_auth=SimpleNamespace(ok=True, error=None),
             run_id=1,
         )
@@ -1015,8 +1076,9 @@ def test_test_connections_probe_mobile_does_not_abort_studio(
         return SimpleNamespace(
             username=account.username,
             overall_ok=True,
+            proxy_assigned=True,
             proxy_label="px",
-            proxy_health=SimpleNamespace(ok=True, error=None),
+            proxy_health=SimpleNamespace(ok=True, error=None, geo_mismatch=False),
             instagram_auth=SimpleNamespace(ok=True, error=None),
             run_id=1,
         )
@@ -1653,7 +1715,7 @@ def test_diagnose_login_and_proxy_snapshots(
     assert proxies["geo_mismatch"][0]["last_geo_country"] == "DE"
     assert any(row["username"] == "challenged" for row in proxies["accounts_on_unhealthy"])
     assert any("test_proxy" in hint for hint in proxies["hints"])
-    assert any("geo_mismatch" in hint for hint in proxies["hints"])
+    assert any("geo" in hint.lower() for hint in proxies["hints"])
     assert "url" not in proxies["unhealthy"][0]
     assert "session_id" not in login["missing_session"][0]
 
@@ -2061,8 +2123,9 @@ def test_publish_now_auto_approves_when_hold_for_review(
         return SimpleNamespace(
             username=account.username,
             overall_ok=True,
+            proxy_assigned=True,
             proxy_label="px",
-            proxy_health=SimpleNamespace(ok=True, error=None),
+            proxy_health=SimpleNamespace(ok=True, error=None, geo_mismatch=False),
             instagram_auth=SimpleNamespace(ok=True, error=None),
             run_id=1,
         )

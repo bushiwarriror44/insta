@@ -347,6 +347,15 @@ export interface DiagnosticRunOut {
   finished_at: string | null;
 }
 
+export interface AccountUserHintOut {
+  severity: "info" | "warn" | "error";
+  title: string;
+  message: string;
+  steps?: string[];
+  action_key?: string | null;
+  action_label?: string | null;
+}
+
 export interface AccountConnectionTestOut {
   username: string;
   proxy_assigned: boolean;
@@ -358,6 +367,9 @@ export interface AccountConnectionTestOut {
   checked_at: string;
   run_id: number;
   logs: DiagnosticLogLine[];
+  user_hint?: AccountUserHintOut | null;
+  studio_liveness_ok?: boolean | null;
+  studio_liveness_error?: string | null;
 }
 
 export interface FirstLoginOut {
@@ -365,11 +377,13 @@ export interface FirstLoginOut {
   ok: boolean;
   challenge: boolean;
   browser_tab_hint?: boolean;
+  challenge_code_file?: string | null;
   session_imported: boolean;
   connection_test?: AccountConnectionTestOut | null;
   error?: string | null;
   login_debug_available: boolean;
   logs: DiagnosticLogLine[];
+  user_hint?: AccountUserHintOut | null;
 }
 
 export interface MintMobileSessionOut {
@@ -571,6 +585,7 @@ export interface GpuOut {
   stopping_count: number;
   chat_ok: boolean;
   wan_ok: boolean | null;
+  wan_async_ok?: boolean | null;
   detail: string;
   idle_stop_minutes?: number;
   deploy_started_at?: string | null;
@@ -589,6 +604,9 @@ export interface RenderBackendOut {
   supports_i2v?: boolean;
   supports_v2v?: boolean;
   supports_slideshow?: boolean;
+  max_width?: number;
+  max_height?: number;
+  output_note?: string;
 }
 
 export interface MediaAssetOut {

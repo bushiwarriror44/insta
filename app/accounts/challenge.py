@@ -34,6 +34,11 @@ def _code_file(username: str) -> Path:
     return CHALLENGES_DIR / f"{username}.code"
 
 
+def challenge_code_display_path(username: str) -> str:
+    """Project-relative path for UI/CLI hints (no secrets)."""
+    return f"data/challenges/{username}.code"
+
+
 def write_code(username: str, code: str) -> None:
     _code_file(username).write_text(code.strip(), encoding="utf-8")
 
@@ -79,11 +84,14 @@ def make_handler(
     """
 
     def handler(handler_username: str, choice: ChallengeChoice) -> str:
+        # instagrapi may pass login_identifier (email) here; ops drop codes by account username.
+        code_account = username
         logger.warning(
             "challenge.requested",
             username=handler_username,
+            code_account=code_account,
             choice=str(choice),
-            file_to_drop_code=str(_code_file(handler_username)),
+            file_to_drop_code=str(_code_file(code_account)),
         )
         if on_request is not None:
             try:
@@ -108,14 +116,14 @@ def make_handler(
                 logger.info("challenge.code_via_email", username=handler_username)
                 return code
 
-        code = _wait_for_code(handler_username, timeout_sec=timeout_sec)
+        code = _wait_for_code(code_account, timeout_sec=timeout_sec)
         if not code:
-            logger.error("challenge.timeout", username=handler_username)
+            logger.error("challenge.timeout", username=code_account, ig_user=handler_username)
             raise TimeoutError(
-                f"код challenge для {handler_username} не получен за {timeout_sec}с"
+                f"код challenge для {code_account} не получен за {timeout_sec}с"
             )
 
-        logger.info("challenge.code_received", username=handler_username, choice=str(choice))
+        logger.info("challenge.code_received", username=code_account, choice=str(choice))
         return code
 
     return handler

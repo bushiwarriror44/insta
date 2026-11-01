@@ -4,6 +4,7 @@ from app.assistant.chat import (
     _headers,
     _will_wait_render_later,
     build_assistant_thread,
+    merge_operator_message_into_reply,
 )
 from app.config import Settings
 
@@ -60,3 +61,9 @@ def test_build_assistant_thread_attachment_hint():
     assert "ref.png" in thread[0]["content"]
     assert "image_to_video" in thread[0]["content"]
     assert "[вложение: ref.png" in thread[-1]["content"]
+
+
+def test_merge_operator_message_into_reply():
+    assert merge_operator_message_into_reply("Ответ", "Подсказка: шаг") == "Ответ\n\nПодсказка: шаг"
+    assert merge_operator_message_into_reply("", "Подсказка") == "Подсказка"
+    assert merge_operator_message_into_reply("Уже Подсказка", "Подсказка") == "Уже Подсказка"

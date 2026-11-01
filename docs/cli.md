@@ -44,8 +44,11 @@ python -m app.cli add-account --username alice --proxy res-de-1 --timezone Europ
 
 Stealth Playwright, только Instagram: логин/пароль из карточки, прокси обязателен. Эквивалент кнопки автовхода / tool `first_login`.
 
+Опции: `--surface mobile|desktop`, `--verification-code КОД` (email/SMS challenge; альтернатива — `provide-code USER КОД` или файл `data/challenges/<user>.code` во время mint).
+
 ```text
 python -m app.cli first-login alice
+python -m app.cli first-login alice --verification-code 123456
 ```
 
 ### `pause-account USER` / `resume-account USER`
@@ -73,6 +76,10 @@ JSON Android-fingerprint instagrapi на stdout. Нет файла устрой�
 ### `refresh-app-versions`
 
 Пул версий Android-приложения Instagram из JSON (по умолчанию `data/app_versions.json`): список `{version, code}`.
+
+### `sync-device-app-profiles`
+
+Обновляет только `app_version` / `version_code` / UA в `data/devices/device_*.json` (UUID не трогает). Без `--username` — все Instagram-аккаунты в БД.
 
 ### `install-playwright`
 

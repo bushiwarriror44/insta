@@ -41,6 +41,18 @@
 
 После постановки статус `queued`: рендерит **воркер**. В автономном run после `create_render` нужен `wait_render`, иначе `publish_now` упрётся в ещё не готовый файл.
 
+## Сколько ждать (local Salad vs fal)
+
+| Бэкенд | 5 с T2V, типично | Почему |
+| --- | --- | --- |
+| `fal` | ~1–5 мин | Очередь fal.ai, Wan 2.5 в облаке |
+| `local` (Salad Wan 1.3B) | **10–25 мин** на первый клип после cold start; не «5 секунд ролика = 5 секунд генерации» | `t5_cpu`, offload, одна 24 GB карта; см. [`generate_server.py`](../docker/salad-gpu/generate_server.py) |
+| Таймаут воркера | `GENERATION_TIMEOUT_SECONDS` (дефолт в коде **1920 с**, на Salad минимум **1920** = Wan 1800 с + буфер; в `.env.example` **2100**) | Ошибка **`local: таймаут ожидания Wan`** = опрос async-задачи не дождался `done`; UI читает `poll_timeout_ms` из `GET /api/generations/{id}` |
+
+Карточка GPU (`GET /api/gpu`) для `*.salad.cloud`: **`wan_async_ok`** — POST с `X-Async: 1` отвечает **202/409/400**, а не синхронный mp4 (**200** без `job_id`). Если `wan_ok` и `wan_async_ok=false` — обновите Command (`wan-async-patch`) и `generate_server.py` с Utah.
+
+Диагностика с VPS: `curl -sS -X POST "$WAN_BASE_URL" -H 'Content-Type: application/json' -H 'X-Async: 1' -d '{"prompt":"","duration_s":5}'` → **400** или **202** = async API есть; **200** mp4 = старый sync (524 на длинном рендере).
+
 Таблица `/renders`: полоса статусов, селект движка, «Поставить рендер», «Отменить» (только `queued`), «Повторить». Чат: `list_renders`, `cancel_render` (с confirm), `retry_render` (`backend: local` — на Wan), после `create_render` / `generate_wan` — **`wait_render`** (чат занят до done/failed). Что оплачивать и куда: [costs.md](costs.md).
 
 ## Склейка

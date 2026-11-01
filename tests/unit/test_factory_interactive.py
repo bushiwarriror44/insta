@@ -255,6 +255,28 @@ def test_list_generation_backends(api_client, monkeypatch):
     assert "experimental" in fal
 
 
+def test_create_generation_local_blocked_without_async(api_client, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "wan_base_url", "https://gpu.salad.cloud/generate")
+    monkeypatch.setattr(
+        "app.services.gateway_probe.wan_async_capable",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "app.api.routes.factory.get_backend",
+        lambda *_args, **_kwargs: SimpleNamespace(healthcheck=lambda: True),
+    )
+    res = api_client.post(
+        "/api/generations",
+        json={"prompt": "mist", "backend": "local"},
+    )
+    assert res.status_code == 409
+    assert "async API" in res.json()["detail"]
+
+
 def test_api_generations_reference_filename_sanitized(api_client, db_session, monkeypatch):
     from types import SimpleNamespace
 

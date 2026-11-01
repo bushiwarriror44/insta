@@ -106,7 +106,11 @@ export function SaladGpuCard() {
             {loadError
               ? "статус не обновился"
               : gpu.configured
-                ? `Инстансы: работают ${gpu.running_count}, создаются ${gpu.creating_count}, выделяются ${gpu.allocating_count}, останавливаются ${gpu.stopping_count}. Чат ${chatLine(gpu)}.`
+                ? `Инстансы: работают ${gpu.running_count}, создаются ${gpu.creating_count}, выделяются ${gpu.allocating_count}, останавливаются ${gpu.stopping_count}. Чат ${chatLine(gpu)}.${
+                    gpu.wan_ok && gpu.wan_async_ok === false
+                      ? " Wan: нужен async API (Command wan-async-patch + generate_server с Utah)."
+                      : ""
+                  }`
                 : "Ключ и имена группы задаются в .env на админ-VPS."}
           </div>
         </div>

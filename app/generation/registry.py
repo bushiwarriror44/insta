@@ -69,4 +69,8 @@ def describe_backends(settings: Settings | None = None) -> list[dict[str, object
                 "supports_slideshow": bool(getattr(engine, "supports_slideshow", False)),
             }
         )
+        if name == "local" and (settings.wan_base_url or "").strip():
+            rows[-1]["max_width"] = 832
+            rows[-1]["max_height"] = 480
+            rows[-1]["output_note"] = "Wan 1.3B на Salad → 480p (480×832 / 832×480)"
     return rows

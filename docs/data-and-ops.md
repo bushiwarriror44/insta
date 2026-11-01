@@ -33,6 +33,8 @@ Docker: `python -m app.cli` не подменяет compose. Логи серви
 
 **Restore нет в UI и в чате.** HTTP `POST /api/maintenance/backups/restore` с `{"name": "app-….db"}` существует в API, но кнопки и tools его не вызывают. Восстановление вручную: остановить API/воркер, подменить файл БД, поднять процессы. Копии `state.json`, сессий и роликов бэкап **не** включает.
 
+**Перенос аккаунтов на другой сервер (merge):** бандл `.tar.gz` — [`migration-server-merge.md`](migration-server-merge.md), команды `export-migration-bundle` / `import-migration-bundle` (или `scripts/export_migration_bundle.py` / `import_migration_bundle.py`). Не путать с restore всей БД.
+
 Список копий: `GET /api/maintenance/backups`.
 
 ## Диагностика

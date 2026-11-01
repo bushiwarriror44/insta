@@ -30,11 +30,22 @@ from app.db.models import (
 from app.generation.hints import enrich_generation_error
 from app.generation.local_offer import should_offer_local_switch
 from app.generation.registry import available_backends, describe_backends, get_backend
+from app.generation.wan_remote import local_async_required_detail
 from app.agent.sources import SourceError, read_source
 from app.services.clarifications import answer as answer_clarification
 from app.services.clarifications import open_questions
 from app.services.planning import plan_for_channel
 from app.services.retry import NotRetriable, revive
+
+
+def _block_local_without_async(backend: str) -> None:
+    name = (backend or "").strip().lower()
+    if name != "local" or not (settings.wan_base_url or "").strip():
+        return
+    from app.services.gateway_probe import wan_async_capable
+
+    if wan_async_capable(settings) is False:
+        raise HTTPException(status_code=409, detail=local_async_required_detail(settings))
 
 
 def _generation_http_detail(detail: str, backend: str) -> str:
@@ -56,6 +67,7 @@ def _generation_row(job: GenerationJob) -> dict[str, Any]:
         "backend": job.backend,
         "asset_id": job.asset_id,
         "offer_local_switch": should_offer_local_switch(job, settings),
+        "poll_timeout_ms": settings.poll_timeout_ms(),
     }
 
 
@@ -441,6 +453,7 @@ def list_generation_backends() -> list[dict[str, Any]]:
 def create_generation(payload: GenerationCreate, db: Session = Depends(get_db)) -> dict[str, Any]:
     if payload.backend not in available_backends():
         raise HTTPException(status_code=400, detail=f"неизвестный бэкенд {payload.backend!r}")
+    _block_local_without_async(payload.backend)
     if payload.account_id is not None:
         _account(db, payload.account_id)
     from app.generation.base import INPUT_MODE_SLIDESHOW, GenerationError
@@ -541,6 +554,7 @@ def retry_generation(
         if name not in available_backends():
             raise HTTPException(status_code=400, detail=f"неизвестный бэкенд {name!r}")
         job.backend = name
+    _block_local_without_async(job.backend or "")
     from app.generation.base import GenerationError
     from app.services.generation_inputs import ensure_job_references
 

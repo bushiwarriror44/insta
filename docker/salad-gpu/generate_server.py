@@ -11,6 +11,7 @@ import os
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -26,6 +27,8 @@ WAN_TIMEOUT_S = 1800
 lock = threading.Lock()
 jobs_guard = threading.Lock()
 jobs: dict[str, dict[str, object]] = {}
+_cancel_jobs: set[str] = set()
+_running_procs: dict[str, subprocess.Popen] = {}
 app = FastAPI()
 
 
@@ -94,19 +97,54 @@ def _ready() -> None:
         raise HTTPException(503, "Wan weights are missing in this image")
 
 
-def _run(body: Request, work: Path, out: Path) -> None:
-    """Run Wan. Raises HTTPException on failure. Caller holds ``lock``."""
+def _run(body: Request, work: Path, out: Path, *, job_id: str | None = None) -> None:
+    """Run Wan. Raises HTTPException on failure. Caller holds ``lock`` for async jobs."""
+    cmd = _command(body, out)
+    if job_id is None:
+        try:
+            ran = subprocess.run(
+                cmd,
+                cwd=str(WAN_DIR),
+                capture_output=True,
+                text=True,
+                timeout=WAN_TIMEOUT_S,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise HTTPException(504, "wan timed out") from exc
+        if ran.returncode != 0 or not out.is_file() or out.stat().st_size == 0:
+            detail = (ran.stderr or ran.stdout or "wan failed")[-1500:]
+            raise HTTPException(500, detail)
+        return
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(WAN_DIR),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    with jobs_guard:
+        _running_procs[job_id] = proc
+    started = time.monotonic()
     try:
-        ran = subprocess.run(
-            _command(body, out),
-            cwd=str(WAN_DIR),
-            capture_output=True,
-            text=True,
-            timeout=WAN_TIMEOUT_S,
-            check=False,
-        )
+        while proc.poll() is None:
+            if job_id in _cancel_jobs:
+                proc.kill()
+                proc.wait(timeout=30)
+                raise HTTPException(499, "cancelled")
+            if time.monotonic() - started > WAN_TIMEOUT_S:
+                proc.kill()
+                proc.wait(timeout=30)
+                raise HTTPException(504, "wan timed out")
+            time.sleep(0.5)
+        stdout, stderr = proc.communicate(timeout=5)
+        ran = subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
     except subprocess.TimeoutExpired as exc:
+        proc.kill()
         raise HTTPException(504, "wan timed out") from exc
+    finally:
+        with jobs_guard:
+            _running_procs.pop(job_id, None)
     if ran.returncode != 0 or not out.is_file() or out.stat().st_size == 0:
         detail = (ran.stderr or ran.stdout or "wan failed")[-1500:]
         raise HTTPException(500, detail)
@@ -124,7 +162,7 @@ def _render_job(job_id: str, body: Request, work: Path, out: Path) -> None:
     """Background render. ``lock`` is already held by the request that queued us."""
     try:
         _set_job(job_id, status="running")
-        _run(body, work, out)
+        _run(body, work, out, job_id=job_id)
         _set_job(job_id, status="done", path=str(out), work=str(work))
     except HTTPException as exc:
         _Cleanup(work)()
@@ -148,7 +186,13 @@ def _enqueue(body: Request) -> JSONResponse:
     work = Path(tempfile.mkdtemp(prefix="wan-"))
     out = work / "clip.mp4"
     with jobs_guard:
-        jobs[job_id] = {"status": "queued", "error": "", "path": "", "work": str(work)}
+        jobs[job_id] = {
+            "status": "queued",
+            "error": "",
+            "path": "",
+            "work": str(work),
+            "started_at": time.monotonic(),
+        }
     threading.Thread(
         target=_render_job,
         args=(job_id, body, work, out),
@@ -194,16 +238,39 @@ def generate(
         lock.release()
 
 
-@app.get("/generate/jobs/{job_id}")
-def job_status(job_id: str) -> dict[str, str]:
+@app.post("/generate/jobs/{job_id}/cancel")
+def cancel_job(job_id: str) -> dict[str, str]:
     with jobs_guard:
         row = jobs.get(job_id)
         if row is None:
             raise HTTPException(404, "job not found")
+    _cancel_jobs.add(job_id)
+    with jobs_guard:
+        proc = _running_procs.get(job_id)
+    if proc is not None and proc.poll() is None:
+        proc.kill()
+    with jobs_guard:
+        row = jobs.get(job_id)
+        if row is not None and str(row.get("status") or "") in {"queued", "running"}:
+            row.update({"status": "failed", "error": "cancelled"})
+    return {"job_id": job_id, "status": "failed"}
+
+
+@app.get("/generate/jobs/{job_id}")
+def job_status(job_id: str) -> dict[str, object]:
+    with jobs_guard:
+        row = jobs.get(job_id)
+        if row is None:
+            raise HTTPException(404, "job not found")
+        started = row.get("started_at")
+        elapsed_s = 0
+        if isinstance(started, (int, float)):
+            elapsed_s = max(0, int(time.monotonic() - float(started)))
         return {
             "job_id": job_id,
             "status": str(row.get("status") or ""),
             "error": str(row.get("error") or ""),
+            "elapsed_s": elapsed_s,
         }
 
 

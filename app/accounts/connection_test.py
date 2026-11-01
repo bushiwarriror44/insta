@@ -71,6 +71,8 @@ def _finish(
     session_storage: SessionStorageStepOut,
     instagram_auth: InstagramAuthStepOut,
     now: datetime,
+    studio_liveness_ok: bool | None = None,
+    studio_liveness_error: str | None = None,
 ) -> AccountConnectionTestOut:
     status: Literal["ok", "warn", "fail"] = "ok" if overall_ok else "fail"
     if not overall_ok and proxy_health.ok and proxy_health.geo_mismatch:
@@ -87,6 +89,8 @@ def _finish(
         checked_at=now,
         run_id=collector.run_id,
         logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
+        studio_liveness_ok=studio_liveness_ok,
+        studio_liveness_error=studio_liveness_error,
     )
 
 
@@ -96,6 +100,7 @@ def run_account_connection_test(
     db: Session,
     *,
     probe_mobile: bool = False,
+    probe_studio: bool = False,
 ) -> AccountConnectionTestOut:
     """Run proxy + session diagnostics.
 
@@ -271,14 +276,49 @@ def run_account_connection_test(
             f"{_yes_no(playwright_state_path(username, platform).exists())}, "
             f"cookies площадки={_yes_no(has_cookies)}",
         )
+        studio_liveness_ok: bool | None = None
+        studio_liveness_error: str | None = None
         if has_cookies:
             collector.info(
                 "session_probe",
-                "Cookies Studio на диске — живость на сервере не проверялась",
+                "Cookies Studio на диске"
+                + (
+                    " — проверяю живость Studio (headless)"
+                    if probe_studio
+                    else " — живость на сервере не проверялась"
+                ),
             )
             instagram_auth = InstagramAuthStepOut(ok=True, method="playwright")
             overall_ok = True
             summary = "Cookies Studio на диске (живость на сервере не проверялась)"
+            studio_liveness_ok = None
+            studio_liveness_error = None
+            if probe_studio:
+                from app.behavior.studio_playwright import probe_studio_session_liveness
+
+                live = probe_studio_session_liveness(
+                    username=username,
+                    proxy_url=proxy.url,
+                    platform=platform,  # type: ignore[arg-type]
+                    timezone_id=account.timezone or "UTC",
+                )
+                studio_liveness_ok = live.ok
+                studio_liveness_error = live.error
+                if live.ok:
+                    collector.info("studio_liveness", "Studio открылся с cookies на диске")
+                    summary = "Studio принял cookies (liveness ok)"
+                elif live.challenge:
+                    collector.warn(
+                        "studio_liveness",
+                        live.error or "Studio запросил подтверждение",
+                    )
+                    summary = live.error or "Studio challenge"
+                else:
+                    collector.warn(
+                        "studio_liveness",
+                        live.error or "Cookies устарели или Studio просит вход",
+                    )
+                    summary = live.error or "Studio liveness fail"
         else:
             err = (
                 "Playwright state не найден — импортируйте cookies или сохраните сессию в браузере"
@@ -303,6 +343,8 @@ def run_account_connection_test(
             session_storage=session_storage,
             instagram_auth=instagram_auth,
             now=now,
+            studio_liveness_ok=studio_liveness_ok,
+            studio_liveness_error=studio_liveness_error,
         )
 
     if health_error or not snapshot.instagram_reachable:

@@ -21,7 +21,7 @@
 
 | Статус | Смысл |
 | --- | --- |
-| `awaiting_review` | ждёт «Одобрить» (`hold_for_review` + постановка из чата) |
+| `awaiting_review` | ждёт «Одобрить» при `hold_for_review` на аккаунте (любой enqueue: UI, API, чат) |
 | `queued` | воркер заберёт, когда наступит `scheduled_for` |
 | `running` | uniquify + загрузка |
 | `done` | площадка приняла |

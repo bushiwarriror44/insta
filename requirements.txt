@@ -1,4 +1,4 @@
-instagrapi==2.16.25
+instagrapi>=3.0.14,<4
 moviepy==1.0.3
 ffmpeg-python==0.2.0
 imageio-ffmpeg==0.5.1

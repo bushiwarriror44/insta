@@ -16,6 +16,7 @@ import type {
   AccountConnectionTestOut,
   AccountOut,
   AccountSessionUpdate,
+  AccountUserHintOut,
   BrowserSaveOut,
   FirstLoginOut,
   InstagramAuthStepOut,
@@ -26,6 +27,12 @@ import { InstagramBrowserPanel } from "./InstagramBrowserPanel";
 import { Modal } from "./Modal";
 import { useToast } from "../context/ToastContext";
 import { useAuth } from "../context/AuthContext";
+import {
+  hintActionToToast,
+  pushUserHintToast,
+  resolveConnectionHint,
+  resolveFirstLoginHint,
+} from "../lib/accountHints";
 
 type ConnectionMode = "choose" | "auto" | "browser" | "manual";
 
@@ -63,6 +70,43 @@ export function isSessionExpired(auth: Pick<InstagramAuthStepOut, "error" | "err
 
 export const SESSION_EXPIRED_MOBILE_HINT =
   "Мобильный API отклонил web-cookie из Dolphin. Автопостинг возможен через пароль аккаунта (очередь сама войдёт без мёртвого sessionid) или — рекомендуется — один раз нажмите «Подготовить к автопостингу», чтобы создать стабильную мобильную сессию (нужны пароль и при 2FA — TOTP). Проверка только cookies и экспорт в Dolphin не требуют мобильный API.";
+
+function UserHintPanel({
+  hint,
+  onHintAction,
+}: {
+  hint: AccountUserHintOut;
+  onHintAction?: () => void;
+}) {
+  const tone =
+    hint.severity === "error"
+      ? "border-rose-500/50 bg-rose-950/40 text-rose-100"
+      : hint.severity === "warn"
+        ? "border-amber-500/50 bg-amber-950/40 text-amber-100"
+        : "border-sky-500/40 bg-sky-950/30 text-sky-100";
+  return (
+    <div className={`rounded-lg border p-3 text-xs ${tone}`}>
+      <div className="font-medium text-sm">{hint.title}</div>
+      <p className="mt-1 opacity-95">{hint.message}</p>
+      {hint.steps && hint.steps.length > 0 ? (
+        <ol className="mt-2 list-decimal list-inside space-y-1 opacity-90">
+          {hint.steps.map((step) => (
+            <li key={step}>{step}</li>
+          ))}
+        </ol>
+      ) : null}
+      {onHintAction && hint.action_label ? (
+        <button
+          type="button"
+          className="mt-2 text-xs font-medium underline decoration-dotted underline-offset-2 hover:opacity-100 opacity-90"
+          onClick={onHintAction}
+        >
+          {hint.action_label}
+        </button>
+      ) : null}
+    </div>
+  );
+}
 
 export function SessionSetupModal({ account, open, onClose, onCompleted }: Props) {
   const { push } = useToast();
@@ -174,10 +218,19 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
       if (data.connection_test) {
         setConnectionResult(data.connection_test);
       }
+      const hint = resolveFirstLoginHint(data);
+      const hintCallbacks = {
+        onOpenSessionBrowser: () => setConnectionMode("browser"),
+      };
       if (data.ok) {
         push(`@${account.username}: сессия создана`, "success");
+      } else if (hint) {
+        pushUserHintToast(hint, push, hintCallbacks);
+        if (data.challenge) {
+          setConnectionMode("browser");
+        }
       } else if (data.challenge) {
-        push("Требуется подтверждение — переключитесь на вход через браузер", "error");
+        push("Требуется подтверждение — переключитесь на вход через браузер", "info");
         setConnectionMode("browser");
       } else {
         push(data.error ?? "Автовход не удался", "error");
@@ -224,6 +277,11 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
     firstLoginResult?.logs ??
     firstLoginResult?.connection_test?.logs ??
     [];
+
+  const activeHint =
+    (firstLoginResult && resolveFirstLoginHint(firstLoginResult)) ||
+    (connectionResult && resolveConnectionHint(connectionResult)) ||
+    null;
 
   const showBack = connectionMode !== "choose" && !success;
   const platform = account?.platform ?? "instagram";
@@ -423,16 +481,44 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
             </p>
             ) : null}
             {firstLoginResult?.challenge ? (
-              <div className="rounded-lg border border-amber-500/50 bg-amber-950/40 p-3 text-xs text-amber-100">
-                {isIg ? "Instagram" : studioLabel} запросил подтверждение.{" "}
-                <button
-                  type="button"
-                  className="underline hover:text-amber-50"
-                  onClick={() => setConnectionMode("browser")}
-                >
-                  Перейти к входу через браузер
-                </button>
+              <div className="rounded-lg border border-amber-500/50 bg-amber-950/40 p-3 text-xs text-amber-100 space-y-2">
+                <p>
+                  {isIg ? "Instagram" : studioLabel} запросил подтверждение.{" "}
+                  <button
+                    type="button"
+                    className="underline hover:text-amber-50"
+                    onClick={() => setConnectionMode("browser")}
+                  >
+                    Перейти к входу через браузер
+                  </button>
+                </p>
+                {isIg && account ? (
+                  <p className="font-mono text-[11px] text-amber-200/90">
+                    Код:{" "}
+                    <span className="text-amber-50">
+                      {firstLoginResult.challenge_code_file ??
+                        `data/challenges/${account.username}.code`}
+                    </span>
+                    {" · "}
+                    CLI:{" "}
+                    <span className="text-amber-50">
+                      python -m app.cli provide-code {account.username} КОД
+                    </span>
+                    {" · "}
+                    first-login --verification-code КОД
+                  </p>
+                ) : null}
               </div>
+            ) : null}
+            {activeHint ? (
+              <UserHintPanel
+                hint={activeHint}
+                onHintAction={
+                  hintActionToToast(activeHint, {
+                    onOpenSessionBrowser: () => setConnectionMode("browser"),
+                  })?.onClick
+                }
+              />
             ) : null}
           </div>
         ) : connectionMode === "browser" ? (
@@ -504,7 +590,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
         )}
 
         {firstLoginResult?.login_debug_available && loginDebugUrl ? (
-          <div className="space-y-2">
+          <div className="space-y-2" id="login-debug-screenshot">
             <div className="text-xs font-medium text-slate-400 uppercase tracking-wide">
               Скриншот браузера при ошибке
             </div>

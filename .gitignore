@@ -4,7 +4,9 @@
 !.env.example
 frontend/.env
 frontend/.env.*
+frontend/.env.*
 !frontend/.env.example
+accounts/
 
 # --- Python ---
 __pycache__/

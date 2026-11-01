@@ -40,7 +40,7 @@ def test_generate_fingerprint_armenia(app_env):
     assert fp.locale in ("hy_AM", "en_AM")
     assert fp.timezone_offset == 14400
     ds = fp.settings["device_settings"]
-    assert ds["app_version"] in {"428.0.0.47.67", "446.0.0.49.77", "448.0.0.0.20"}
+    assert ds["app_version"] in {"446.0.0.49.77", "448.0.0.0.20", "449.0.0.52.84"}
 
 
 def test_generate_fingerprint_uuids_unique(app_env):
@@ -167,3 +167,19 @@ def test_rotate_session_uuids_changes_only_session_ids(app_env):
     assert after["phone_id"] == before["phone_id"]
     assert after["uuid"] == before["uuid"]
     assert after["family_device_id"] == before["family_device_id"]
+
+
+def test_patch_device_app_profile_keeps_uuids(app_env):
+    from app.accounts.device_factory import patch_device_app_profile
+
+    fp = generate_fingerprint("US")
+    uuids_before = dict(fp.settings["uuids"])
+    assert patch_device_app_profile(
+        fp,
+        app_version="449.0.0.52.84",
+        version_code="1079242191",
+        bloks_versioning_id="abc",
+    )
+    assert fp.settings["uuids"] == uuids_before
+    assert fp.settings["device_settings"]["app_version"] == "449.0.0.52.84"
+    assert "449.0.0.52.84" in fp.user_agent

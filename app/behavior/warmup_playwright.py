@@ -305,10 +305,20 @@ async def _human_type_first_match(page, selectors: list[str], text: str, *, clic
     raise RuntimeError("поля формы входа не найдены")
 
 
+async def _locator_is_visible(loc) -> bool:
+    try:
+        if await loc.count() == 0:
+            return False
+        return await loc.is_visible()
+    except Exception:
+        return False
+
+
 async def _first_visible_selector(page, selectors: list[str]) -> str | None:
     for selector in selectors:
         try:
-            if await page.locator(selector).first.count() > 0:
+            loc = page.locator(selector).first
+            if await _locator_is_visible(loc):
                 return selector
         except Exception:
             continue
@@ -324,7 +334,7 @@ async def _login_field_locator(page, *, password: bool = False):
     if found:
         loc = page.locator(found).first
         try:
-            await loc.wait_for(state="visible", timeout=3000)
+            await loc.wait_for(state="visible", timeout=10_000)
             return loc
         except Exception:
             pass
@@ -332,8 +342,8 @@ async def _login_field_locator(page, *, password: bool = False):
     for label in labels:
         try:
             loc = page.get_by_label(label, exact=False).first
-            if await loc.count() > 0:
-                await loc.wait_for(state="visible", timeout=3000)
+            if await _locator_is_visible(loc):
+                await loc.wait_for(state="visible", timeout=10_000)
                 return loc
         except Exception:
             continue
@@ -341,8 +351,8 @@ async def _login_field_locator(page, *, password: bool = False):
     for label in labels:
         try:
             loc = page.get_by_placeholder(label, exact=False).first
-            if await loc.count() > 0:
-                await loc.wait_for(state="visible", timeout=3000)
+            if await _locator_is_visible(loc):
+                await loc.wait_for(state="visible", timeout=10_000)
                 return loc
         except Exception:
             continue
@@ -350,20 +360,22 @@ async def _login_field_locator(page, *, password: bool = False):
     if not password:
         try:
             loc = page.get_by_role("textbox").first
-            if await loc.count() > 0:
-                await loc.wait_for(state="visible", timeout=3000)
+            if await _locator_is_visible(loc):
+                await loc.wait_for(state="visible", timeout=10_000)
                 return loc
         except Exception:
             pass
     else:
         try:
             loc = page.get_by_role("textbox", name=re.compile("password|парол", re.I)).first
-            if await loc.count() > 0:
+            if await _locator_is_visible(loc):
+                await loc.wait_for(state="visible", timeout=10_000)
                 return loc
         except Exception:
             try:
                 loc = page.locator('input[type="password"]').first
-                if await loc.count() > 0:
+                if await _locator_is_visible(loc):
+                    await loc.wait_for(state="visible", timeout=10_000)
                     return loc
             except Exception:
                 pass
@@ -436,6 +448,32 @@ async def _ensure_login_page(page, *, fast: bool = False) -> None:
                 return
         await asyncio.sleep(poll_sleep)
 
+    if await _detect_challenge(page):
+        return
+
+    try:
+        await page.goto(
+            "https://www.instagram.com/",
+            wait_until="domcontentloaded",
+            timeout=45_000 if not fast else 25_000,
+        )
+        await _human_wait(*post_nav_wait)
+        await _accept_cookie_banner(page)
+        for sel in _LOG_IN_LINK_SELECTORS:
+            try:
+                loc = page.locator(sel).first
+                if await loc.count() > 0:
+                    await loc.click(timeout=5000)
+                    await _human_wait(*link_wait)
+                    await _accept_cookie_banner(page)
+                    break
+            except Exception:
+                continue
+        if await _wait_login_inputs(page, 12_000) and await _login_form_visible(page):
+            return
+    except Exception:
+        pass
+
     raise RuntimeError(
         f"поля формы входа не найдены (url={page.url!r}, title={await page.title()!r})"
     )
@@ -458,17 +496,23 @@ async def _accept_cookie_banner(page) -> None:
         'button:has-text("Allow all")',
         'button:has-text("Allow essential and optional cookies")',
         'button:has-text("Accept all")',
+        'button:has-text("Only allow essential cookies")',
+        'button:has-text("Decline optional cookies")',
         'button:has-text("Akzeptieren")',
         'button:has-text("Alle akzeptieren")',
         'button:has-text("Принять")',
         'button:has-text("Принять все")',
+        'button:has-text("Разрешить все")',
+        'button:has-text("Разрешить все cookie")',
         'button:has-text("Aceptar")',
         'button:has-text("Aceptar todo")',
+        '[role="button"]:has-text("Allow all")',
+        '[role="button"]:has-text("Принять все")',
     ]
     for sel in selectors:
         try:
             loc = page.locator(sel).first
-            if await loc.count() > 0:
+            if await _locator_is_visible(loc):
                 await loc.click(timeout=3000)
                 await _human_wait(0.5, 1.4)
                 return
@@ -874,10 +918,23 @@ async def _is_logged_in(context, page) -> bool:
     return _has_auth_cookies(cookies)
 
 
-def playwright_browsers_available() -> bool:
-    root = Path(settings.playwright_browsers_path if hasattr(settings, "playwright_browsers_path") else "/ms-playwright")
+def _playwright_browsers_root() -> Path:
     import os
-    root = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", str(root)))
+
+    env = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if env:
+        return Path(env)
+    if hasattr(settings, "playwright_browsers_path"):
+        return Path(settings.playwright_browsers_path)
+    if os.name == "nt":
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            return Path(local) / "ms-playwright"
+    return Path("/ms-playwright")
+
+
+def playwright_browsers_available() -> bool:
+    root = _playwright_browsers_root()
     try:
         return root.exists() and any(root.iterdir())
     except OSError:
@@ -995,21 +1052,42 @@ async def _async_first_login(
                 logger.warning("playwright.stealth_failed", error=str(exc))
 
         try:
-            await page.goto(_INSTAGRAM_LOGIN_URL, wait_until="load", timeout=60000)
+            await _ensure_login_page(page)
         except Exception as exc:
-            logger.error("playwright.goto_failed", error=str(exc))
+            if await _detect_challenge(page):
+                logger.info("playwright.challenge_on_login_page", username=username, url=page.url)
+            elif not await _is_logged_in(context, page):
+                logger.error("playwright.goto_failed", error=str(exc))
+                if await _save_login_debug(page, username):
+                    login_debug_saved = True
+                await context.close()
+                await browser.close()
+                return FirstLoginResult(
+                    ok=False,
+                    error=str(exc),
+                    login_debug_saved=login_debug_saved,
+                    page_url=page.url,
+                )
+
+        if await _detect_challenge(page):
+            logger.warning("playwright.challenge_before_credentials", username=username)
+            if await _save_login_debug(page, username):
+                login_debug_saved = True
             await context.close()
             await browser.close()
-            return FirstLoginResult(ok=False, error=str(exc))
+            return FirstLoginResult(
+                ok=False,
+                challenge=True,
+                error="нужен challenge",
+                login_debug_saved=login_debug_saved,
+                page_url=page.url,
+            )
 
-        await _human_wait(2.0, 4.0)
-        await _accept_cookie_banner(page)
         await _human_wait(0.6, 1.4)
 
         already_logged_in = await _is_logged_in(context, page)
         if not already_logged_in:
             try:
-                await _ensure_login_page(page)
                 await _simulate_pre_login_behavior(page, surface=surface)
                 await _fill_login_field(page, password=False, text=login_id)
                 await _human_wait(0.9, 2.0)

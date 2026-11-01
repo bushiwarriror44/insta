@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from app.config import Settings, get_settings
+from app.generation.wan_limits import effective_generation_timeout
 from app.generation.base import GenerationError
 
 LOCK_NAME = "gpu_slot.lock"
@@ -52,7 +53,7 @@ def hold_for_video(settings: Settings | None = None) -> Iterator[None]:
     settings = settings or get_settings()
     path = lock_path(settings)
     path.parent.mkdir(parents=True, exist_ok=True)
-    stale_s = max(120.0, float(settings.generation_timeout_seconds) + 120.0)
+    stale_s = max(120.0, effective_generation_timeout(settings) + 120.0)
     payload = json.dumps(
         {"reason": REASON_VIDEO, "ts": time.time(), "stale_s": stale_s},
         ensure_ascii=False,
