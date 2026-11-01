@@ -40,11 +40,21 @@ python -m app.cli add-proxy --label res-de-1 --url http://USER:PASS@HOST:PORT --
 python -m app.cli add-account --username alice --proxy res-de-1 --timezone Europe/Berlin
 ```
 
+### `studio-login USER`
+
+YouTube/TikTok Studio: headless вход с **email и паролем из строки аккаунта в БД** (поле `email` для Google, `password` обязателен). Прокси обязателен.
+
+`--force` — удалить `data/playwright/<platform>/USER/state.json` и не пропускать вход из‑за старых cookies.
+
+```text
+docker compose exec reels-api python -m app.cli studio-login AuraBluekudsv --force
+```
+
 ### `first-login USER`
 
-Stealth Playwright, только Instagram: логин/пароль из карточки, прокси обязателен. Эквивалент кнопки автовхода / tool `first_login`.
+Stealth Playwright: для **Instagram** — логин из карточки; для **YouTube/TikTok** — то же, что `studio-login` (без `--force`).
 
-Опции: `--surface mobile|desktop`, `--verification-code КОД` (email/SMS challenge; альтернатива — `provide-code USER КОД` или файл `data/challenges/<user>.code` во время mint).
+Опции: `--verification-code КОД` (Instagram challenge).
 
 ```text
 python -m app.cli first-login alice

@@ -74,6 +74,26 @@ def clear_playwright_state(username: str) -> bool:
     return True
 
 
+def clear_studio_playwright_state(username: str, platform: str) -> bool:
+    """Remove YouTube/TikTok Playwright state so headless login runs again."""
+    if platform not in _STUDIO_PLATFORMS:
+        return False
+    removed = False
+    candidates = (
+        _scoped_playwright_state_path(username, platform),
+        _legacy_playwright_state_path(username),
+    )
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            path.unlink()
+            removed = True
+        except OSError:
+            continue
+    return removed
+
+
 def _load_playwright_state_data(username: str) -> dict | None:
     path = playwright_state_path(username)
     if not path.exists():

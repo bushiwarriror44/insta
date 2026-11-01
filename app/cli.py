@@ -352,6 +352,67 @@ def cmd_install_playwright(
     console.print(f"[green]Браузер Playwright установлен:[/green] {browser}")
 
 
+def _account_platform_name(account) -> str:
+    platform = getattr(account, "platform", None)
+    if platform is None:
+        return "instagram"
+    return getattr(platform, "value", platform) or "instagram"
+
+
+@app.command("studio-login")
+def cmd_studio_login(
+    username: str,
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Удалить cookies Studio на диске и выполнить вход заново (email/пароль из БД)",
+    ),
+) -> None:
+    """Headless YouTube/TikTok Studio login using email and password from the account row."""
+    _bootstrap()
+    from app.accounts.playwright_session import clear_studio_playwright_state
+    from app.accounts.studio_login_service import run_studio_login
+
+    with SessionLocal() as db:
+        account = db.scalar(select(Account).where(Account.username == username))
+        if account is None:
+            console.print(f"[red]Аккаунт {username} не найден[/red]")
+            raise typer.Exit(code=1)
+        platform = _account_platform_name(account)
+        if platform not in ("youtube", "tiktok"):
+            console.print(
+                f"[red]studio-login только для YouTube/TikTok (у {username} платформа {platform})[/red]"
+            )
+            raise typer.Exit(code=1)
+        if not account.proxy_id:
+            console.print(f"[red]У аккаунта {username} нет прокси[/red]")
+            raise typer.Exit(code=1)
+        if not (account.password or "").strip():
+            console.print(
+                "[red]Пароль не задан в БД — обновите через add-account[/red]"
+            )
+            raise typer.Exit(code=1)
+        if force:
+            if clear_studio_playwright_state(username, platform):
+                console.print("[dim]Старые cookies Studio удалены — вход с данными из БД[/dim]")
+            else:
+                console.print("[dim]Файл cookies Studio не найден — выполняю вход[/dim]")
+        out = run_studio_login(account, db)
+        if out.ok:
+            console.print(f"[green]Studio-вход для {username} ({platform}) выполнен[/green]")
+            return
+        if out.challenge or out.browser_tab_hint:
+            console.print(
+                f"[yellow]Нужно подтверждение (2FA/CAPTCHA) — откройте «Браузер» в панели "
+                f"для @{username}[/yellow]"
+            )
+        console.print(
+            f"[yellow]Studio-вход для {username} не завершён. "
+            f"{out.error or 'Смотрите логи.'}[/yellow]"
+        )
+        raise typer.Exit(code=1)
+
+
 @app.command("first-login")
 def cmd_first_login(
     username: str,
@@ -365,6 +426,7 @@ def cmd_first_login(
     _bootstrap()
     from app.accounts.challenge import write_code
     from app.accounts.first_login_service import run_account_first_login
+    from app.accounts.studio_login_service import run_studio_login
 
     if verification_code:
         write_code(username, verification_code)
@@ -380,7 +442,11 @@ def cmd_first_login(
                 f"[red]У аккаунта {username} нет прокси. Первый вход заблокирован.[/red]"
             )
             raise typer.Exit(code=1)
-        out = run_account_first_login(account, db)
+        platform = _account_platform_name(account)
+        if platform in ("youtube", "tiktok"):
+            out = run_studio_login(account, db)
+        else:
+            out = run_account_first_login(account, db)
         if out.ok:
             console.print(f"[green]Первый вход для {username} выполнен[/green]")
             return

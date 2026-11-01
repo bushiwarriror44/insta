@@ -400,6 +400,35 @@ def test_first_login_cli_uses_service(cli_app, db_session, make_account, monkeyp
     assert called["id"] == account.id
 
 
+def test_studio_login_cli_force_and_service(cli_app, db_session, make_account, monkeypatch, app_env):
+    from app.db import Platform
+    from app.api.schemas import FirstLoginOut
+
+    account = make_account(
+        username="ytcli",
+        password="google-pass",
+        email="yt@example.com",
+        platform=Platform.youtube,
+    )
+    called: dict = {}
+
+    def _fake(acc, db, **kwargs):
+        called["username"] = acc.username
+        called["password"] = acc.password
+        return FirstLoginOut(run_id=1, ok=True, session_imported=True, logs=[])
+
+    monkeypatch.setattr("app.accounts.studio_login_service.run_studio_login", _fake)
+    state_dir = app_env.tmp_path / "playwright" / "youtube" / "ytcli"
+    state_dir.mkdir(parents=True)
+    (state_dir / "state.json").write_text('{"cookies":[]}', encoding="utf-8")
+
+    result = runner.invoke(cli_app, ["studio-login", "ytcli", "--force"])
+    assert result.exit_code == 0, result.stdout
+    assert called["username"] == "ytcli"
+    assert called["password"] == "google-pass"
+    assert not (state_dir / "state.json").exists()
+
+
 def test_ask_invokes_assistant_with_browser(cli_app, monkeypatch):
     from app.assistant.chat import Answer
 

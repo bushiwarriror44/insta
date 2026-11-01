@@ -2,6 +2,7 @@
 import json
 
 from app.accounts.playwright_session import (
+    clear_studio_playwright_state,
     cookie_names_from_playwright_state,
     import_playwright_session_to_account,
     sessionid_from_playwright_state,
@@ -87,3 +88,12 @@ def test_import_playwright_session_with_explicit_session_id(db_session, make_acc
     assert import_playwright_session_to_account(db_session, account, session_id=sid) is True
     db_session.refresh(account)
     assert account.session_id == sid
+
+
+def test_clear_studio_playwright_state_removes_scoped_file(app_env):
+    scoped = app_env.tmp_path / "playwright" / "youtube" / "yt1" / "state.json"
+    scoped.parent.mkdir(parents=True)
+    scoped.write_text('{"cookies":[]}', encoding="utf-8")
+    assert clear_studio_playwright_state("yt1", "youtube") is True
+    assert not scoped.exists()
+    assert clear_studio_playwright_state("yt1", "youtube") is False
