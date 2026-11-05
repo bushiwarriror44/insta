@@ -788,7 +788,7 @@ async def test_open_studio_urls_sets_warning_on_blank(monkeypatch):
 
 
 def test_browser_launch_args_studio_disables_quic_not_gpu():
-    from app.behavior.playwright_surface import browser_launch_args
+    from app.behavior.playwright_surface import browser_launch_args, studio_vnc_launch_args
 
     args = browser_launch_args(
         "desktop",
@@ -797,6 +797,31 @@ def test_browser_launch_args_studio_disables_quic_not_gpu():
     )
     assert "--disable-quic" in args
     assert "--disable-gpu" not in args
+
+    vnc_args = studio_vnc_launch_args((1024, 640))
+    assert "--disable-quic" in vnc_args
+    assert "--disable-background-networking" not in vnc_args
+
+
+@pytest.mark.asyncio
+async def test_probe_studio_https_via_proxy_aggregates_targets(monkeypatch):
+    import app.browser.session_manager as sm
+
+    calls: list[str] = []
+
+    async def fake_probe(_proxy: str, url: str, *, timeout_sec: float = 25.0):
+        calls.append(url)
+        if "studio.youtube.com" in url:
+            return True, "HTTP 200"
+        return False, "ConnectTimeout"
+
+    monkeypatch.setattr(sm, "_probe_https_via_proxy", fake_probe)
+
+    rows = await sm.probe_studio_https_via_proxy("http://u:p@1.2.3.4:8080", timeout_sec=10.0)
+    assert len(rows) == 2
+    assert rows[0] == ("studio.youtube.com", True, "HTTP 200")
+    assert rows[1] == ("accounts.google.com", False, "ConnectTimeout")
+    assert len(calls) == 2
 
 
 @pytest.mark.asyncio

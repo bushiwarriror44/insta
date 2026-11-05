@@ -84,11 +84,14 @@ Instagram-app User-Agent в Chromium Studio **не** подставляется.
 
 YouTube/TikTok в VNC: при старте открывается Studio (ladder: Studio → Google accounts при fail). Если страница пустая — в UI будет **warning**; кнопки «Открыть Studio» / «Google автозаполнение». Навигация идёт **в фоне** — noVNC подключается до завершения `goto`. `browser-vnc-diag` в `docker compose exec` **не видит** in-memory сессию API — смотрите `GET .../browser/status`.
 
-Проверка прокси на Google с VPS:
+Проверка прокси на Google с VPS (URL прокси из БД, без ручной подстановки USER/PASS):
 
 ```bash
-curl -x 'http://USER:PASS@HOST:PORT' -I --max-time 25 https://studio.youtube.com
+bash deploy/proxy-studio-check.sh
+docker compose exec reels-api python -m app.cli proxy-studio-check AuraBluekudsv
 ```
+
+Эквивалент двух `curl -x … -I` на `studio.youtube.com` и `accounts.google.com`. При FAIL — смените прокси или IP; VNC не поможет.
 
 Docker: для Studio в `reels-api` рекомендуется **≥2 GB** `mem_limit` (см. `docker-compose.yml`).
 

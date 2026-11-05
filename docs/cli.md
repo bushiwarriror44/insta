@@ -175,4 +175,18 @@ bash deploy/browser-vnc-check.sh alice
 bash deploy/browser-vnc-check.sh alice --start
 ```
 
+Секция **5b** в `browser-vnc-check.sh` автоматически гоняет те же HEAD-проверки.
+
+### `proxy-studio-check [USERNAME]`
+
+HEAD `https://studio.youtube.com` и `https://accounts.google.com` через прокси аккаунта из панели (как `curl -x`, без ручной подстановки). Без аргумента — `--imported-only` (YouTube/TikTok на `am-mobile-*`).
+
+```text
+bash deploy/proxy-studio-check.sh
+python -m app.cli proxy-studio-check --imported-only
+python -m app.cli proxy-studio-check AuraBluekudsv --timeout 45
+```
+
+Код выхода `1`, если хотя бы один URL не ответил (таймаут, 403, 502 и т.д.) — смените mobile-IP/прокси до VNC.
+
 Дальше: [data-and-ops.md](data-and-ops.md).

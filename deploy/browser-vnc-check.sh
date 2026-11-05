@@ -188,6 +188,17 @@ else
   printf '  @%s\n' "${TARGET_USERS[@]}"
 fi
 
+PROBE_FAIL=0
+section "5b. Google/Studio HTTPS via proxy (from DB — no manual curl -x)"
+if [[ -n "$USERNAME" ]]; then
+  docker compose exec -T reels-api python -m app.cli proxy-studio-check "$USERNAME" || PROBE_FAIL=1
+else
+  docker compose exec -T reels-api python -m app.cli proxy-studio-check --imported-only || PROBE_FAIL=1
+fi
+if [[ "$PROBE_FAIL" -eq 1 ]]; then
+  echo "WARN: probe FAIL — смените прокси/IP для Google/Studio; VNC не исправит таймаут/403/502."
+fi
+
 if [[ "$DO_START" -eq 1 ]]; then
   START_USER="${USERNAME:-${TARGET_USERS[0]}}"
   section "6. POST browser/start"

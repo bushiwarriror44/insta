@@ -944,6 +944,88 @@ def cmd_browser_vnc_diag(
     console.print("  sudo nginx -t && sudo systemctl reload nginx")
 
 
+@app.command("proxy-studio-check")
+def cmd_proxy_studio_check(
+    username: Optional[str] = typer.Argument(
+        None,
+        help="Account username; default — all YouTube/TikTok with proxy (or --imported-only)",
+    ),
+    imported_only: bool = typer.Option(
+        False,
+        "--imported-only",
+        help="Only accounts on am-mobile-* proxies",
+    ),
+    timeout: int = typer.Option(30, "--timeout", min=5, max=120, help="Seconds per URL"),
+) -> None:
+    """HEAD https://studio.youtube.com and accounts.google.com via each account's proxy (like curl -x)."""
+    _bootstrap()
+    import asyncio
+
+    from app.accounts.studio_login_service import list_studio_accounts
+    from app.browser.session_manager import probe_studio_https_via_proxy
+    from app.db import Account, Platform, Proxy
+    from app.proxies.pool import _mask
+
+    async def _run() -> int:
+        fail_count = 0
+        with SessionLocal() as db:
+            if username:
+                account = db.scalar(select(Account).where(Account.username == username))
+                if account is None:
+                    console.print(f"[red]Аккаунт «{username}» не найден[/red]")
+                    return 1
+                accounts = [account]
+            elif imported_only:
+                accounts = list_studio_accounts(db, imported_only=True)
+            else:
+                accounts = list(
+                    db.scalars(
+                        select(Account)
+                        .where(Account.proxy_id.isnot(None))
+                        .where(Account.platform.in_([Platform.youtube, Platform.tiktok]))
+                        .order_by(Account.platform, Account.username)
+                    ).all()
+                )
+            if not accounts:
+                console.print("[yellow]Нет аккаунтов для проверки[/yellow]")
+                return 1
+
+            seen_proxy: set[int] = set()
+            for account in accounts:
+                if account.proxy_id is None:
+                    console.print(f"[yellow]SKIP[/yellow] @{account.username} — нет прокси")
+                    continue
+                proxy = db.get(Proxy, account.proxy_id)
+                if proxy is None:
+                    continue
+                plat = getattr(account.platform, "value", account.platform)
+                masked = _mask(proxy.url)
+                if proxy.id in seen_proxy:
+                    console.print(
+                        f"[dim]SKIP[/dim] @{account.username} ({plat}) — прокси {proxy.label} уже проверен"
+                    )
+                    continue
+                seen_proxy.add(proxy.id)
+                console.print(
+                    f"\n[bold]@{account.username}[/bold] ({plat}) proxy={proxy.label} {masked}"
+                )
+                rows = await probe_studio_https_via_proxy(proxy.url, timeout_sec=float(timeout))
+                for host, ok, detail in rows:
+                    tag = "[green]OK[/green]" if ok else "[red]FAIL[/red]"
+                    console.print(f"  {tag}  {host}  {detail}")
+                    if not ok:
+                        fail_count += 1
+        if fail_count:
+            console.print(
+                f"\n[yellow]Итого FAIL: {fail_count}[/yellow] — смените прокси/IP для Google/Studio"
+            )
+            return 1
+        console.print("\n[green]Все проверки HTTPS прошли[/green]")
+        return 0
+
+    raise typer.Exit(asyncio.run(_run()))
+
+
 def shutil_which(cmd: str) -> str | None:
     import shutil
 

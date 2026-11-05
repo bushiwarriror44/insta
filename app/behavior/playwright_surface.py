@@ -84,6 +84,19 @@ def browser_launch_args(
     return args
 
 
+def studio_vnc_launch_args(desktop_geometry: tuple[int, int] | None = None) -> list[str]:
+    """Minimal Chromium flags for headed Studio — aligned with headless studio_login (no lightweight extras)."""
+    w, h = _resolve_desktop_geometry(desktop_geometry)
+    return [
+        "--disable-blink-features=AutomationControlled",
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-quic",
+        f"--window-size={w},{h}",
+        "--window-position=0,0",
+    ]
+
+
 def vnc_screen_size(
     surface: LoginSurface,
     *,

@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
 
+import httpx
 from sqlalchemy.orm import Session
 
 from app.accounts.backup_codes import consume_next_backup_code
@@ -48,6 +49,7 @@ from app.behavior.playwright_surface import (
     browser_launch_args,
     playwright_context_kwargs,
     resolve_playwright_surface,
+    studio_vnc_launch_args,
     vnc_screen_size,
 )
 from app.browser.vnc_stack import VncStack, allocate_ports, vnc_stack_available
@@ -139,6 +141,25 @@ def _is_on_instagram(url: str | None) -> bool:
 _YOUTUBE_STUDIO_URL = "https://studio.youtube.com"
 _TIKTOK_STUDIO_URL = "https://www.tiktok.com/tiktokstudio/upload"
 _GOOGLE_ACCOUNTS_URL = "https://accounts.google.com/"
+
+# HEAD probes (same as ``curl -x PROXY -I`` from the API container).
+STUDIO_HTTPS_PROBE_TARGETS: tuple[tuple[str, str], ...] = (
+    ("studio.youtube.com", "https://studio.youtube.com/"),
+    ("accounts.google.com", "https://accounts.google.com/"),
+)
+
+
+async def probe_studio_https_via_proxy(
+    proxy_url: str,
+    *,
+    timeout_sec: float = 30.0,
+) -> list[tuple[str, bool, str]]:
+    """Return (host_label, ok, detail) for each Studio/Google probe URL."""
+    out: list[tuple[str, bool, str]] = []
+    for label, url in STUDIO_HTTPS_PROBE_TARGETS:
+        ok, detail = await _probe_https_via_proxy(proxy_url, url, timeout_sec=timeout_sec)
+        out.append((label, ok, detail))
+    return out
 
 
 def _studio_url_ladder(platform: str) -> list[str]:
@@ -343,6 +364,24 @@ def _warning_from_proxy_preflight(
     return _goto_warning_message(login_http_status)
 
 
+async def _probe_https_via_proxy(proxy_url: str, target_url: str, *, timeout_sec: float = 25.0) -> tuple[bool, str]:
+    """HEAD through proxy — same path as ``curl -x`` from the API container."""
+
+    def _run() -> tuple[bool, str]:
+        try:
+            with httpx.Client(
+                proxy=proxy_url,
+                timeout=timeout_sec,
+                follow_redirects=True,
+            ) as client:
+                response = client.head(target_url)
+                return True, f"HTTP {response.status_code}"
+        except Exception as exc:  # noqa: BLE001
+            return False, str(exc).replace("\n", " ")[:220]
+
+    return await asyncio.to_thread(_run)
+
+
 _STUDIO_NAV_TIMEOUT_MS = 90_000
 
 
@@ -369,36 +408,36 @@ async def _try_goto_studio_url(
     page.on("response", on_response)
     last_exc: Exception | None = None
     try:
-        for wait_until in ("domcontentloaded", "commit"):
-            nav_status["wait_until"] = wait_until
-            try:
-                await page.goto(url, wait_until=wait_until, timeout=timeout_ms)
-                logger.info(
-                    "browser_session.studio_goto_ok",
-                    username=username,
-                    url=url,
-                    wait_until=wait_until,
-                    page_url=page.url,
-                    http_status=nav_status.get("http_status"),
-                )
-                if page.url and not _is_suspicious_browser_url(page.url):
-                    return True
-                if _is_rate_limited(nav_status.get("http_status"), page.url):
-                    return False
+        wait_until = "domcontentloaded"
+        nav_status["wait_until"] = wait_until
+        try:
+            await page.goto(url, wait_until=wait_until, timeout=timeout_ms)
+            logger.info(
+                "browser_session.studio_goto_ok",
+                username=username,
+                url=url,
+                wait_until=wait_until,
+                page_url=page.url,
+                http_status=nav_status.get("http_status"),
+            )
+            if page.url and not _is_suspicious_browser_url(page.url):
                 return True
-            except Exception as exc:
-                last_exc = exc
-                nav_status["error"] = str(exc)[:300]
-                logger.warning(
-                    "browser_session.studio_goto_attempt_failed",
-                    username=username,
-                    url=url,
-                    wait_until=wait_until,
-                    page_url=page.url,
-                    error=str(exc),
-                )
-                if page.url and not _is_suspicious_browser_url(page.url):
-                    return True
+            if _is_rate_limited(nav_status.get("http_status"), page.url):
+                return False
+            return True
+        except Exception as exc:
+            last_exc = exc
+            nav_status["error"] = str(exc)[:300]
+            logger.warning(
+                "browser_session.studio_goto_attempt_failed",
+                username=username,
+                url=url,
+                wait_until=wait_until,
+                page_url=page.url,
+                error=str(exc),
+            )
+            if page.url and not _is_suspicious_browser_url(page.url):
+                return True
         if last_exc is not None:
             nav_status["error"] = str(last_exc)[:300]
         return bool(page.url and not _is_suspicious_browser_url(page.url))
@@ -823,6 +862,24 @@ class BrowserSessionManager:
                     ),
                 )
             session.log("info", "vnc", f"VNC готов (ws_port={ws_port})")
+            if platform_value in ("youtube", "tiktok"):
+                probe_rows = await probe_studio_https_via_proxy(proxy.url, timeout_sec=30.0)
+                all_ok = True
+                for host, ok_row, detail in probe_rows:
+                    level_row: LogLevel = "info" if ok_row else "warn"
+                    session.log(
+                        level_row,
+                        "proxy",
+                        f"HTTPS {host} через прокси: {detail}",
+                    )
+                    if not ok_row:
+                        all_ok = False
+                if not all_ok:
+                    parts = "; ".join(f"{h}={d}" for h, _ok, d in probe_rows if not _ok)
+                    session.launch_warning = (
+                        f"Прокси не открывает Google/Studio ({parts}). "
+                        f"Смените mobile-IP или: python -m app.cli proxy-studio-check {username}"
+                    )
             await self._launch_browser(
                 session,
                 account,
@@ -906,14 +963,21 @@ class BrowserSessionManager:
         desktop_geometry = _studio_desktop_geometry(platform_value)
 
         session.pw = await async_playwright().start()
-        session.browser = await session.pw.chromium.launch(
-            headless=False,
-            ignore_default_args=["--enable-automation"],
-            args=browser_launch_args(
+        if platform_value in ("youtube", "tiktok"):
+            chromium_args = studio_vnc_launch_args(desktop_geometry)
+            ctx_lightweight = False
+        else:
+            chromium_args = browser_launch_args(
                 surface,
                 lightweight=lightweight,
                 desktop_geometry=desktop_geometry,
-            ),
+            )
+            ctx_lightweight = lightweight
+
+        session.browser = await session.pw.chromium.launch(
+            headless=False,
+            ignore_default_args=["--enable-automation"],
+            args=chromium_args,
             proxy=proxy_arg,
             env=display_env,
         )
@@ -924,7 +988,7 @@ class BrowserSessionManager:
             locale=locale,
             timezone_id=tz_id,
             storage_state_path=str(state_file) if has_saved_session else None,
-            lightweight=lightweight,
+            lightweight=ctx_lightweight,
             desktop_geometry=desktop_geometry,
         )
 
