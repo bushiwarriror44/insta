@@ -208,14 +208,16 @@ async def _open_studio_urls(
             session.log("info", "goto", f"Открываю {url}")
         else:
             session.log("info", "goto", f"Fallback: {url}")
-        ok = await _try_goto_url(page, url, username=username, nav_status=nav_status)
+        ok = await _try_goto_studio_url(page, url, username=username, nav_status=nav_status)
         last_http = nav_status.get("http_status")
+        err_hint = nav_status.get("error")
         session.log(
             "info" if ok else "warn",
             "goto",
             (
                 f"HTTP={last_http or '—'} url={page.url or '—'}"
-                if ok or last_http
+                + (f" ({err_hint})" if err_hint and not ok else "")
+                if ok or last_http or err_hint
                 else f"Переход не удался: {page.url or '—'}"
             ),
         )
@@ -339,6 +341,72 @@ def _warning_from_proxy_preflight(
             "Смените IP прокси или подождите — эмуляция браузера это не обходит."
         )
     return _goto_warning_message(login_http_status)
+
+
+_STUDIO_NAV_TIMEOUT_MS = 90_000
+
+
+async def _try_goto_studio_url(
+    page,
+    url: str,
+    *,
+    username: str,
+    nav_status: dict[str, Any],
+) -> bool:
+    """Studio/Google navigation — match headless studio_playwright (domcontentloaded, 90s)."""
+    configured = settings.browser_goto_timeout_sec * 1000
+    timeout_ms = max(configured, _STUDIO_NAV_TIMEOUT_MS)
+
+    def on_response(response) -> None:
+        try:
+            request = response.request
+            if request.is_navigation_request() and request.frame == page.main_frame:
+                nav_status["http_status"] = response.status
+                nav_status["url"] = response.url
+        except Exception:
+            pass
+
+    page.on("response", on_response)
+    last_exc: Exception | None = None
+    try:
+        for wait_until in ("domcontentloaded", "commit"):
+            nav_status["wait_until"] = wait_until
+            try:
+                await page.goto(url, wait_until=wait_until, timeout=timeout_ms)
+                logger.info(
+                    "browser_session.studio_goto_ok",
+                    username=username,
+                    url=url,
+                    wait_until=wait_until,
+                    page_url=page.url,
+                    http_status=nav_status.get("http_status"),
+                )
+                if page.url and not _is_suspicious_browser_url(page.url):
+                    return True
+                if _is_rate_limited(nav_status.get("http_status"), page.url):
+                    return False
+                return True
+            except Exception as exc:
+                last_exc = exc
+                nav_status["error"] = str(exc)[:300]
+                logger.warning(
+                    "browser_session.studio_goto_attempt_failed",
+                    username=username,
+                    url=url,
+                    wait_until=wait_until,
+                    page_url=page.url,
+                    error=str(exc),
+                )
+                if page.url and not _is_suspicious_browser_url(page.url):
+                    return True
+        if last_exc is not None:
+            nav_status["error"] = str(last_exc)[:300]
+        return bool(page.url and not _is_suspicious_browser_url(page.url))
+    finally:
+        try:
+            page.remove_listener("response", on_response)
+        except Exception:
+            pass
 
 
 async def _try_goto_url(

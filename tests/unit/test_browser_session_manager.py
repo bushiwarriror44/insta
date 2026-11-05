@@ -735,7 +735,7 @@ async def test_maybe_open_home_studio_passes_nav_status_to_try_goto_url(
         page.url = url
         return True
 
-    monkeypatch.setattr(sm, "_try_goto_url", fake_try_goto_url)
+    monkeypatch.setattr(sm, "_try_goto_studio_url", fake_try_goto_url)
 
     mgr = BrowserSessionManager()
     session = sm.BrowserSessionState(username="studio_user")
@@ -768,7 +768,7 @@ async def test_open_studio_urls_sets_warning_on_blank(monkeypatch):
         nav_status["http_status"] = None
         return False
 
-    monkeypatch.setattr(sm, "_try_goto_url", fake_goto)
+    monkeypatch.setattr(sm, "_try_goto_studio_url", fake_goto)
 
     session = sm.BrowserSessionState(username="yt")
     account = SimpleNamespace(username="yt", platform="youtube", password="x", email="a@b.c")
