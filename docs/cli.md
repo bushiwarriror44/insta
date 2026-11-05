@@ -166,4 +166,13 @@ python -m app.cli browser-vnc-diag alice
 
 WebSocket: query `token=`, не заголовок Bearer. С хоста nginx должен проксировать Upgrade (см. `deploy/host-nginx.conf.example`).
 
+На VPS одной командой (подставляет `ADMIN_TOKEN` из `.env`; без аргумента — все аккаунты с прокси):
+
+```text
+bash deploy/browser-vnc-check.sh
+bash deploy/browser-vnc-check.sh --start
+bash deploy/browser-vnc-check.sh alice
+bash deploy/browser-vnc-check.sh alice --start
+```
+
 Дальше: [data-and-ops.md](data-and-ops.md).
