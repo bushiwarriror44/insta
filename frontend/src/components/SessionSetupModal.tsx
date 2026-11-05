@@ -550,6 +550,11 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
               username={account.username}
               adminToken={adminToken}
               mode="setup"
+              platform={
+                account.platform === "youtube" || account.platform === "tiktok"
+                  ? account.platform
+                  : "instagram"
+              }
               loginSurface={loginSurface}
               hasProxy={Boolean(account.proxy_label)}
               onSessionSaved={handleBrowserSessionSaved}

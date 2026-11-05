@@ -44,6 +44,7 @@ interface Props {
   adminToken?: string | null;
   mode?: "standalone" | "setup";
   loginSurface?: LoginSurface;
+  platform?: "instagram" | "youtube" | "tiktok";
   /** When false, browser start is blocked (account has no proxy). */
   hasProxy?: boolean;
   onSessionSaved?: (result: BrowserSaveOut) => void;
@@ -85,9 +86,12 @@ export function InstagramBrowserPanel({
   adminToken,
   mode = "standalone",
   loginSurface = "mobile",
+  platform = "instagram",
   hasProxy = true,
   onSessionSaved,
 }: Props) {
+  const isStudio = platform === "youtube" || platform === "tiktok";
+  const studioLabel = platform === "youtube" ? "YouTube Studio" : platform === "tiktok" ? "TikTok Studio" : "";
   const { push } = useToast();
   const [session, setSession] = useState<BrowserSessionOut | null>(null);
   const [logs, setLogs] = useState<DiagnosticLogLine[]>([]);
@@ -217,17 +221,41 @@ export function InstagramBrowserPanel({
         session.page_url?.startsWith("chrome://") ||
         session.page_url?.startsWith("chrome-error://")
     );
-  async function startBrowser() {
+  async function startBrowser(withStudioAutofill = false) {
     if (!hasProxy) {
       push("Сначала назначьте прокси", "error");
       return;
     }
     setBusy(true);
     try {
-      const data = await api.accounts.browserStart(username, { loginSurface });
+      const data = await api.accounts.browserStart(username, {
+        loginSurface,
+        autofill: isStudio && withStudioAutofill,
+      });
       applySession(data);
       setSavedOk(false);
       push("Браузер запущен", "success");
+    } catch (err) {
+      push(formatApiError(err), "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openStudio(opts?: { autofill?: boolean }) {
+    setBusy(true);
+    try {
+      const data = await api.accounts.browserOpenInstagram(username, {
+        autofill: opts?.autofill,
+        target: "auto",
+      });
+      applySession(data);
+      push(
+        opts?.autofill
+          ? `Google: автозаполнение (${studioLabel})`
+          : `Открытие ${studioLabel}`,
+        "success"
+      );
     } catch (err) {
       push(formatApiError(err), "error");
     } finally {
@@ -422,7 +450,14 @@ export function InstagramBrowserPanel({
 
       {showBlankWarning ? (
         <div className="rounded-lg border border-amber-500/40 bg-amber-950/30 p-3 text-sm text-amber-100">
-          {session?.warning &&
+          {session?.warning ? (
+            <>{session.warning}</>
+          ) : isStudio ? (
+            <>
+              {studioLabel} не загрузился или завис — нажмите «Открыть Studio» / «Google автозаполнение» или
+              введите URL вручную в VNC. Google через mobile-прокси часто грузится 1–2 минуты.
+            </>
+          ) : session?.warning &&
           (session.warning.includes("429") || session.proxy_instagram_login_http_status === 429) ? (
             <>
               Instagram временно ограничил запросы с IP прокси{" "}
@@ -555,27 +590,50 @@ export function InstagramBrowserPanel({
           className="btn-primary"
           disabled={busy || live || !hasProxy}
           title={hasProxy ? undefined : "Сначала назначьте прокси"}
-          onClick={startBrowser}
+          onClick={() => void startBrowser(false)}
         >
           <MonitorPlay size={16} className={busy ? "animate-spin" : ""} />
           Запустить браузер
         </button>
-        <button
-          type="button"
-          className="btn-ghost"
-          disabled={busy || !navReady}
-          onClick={() => void openInstagram({ target: "auto" })}
-        >
-          Открыть Instagram
-        </button>
-        <button
-          type="button"
-          className="btn-ghost text-xs"
-          disabled={busy || !navReady}
-          onClick={() => void openInstagram({ target: "login", autofill: true })}
-        >
-          Заполнить логин
-        </button>
+        {isStudio ? (
+          <>
+            <button
+              type="button"
+              className="btn-ghost"
+              disabled={busy || !navReady}
+              onClick={() => void openStudio()}
+            >
+              Открыть Studio
+            </button>
+            <button
+              type="button"
+              className="btn-ghost text-xs"
+              disabled={busy || !navReady}
+              onClick={() => void openStudio({ autofill: true })}
+            >
+              Google автозаполнение
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="btn-ghost"
+              disabled={busy || !navReady}
+              onClick={() => void openInstagram({ target: "auto" })}
+            >
+              Открыть Instagram
+            </button>
+            <button
+              type="button"
+              className="btn-ghost text-xs"
+              disabled={busy || !navReady}
+              onClick={() => void openInstagram({ target: "login", autofill: true })}
+            >
+              Заполнить логин
+            </button>
+          </>
+        )}
         <button type="button" className="btn-ghost" disabled={busy || !navReady || savedOk} onClick={saveSession}>
           <Save size={16} />
           Сохранить сессию
@@ -597,6 +655,7 @@ export function InstagramBrowserPanel({
         <p className="text-xs text-amber-300">Сначала назначьте прокси</p>
       ) : null}
 
+      {!isStudio ? (
       <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-3 space-y-2">
         <p className="text-xs uppercase tracking-wide text-slate-500">Быстрый переход в Instagram</p>
         <div className="flex flex-wrap gap-2">
@@ -616,6 +675,7 @@ export function InstagramBrowserPanel({
           Страница откроется внутри noVNC-браузера через прокси аккаунта.
         </p>
       </div>
+      ) : null}
 
       <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-3 space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">

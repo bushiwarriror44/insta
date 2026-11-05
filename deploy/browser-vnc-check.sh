@@ -125,6 +125,7 @@ check_user() {
 
   section "Account @${user}"
 
+  echo "(browser-vnc-diag in exec may show stopped — see GET status below)"
   docker compose exec -T reels-api python -m app.cli browser-vnc-diag "$user"
 
   local st
@@ -169,6 +170,8 @@ else
 fi
 
 section "4. In-container VNC stack (no user)"
+echo "Note: browser-vnc-diag session JSON is empty unless run inside the API process."
+echo "       Use section 7 GET browser/status for the live session."
 docker compose exec -T reels-api python -m app.cli browser-vnc-diag
 
 mapfile -t ALL_USERS < <(discover_usernames 2>/dev/null | tr -d '\r' | sed '/^[[:space:]]*$/d' || true)

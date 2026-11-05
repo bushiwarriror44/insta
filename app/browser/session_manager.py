@@ -136,6 +136,134 @@ def _is_on_instagram(url: str | None) -> bool:
     return bool(url and "instagram.com" in url)
 
 
+_YOUTUBE_STUDIO_URL = "https://studio.youtube.com"
+_TIKTOK_STUDIO_URL = "https://www.tiktok.com/tiktokstudio/upload"
+_GOOGLE_ACCOUNTS_URL = "https://accounts.google.com/"
+
+
+def _studio_url_ladder(platform: str) -> list[str]:
+    if platform == "youtube":
+        return [_YOUTUBE_STUDIO_URL, _GOOGLE_ACCOUNTS_URL]
+    if platform == "tiktok":
+        return [_TIKTOK_STUDIO_URL]
+    return []
+
+
+def _is_suspicious_browser_url(url: str | None) -> bool:
+    if not url or url == "about:blank":
+        return True
+    lower = url.lower()
+    return lower.startswith("chrome-error://") or lower.startswith("chrome://newtab")
+
+
+def _on_studio_platform(url: str | None, platform: str) -> bool:
+    if not url:
+        return False
+    lower = url.lower()
+    if platform == "youtube":
+        return "studio.youtube.com" in lower or "accounts.google.com" in lower or "youtube.com" in lower
+    if platform == "tiktok":
+        return "tiktokstudio" in lower or "tiktok.com" in lower
+    return False
+
+
+def _studio_goto_warning(platform: str, http_status: int | None, page_url: str | None) -> str:
+    label = "YouTube Studio" if platform == "youtube" else "TikTok Studio"
+    if http_status is not None and http_status >= 400:
+        return (
+            f"{label} через прокси вернул HTTP {http_status}. "
+            "Проверьте прокси (curl -x … https://studio.youtube.com), смените IP или войдите вручную в VNC."
+        )
+    if _is_suspicious_browser_url(page_url):
+        return (
+            f"{label} не открылся (страница пустая или зависла). "
+            "Нажмите «Открыть Studio» / введите studio.youtube.com вручную; Google часто грузится медленно через mobile-прокси."
+        )
+    return (
+        f"Не удалось открыть {label} автоматически. "
+        "Используйте «Открыть Studio» или введите URL в окне браузера."
+    )
+
+
+async def _open_studio_urls(
+    page,
+    session: BrowserSessionState,
+    *,
+    platform: str,
+    username: str,
+    account,
+    need_login: bool,
+    autofill_login: bool,
+) -> None:
+    """Navigate Studio URL ladder; set launch_warning when landing fails."""
+    urls = _studio_url_ladder(platform)
+    if not urls:
+        return
+
+    last_http: int | None = None
+    landed = False
+    for idx, url in enumerate(urls):
+        nav_status: dict[str, Any] = {}
+        if idx == 0:
+            session.log("info", "goto", f"Открываю {url}")
+        else:
+            session.log("info", "goto", f"Fallback: {url}")
+        ok = await _try_goto_url(page, url, username=username, nav_status=nav_status)
+        last_http = nav_status.get("http_status")
+        session.log(
+            "info" if ok else "warn",
+            "goto",
+            (
+                f"HTTP={last_http or '—'} url={page.url or '—'}"
+                if ok or last_http
+                else f"Переход не удался: {page.url or '—'}"
+            ),
+        )
+        if _on_studio_platform(page.url, platform):
+            landed = True
+            break
+        if ok and not _is_suspicious_browser_url(page.url):
+            landed = True
+            break
+
+    session.page_url = page.url
+    if landed and not _is_suspicious_browser_url(page.url):
+        if (
+            platform == "youtube"
+            and need_login
+            and autofill_login
+            and "accounts.google.com" in (page.url or "")
+        ):
+            await _try_google_studio_autofill(session, page, account)
+        return
+
+    session.launch_warning = _studio_goto_warning(platform, last_http, page.url)
+    session.log("warn", "goto", session.launch_warning)
+
+
+async def _try_google_studio_autofill(session: BrowserSessionState, page, account) -> None:
+    from app.accounts.studio_login_service import resolve_studio_login_identifier
+    from app.behavior.studio_playwright import _try_google_identifier, _try_google_password
+
+    login_id = resolve_studio_login_identifier(account)
+    password = (getattr(account, "password", None) or "").strip()
+    if not login_id or not password:
+        session.log("warn", "autofill", "Google autofill: нет email или пароля в карточке")
+        return
+    session.log("info", "autofill", f"Google: ввожу логин ({login_id})…")
+    try:
+        if await _try_google_identifier(page, login_id):
+            if await _try_google_password(page, password):
+                session.log("info", "autofill", "Google: форма отправлена")
+            else:
+                session.log("warn", "autofill", "Google: не удалось ввести пароль")
+        else:
+            session.log("warn", "autofill", "Google: поле логина не найдено")
+    except Exception as exc:  # noqa: BLE001
+        session.log("warn", "autofill", f"Google autofill: {exc}")
+        logger.warning("browser_session.google_autofill_failed", username=session.username, error=str(exc))
+
+
 def _goto_warning_message(http_status: int | None) -> str:
     if http_status == 429:
         msg = (
@@ -357,6 +485,7 @@ class BrowserSessionState:
     page: Any = None
     poll_task: asyncio.Task | None = None
     auto_stop_task: asyncio.Task | None = None
+    studio_nav_task: asyncio.Task | None = None
     login_orchestration: bool = False
 
     def log(self, level: LogLevel, step: str, message: str) -> None:
@@ -492,6 +621,7 @@ class BrowserSessionManager:
         autofill_login: bool = True,
         surface: LoginSurface | str | None = None,
         proxy_snapshot: Any = None,
+        studio_autofill: bool = False,
     ) -> BrowserSessionState:
         username = account.username
         platform_value = _account_platform_value(account)
@@ -631,6 +761,7 @@ class BrowserSessionManager:
                 proxy,
                 autofill_login=autofill_login,
                 surface=resolved_surface,
+                studio_autofill=studio_autofill,
             )
             session.status = BrowserSessionStatus.running
             session.log(
@@ -658,6 +789,7 @@ class BrowserSessionManager:
         *,
         autofill_login: bool,
         surface: LoginSurface,
+        studio_autofill: bool = False,
     ) -> None:
         try:
             from playwright.async_api import async_playwright
@@ -744,6 +876,39 @@ class BrowserSessionManager:
             "browser",
             f"Контекст готов; storage_state={'да' if has_saved_session else 'нет'}; need_login={need_login}",
         )
+        platform_value = _account_platform_value(account)
+        do_autofill = studio_autofill or (
+            autofill_login and settings.browser_autofill_on_start
+        )
+        if platform_value in ("youtube", "tiktok"):
+            session.page_url = page.url
+            session.last_logged_url = page.url
+
+            async def _run_studio_nav() -> None:
+                try:
+                    await _open_studio_urls(
+                        page,
+                        session,
+                        platform=platform_value,
+                        username=session.username,
+                        account=account,
+                        need_login=need_login,
+                        autofill_login=do_autofill,
+                    )
+                    session.page_url = page.url
+                    session.last_logged_url = page.url
+                    await self._refresh_code_state(session)
+                except Exception as exc:  # noqa: BLE001
+                    session.log("error", "goto", f"Studio navigation: {exc}")
+                    logger.warning(
+                        "browser_session.studio_nav_failed",
+                        username=session.username,
+                        error=str(exc),
+                    )
+
+            session.studio_nav_task = asyncio.create_task(_run_studio_nav())
+            return
+
         await self._maybe_open_home(
             session,
             account,
@@ -768,24 +933,18 @@ class BrowserSessionManager:
         autofill_login: bool,
     ) -> None:
         value = _account_platform_value(account)
-        nav_status: dict[str, Any] = {}
-        if value == "youtube":
-            session.log("info", "goto", "Открываю YouTube Studio")
-            await _try_goto_url(
+        if value in ("youtube", "tiktok"):
+            await _open_studio_urls(
                 page,
-                "https://studio.youtube.com",
+                session,
+                platform=value,
                 username=session.username,
-                nav_status=nav_status,
+                account=account,
+                need_login=need_login,
+                autofill_login=autofill_login,
             )
-            return
-        if value == "tiktok":
-            session.log("info", "goto", "Открываю TikTok Studio")
-            await _try_goto_url(
-                page,
-                "https://www.tiktok.com/tiktokstudio/upload",
-                username=session.username,
-                nav_status=nav_status,
-            )
+            session.page_url = page.url
+            await self._refresh_code_state(session)
             return
         await self._maybe_open_instagram(
             session,
@@ -935,16 +1094,32 @@ class BrowserSessionManager:
             raise RuntimeError("браузерная сессия не запущена")
 
         state_file = playwright_state_path(account.username, _account_platform_value(account))
-        need_login = not (
-            state_file.exists() and storage_state_has_session(account.username)
-        )
         session.launch_warning = None
-        # Explicit operator click: honor autofill_login without BROWSER_AUTOFILL_ON_START.
+        platform_value = _account_platform_value(account)
+        if platform_value == "instagram":
+            need_login = not (
+                state_file.exists() and storage_state_has_session(account.username)
+            )
+        else:
+            need_login = not state_file.exists()
         session.log(
             "info",
             "goto",
             f"Ручной переход target={target}, autofill={autofill_login}, need_login={need_login}",
         )
+        if platform_value in ("youtube", "tiktok"):
+            await _open_studio_urls(
+                session.page,
+                session,
+                platform=platform_value,
+                username=session.username,
+                account=account,
+                need_login=need_login,
+                autofill_login=autofill_login,
+            )
+            session.page_url = session.page.url
+            await self._refresh_code_state(session)
+            return
         await self._navigate_instagram_and_maybe_autofill(
             session,
             account,
@@ -961,7 +1136,8 @@ class BrowserSessionManager:
             try:
                 if session.page is None or session.context is None:
                     break
-                if await _is_logged_in(session.context, session.page):
+                platform_value = _account_platform_value(account)
+                if await _platform_logged_in(session.context, session.page, platform_value):
                     session.awaiting_code = False
                     if session.status == BrowserSessionStatus.awaiting_code:
                         session.status = BrowserSessionStatus.running
@@ -1101,7 +1277,7 @@ class BrowserSessionManager:
         await self.stop_session(username)
 
     async def _cleanup_session(self, session: BrowserSessionState, *, remove: bool = True) -> None:
-        for task in (session.poll_task, session.auto_stop_task):
+        for task in (session.poll_task, session.auto_stop_task, session.studio_nav_task):
             if task is not None and not task.done():
                 task.cancel()
                 try:

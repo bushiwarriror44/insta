@@ -80,6 +80,16 @@ Instagram-app User-Agent в Chromium Studio **не** подставляется.
 
 Нужны `BROWSER_VNC_ENABLED=true` и стек в контейнере. Старт: `POST /api/accounts/{username}/browser/start`. Код 2FA: `.../browser/code`. Сохранение: `.../browser/save`. Диагностика: `python -m app.cli browser-vnc-diag`.
 
-Производительность noVNC: в UI заданы **quality=3** и **compression=8** (меньше трафика, грубее картинка). YouTube/TikTok используют компактный desktop **1024×640** на Xvfb (`BROWSER_STUDIO_VNC_WIDTH` / `BROWSER_STUDIO_VNC_HEIGHT`); Instagram desktop остаётся 1280×800.
+Производительность noVNC: в UI заданы **quality=3** и **compression=8** (меньше трафика, грубее картинка). YouTube/TikTok используют compactный desktop **1024×640** на Xvfb (`BROWSER_STUDIO_VNC_WIDTH` / `BROWSER_STUDIO_VNC_HEIGHT`); Instagram desktop остаётся 1280×800.
+
+YouTube/TikTok в VNC: при старте открывается Studio (ladder: Studio → Google accounts при fail). Если страница пустая — в UI будет **warning**; кнопки «Открыть Studio» / «Google автозаполнение». Навигация идёт **в фоне** — noVNC подключается до завершения `goto`. `browser-vnc-diag` в `docker compose exec` **не видит** in-memory сессию API — смотрите `GET .../browser/status`.
+
+Проверка прокси на Google с VPS:
+
+```bash
+curl -x 'http://USER:PASS@HOST:PORT' -I --max-time 25 https://studio.youtube.com
+```
+
+Docker: для Studio в `reels-api` рекомендуется **≥2 GB** `mem_limit` (см. `docker-compose.yml`).
 
 Tools run-режима: `start_browser`, `browser_status`, `save_browser_session`, `submit_browser_code`.

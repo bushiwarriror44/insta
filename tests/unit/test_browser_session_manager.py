@@ -438,7 +438,7 @@ async def test_start_session_uses_mobile_surface(monkeypatch):
 
     monkeypatch.setattr(sm, "VncStack", FakeVnc)
 
-    async def fake_launch(session, account, proxy, *, autofill_login, surface):
+    async def fake_launch(session, account, proxy, *, autofill_login, surface, studio_autofill=False):
         captured["surface"] = surface
 
     mgr = BrowserSessionManager()
@@ -479,7 +479,7 @@ async def test_start_session_youtube_forces_desktop(monkeypatch):
 
     monkeypatch.setattr(sm, "VncStack", FakeVnc)
 
-    async def fake_launch(session, account, proxy, *, autofill_login, surface):
+    async def fake_launch(session, account, proxy, *, autofill_login, surface, studio_autofill=False):
         captured["surface"] = surface
 
     mgr = BrowserSessionManager()
@@ -519,7 +519,7 @@ async def test_start_session_youtube_uses_studio_vnc_screen(monkeypatch):
 
     monkeypatch.setattr(sm, "VncStack", FakeVnc)
 
-    async def fake_launch(session, account, proxy, *, autofill_login, surface):
+    async def fake_launch(session, account, proxy, *, autofill_login, surface, studio_autofill=False):
         captured["launch_surface"] = surface
 
     mgr = BrowserSessionManager()
@@ -732,6 +732,7 @@ async def test_maybe_open_home_studio_passes_nav_status_to_try_goto_url(
         captured["url"] = url
         captured["username"] = username
         captured["nav_status"] = nav_status
+        page.url = url
         return True
 
     monkeypatch.setattr(sm, "_try_goto_url", fake_try_goto_url)
@@ -753,6 +754,49 @@ async def test_maybe_open_home_studio_passes_nav_status_to_try_goto_url(
     assert captured["url"] == expected_url
     assert captured["username"] == "studio_user"
     assert isinstance(captured["nav_status"], dict)
+
+
+@pytest.mark.asyncio
+async def test_open_studio_urls_sets_warning_on_blank(monkeypatch):
+    import app.browser.session_manager as sm
+    from types import SimpleNamespace
+
+    page = AsyncMock()
+    page.url = "about:blank"
+
+    async def fake_goto(page_obj, url, *, username, nav_status):
+        nav_status["http_status"] = None
+        return False
+
+    monkeypatch.setattr(sm, "_try_goto_url", fake_goto)
+
+    session = sm.BrowserSessionState(username="yt")
+    account = SimpleNamespace(username="yt", platform="youtube", password="x", email="a@b.c")
+
+    await sm._open_studio_urls(
+        page,
+        session,
+        platform="youtube",
+        username="yt",
+        account=account,
+        need_login=True,
+        autofill_login=False,
+    )
+
+    assert session.launch_warning
+    assert "YouTube Studio" in session.launch_warning
+
+
+def test_browser_launch_args_studio_disables_quic_not_gpu():
+    from app.behavior.playwright_surface import browser_launch_args
+
+    args = browser_launch_args(
+        "desktop",
+        lightweight=True,
+        desktop_geometry=(1024, 640),
+    )
+    assert "--disable-quic" in args
+    assert "--disable-gpu" not in args
 
 
 @pytest.mark.asyncio

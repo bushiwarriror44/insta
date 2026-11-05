@@ -75,9 +75,9 @@ services:
       dockerfile: Dockerfile
     container_name: insta-reels-api
     restart: unless-stopped
-    # Chromium + API; shm kept small because Chromium uses --disable-dev-shm-usage.
-    mem_limit: 1024m
-    memswap_limit: 1024m
+    # Chromium + API; raise ceiling for Google/Studio in VNC (was 1024m).
+    mem_limit: 2048m
+    memswap_limit: 2048m
     shm_size: "256mb"
     environment:
       DISPLAY: ":99"

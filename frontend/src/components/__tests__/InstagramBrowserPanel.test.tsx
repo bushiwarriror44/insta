@@ -259,4 +259,16 @@ describe("InstagramBrowserPanel", () => {
       await screen.findByText(/Секрет TOTP не задан — добавьте в настройках аккаунта/i)
     ).toBeInTheDocument();
   });
+
+  it("shows Studio actions for YouTube, not Instagram quick nav", () => {
+    render(
+      <ToastProvider>
+        <InstagramBrowserPanel username="ytuser" adminToken="tok" platform="youtube" />
+      </ToastProvider>
+    );
+
+    expect(screen.getByRole("button", { name: /Открыть Studio/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Google автозаполнение/i })).toBeInTheDocument();
+    expect(screen.queryByText(/Быстрый переход в Instagram/i)).not.toBeInTheDocument();
+  });
 });

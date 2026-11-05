@@ -67,6 +67,10 @@ def _browser_session_response(
 async def start_browser_session(
     username: str,
     login_surface: str | None = Query(default=None),
+    autofill: bool = Query(
+        default=False,
+        description="YouTube/TikTok: autofill Google login in VNC after opening Studio",
+    ),
     db: Session = Depends(get_db),
     principal: AuthPrincipal = Depends(resolve_principal),
 ) -> BrowserSessionOut:
@@ -82,6 +86,7 @@ async def start_browser_session(
             proxy,
             surface=resolved_surface,
             proxy_snapshot=None,
+            studio_autofill=autofill,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

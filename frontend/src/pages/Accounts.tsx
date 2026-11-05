@@ -1452,6 +1452,11 @@ export function Accounts() {
           <InstagramBrowserPanel
             username={browserAccount.username}
             adminToken={adminToken}
+            platform={
+              browserAccount.platform === "youtube" || browserAccount.platform === "tiktok"
+                ? browserAccount.platform
+                : "instagram"
+            }
             hasProxy={Boolean(browserAccount.proxy_label)}
             loginSurface={browserAccount.login_surface === "desktop" ? "desktop" : "mobile"}
             onSessionSaved={() => void onBrowserSessionSaved()}

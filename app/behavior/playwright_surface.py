@@ -48,6 +48,11 @@ _LIGHTWEIGHT_CHROMIUM_ARGS = [
 ]
 
 
+_STUDIO_PROXY_CHROMIUM_ARGS = [
+    "--disable-quic",
+]
+
+
 def browser_launch_args(
     surface: LoginSurface,
     *,
@@ -69,7 +74,13 @@ def browser_launch_args(
         "--disable-features=IsolateOrigins,site-per-process",
     ]
     if lightweight:
-        args.extend(_LIGHTWEIGHT_CHROMIUM_ARGS)
+        studio_desktop = desktop_geometry is not None
+        if studio_desktop:
+            lite = [a for a in _LIGHTWEIGHT_CHROMIUM_ARGS if a != "--disable-gpu"]
+            args.extend(lite)
+            args.extend(_STUDIO_PROXY_CHROMIUM_ARGS)
+        else:
+            args.extend(_LIGHTWEIGHT_CHROMIUM_ARGS)
     return args
 
 

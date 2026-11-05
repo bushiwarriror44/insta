@@ -435,12 +435,18 @@ export const api = {
       fetchObjectUrl(
         `/api/accounts/${encodeURIComponent(username)}/login-debug-screenshot`
       ),
-    browserStart: (username: string, opts?: { loginSurface?: import("./types").LoginSurface }) =>
+    browserStart: (
+      username: string,
+      opts?: { loginSurface?: import("./types").LoginSurface; autofill?: boolean }
+    ) =>
       request<BrowserSessionOut>(
         `/api/accounts/${encodeURIComponent(username)}/browser/start`,
         {
           method: "POST",
-          query: opts?.loginSurface ? { login_surface: opts.loginSurface } : undefined,
+          query: {
+            ...(opts?.loginSurface ? { login_surface: opts.loginSurface } : {}),
+            ...(opts?.autofill ? { autofill: true } : {}),
+          },
         }
       ),
     browserOpenInstagram: (

@@ -909,6 +909,11 @@ def cmd_browser_vnc_diag(
     console.print(f"  novnc_static={'да' if Path('/usr/share/novnc').is_dir() else 'нет'}")
 
     if username:
+        console.print(
+            "\n[dim]Сессия ниже — только если этот CLI в том же процессе, что API "
+            "(обычно [yellow]stopped/пусто[/yellow]). Актуальный статус: "
+            "GET /api/accounts/{user}/browser/status[/dim]"
+        )
         data = browser_session_manager.status_dict(username)
         console.print(f"\n[bold]Сессия @{username}[/bold]")
         console.print_json(json.dumps(data))

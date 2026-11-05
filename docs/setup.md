@@ -48,6 +48,8 @@ npm run dev
 docker compose up -d --build
 ```
 
+Админ-VPS с VNC/Studio: в `docker-compose.yml` для `reels-api` задано **2 GB** RAM; на хосте 6–8 GB + swap (`deploy/setup-swap.sh`). Проверка прокси на Google: см. [accounts-sessions.md](accounts-sessions.md) (раздел VNC).
+
 Ollama в том же compose (не для 6 GB):
 
 ```text
