@@ -6,7 +6,7 @@ frontend/.env
 frontend/.env.*
 frontend/.env.*
 !frontend/.env.example
-accounts/
+/accounts/
 
 # --- Python ---
 __pycache__/
