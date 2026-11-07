@@ -347,6 +347,9 @@ describe("InstagramBrowserPanel", () => {
 
     expect(await screen.findByText(/Google отклонил автоматизированный вход/i)).toBeInTheDocument();
     expect(screen.getAllByText(/signin\/rejected/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Импорт сессии \(надёжный обход\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/google-studio-vnc-runbook/i)).toBeInTheDocument();
+    expect(screen.getByText(/не обходит rejected/i)).toBeInTheDocument();
   });
 
   it("copy and paste account credentials", async () => {

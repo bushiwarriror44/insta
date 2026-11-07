@@ -1037,6 +1037,71 @@ def test_status_dict_exposes_google_warning():
 
 
 @pytest.mark.asyncio
+async def test_youtube_vnc_launch_uses_chrome_channel(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.config import settings
+    import app.browser.session_manager as sm
+    from app.browser.session_manager import BrowserSessionManager, BrowserSessionState, BrowserSessionStatus
+
+    monkeypatch.setattr(settings, "browser_vnc_channel", "chrome")
+
+    launch_calls: list[dict] = []
+
+    session = BrowserSessionState(username="ytuser", display=101, status=BrowserSessionStatus.running)
+    session.vnc_stack = MagicMock()
+
+    page = AsyncMock()
+    page.url = "about:blank"
+    context = AsyncMock()
+    context.new_page = AsyncMock(return_value=page)
+    browser = AsyncMock()
+    browser.new_context = AsyncMock(return_value=context)
+
+    async def capture_launch(**kwargs):
+        launch_calls.append(kwargs)
+        return browser
+
+    pw = MagicMock()
+    pw.chromium.launch = capture_launch
+    playwright_manager = MagicMock()
+    playwright_manager.start = AsyncMock(return_value=pw)
+
+    fake_module = __import__("types").ModuleType("playwright.async_api")
+    fake_module.async_playwright = lambda: playwright_manager
+    monkeypatch.setitem(__import__("sys").modules, "playwright.async_api", fake_module)
+
+    mgr = BrowserSessionManager()
+    account = SimpleNamespace(
+        username="ytuser",
+        platform="youtube",
+        password="secret",
+        totp_seed=None,
+    )
+    proxy = MagicMock(url="http://u:p@1.2.3.4:8080", timezone="UTC", country="US")
+
+    monkeypatch.setattr(sm, "playwright_state_path", lambda _u, _p=None: __import__("pathlib").Path("/tmp/none"))
+    monkeypatch.setattr(sm, "storage_state_has_session", lambda _u: False)
+    monkeypatch.setattr(sm, "_apply_stealth_context", AsyncMock())
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "playwright_stealth",
+        __import__("types").ModuleType("playwright_stealth"),
+    )
+
+    await mgr._launch_browser(
+        session,
+        account,
+        proxy,
+        autofill_login=False,
+        surface="desktop",
+    )
+
+    assert launch_calls
+    assert launch_calls[0].get("channel") == "chrome"
+
+
+@pytest.mark.asyncio
 async def test_paste_text_requires_running_session():
     mgr = BrowserSessionManager()
     page = AsyncMock()

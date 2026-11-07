@@ -44,6 +44,7 @@ from app.behavior.warmup_playwright import (
     playwright_browsers_available,
     submit_verification_code,
 )
+from app.behavior.playwright_channel import chromium_launch_channel_kwargs, normalize_playwright_channel
 from app.behavior.playwright_surface import (
     LoginSurface,
     browser_launch_args,
@@ -1017,13 +1018,17 @@ class BrowserSessionManager:
             )
             ctx_lightweight = lightweight
 
-        session.browser = await session.pw.chromium.launch(
-            headless=False,
-            ignore_default_args=["--enable-automation"],
-            args=chromium_args,
-            proxy=proxy_arg,
-            env=display_env,
-        )
+        launch_kwargs: dict[str, Any] = {
+            "headless": False,
+            "ignore_default_args": ["--enable-automation"],
+            "args": chromium_args,
+            "proxy": proxy_arg,
+            "env": display_env,
+        }
+        if platform_value in ("youtube", "tiktok"):
+            vnc_channel = normalize_playwright_channel(settings.browser_vnc_channel)
+            launch_kwargs.update(chromium_launch_channel_kwargs(vnc_channel))
+        session.browser = await session.pw.chromium.launch(**launch_kwargs)
 
         context_kwargs = playwright_context_kwargs(
             surface,

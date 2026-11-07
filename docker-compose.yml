@@ -85,6 +85,7 @@ services:
       BROWSER_LIGHTWEIGHT: "true"
       BROWSER_STUDIO_VNC_WIDTH: "1024"
       BROWSER_STUDIO_VNC_HEIGHT: "640"
+      # BROWSER_VNC_CHANNEL: "chrome"  # after scripts/install_google_chrome_bookworm.sh + install-playwright --browser chrome
       BROWSER_MAX_SESSIONS: "1"
       BROWSER_SESSION_TIMEOUT_MIN: "15"
       PANEL_BASE_URL: http://reels-frontend:80

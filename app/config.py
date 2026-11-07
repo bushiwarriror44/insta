@@ -7,7 +7,7 @@ optional ``.env`` file. All other modules must import the singleton
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     browser_autofill_on_start: bool = Field(default=False)
     browser_studio_vnc_width: int = Field(default=1024, ge=800, le=1280)
     browser_studio_vnc_height: int = Field(default=640, ge=480, le=800)
+    browser_vnc_channel: Literal["chromium", "chrome"] = Field(default="chromium")
+    playwright_studio_channel: Literal["chromium", "chrome"] = Field(default="chromium")
 
     scheduler_tz: str = Field(default="UTC")
     worker_poll_interval_sec: int = Field(default=20, ge=5)

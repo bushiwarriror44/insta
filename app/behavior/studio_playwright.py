@@ -8,6 +8,7 @@ from typing import Literal, Optional
 
 from app.accounts.cookie_formats import studio_session_ready
 from app.accounts.playwright_session import playwright_state_path, save_playwright_state
+from app.behavior.playwright_channel import chromium_launch_channel_kwargs, normalize_playwright_channel
 from app.behavior.warmup_playwright import _parse_proxy, playwright_browsers_available
 from app.config import settings
 from app.logging_setup import get_logger
@@ -23,6 +24,13 @@ TIKTOK_STUDIO_URL = "https://www.tiktok.com/tiktokstudio/upload"
 
 _NAV_TIMEOUT_MS = 90_000
 _STEP_WAIT_MS = 15_000
+
+
+def _studio_chromium_launch_kwargs(*, headless: bool, proxy) -> dict:
+    launch_kw: dict = {"headless": headless, "proxy": proxy}
+    channel = normalize_playwright_channel(settings.playwright_studio_channel)
+    launch_kw.update(chromium_launch_channel_kwargs(channel))
+    return launch_kw
 
 
 @dataclass
@@ -243,7 +251,7 @@ async def _async_studio_login(
 
     ping("Headless", f"Chromium → {platform} Studio")
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=headless, proxy=proxy)
+        browser = await p.chromium.launch(**_studio_chromium_launch_kwargs(headless=headless, proxy=proxy))
         try:
             context = await browser.new_context(
                 locale=locale,
@@ -372,7 +380,7 @@ async def _async_probe_studio_session_liveness(
     target = _studio_url(platform)
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=headless, proxy=proxy)
+        browser = await p.chromium.launch(**_studio_chromium_launch_kwargs(headless=headless, proxy=proxy))
         try:
             context = await browser.new_context(
                 locale=locale,

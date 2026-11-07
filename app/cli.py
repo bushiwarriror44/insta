@@ -349,6 +349,17 @@ def cmd_install_playwright(
         console.print(f"[red]Установка Playwright не удалась[/red] (exit={exc.returncode})")
         raise typer.Exit(code=1) from exc
     console.print(f"[green]Браузер Playwright установлен:[/green] {browser}")
+    if browser.strip().lower() == "chrome":
+        console.print(
+            "[dim]Для системного Google Chrome также: "
+            "bash /app/scripts/install_google_chrome_bookworm.sh "
+            "(см. docs/google-studio-vnc-runbook.md)[/dim]"
+        )
+    if settings.browser_vnc_channel == "chrome" and browser.strip().lower() != "chrome":
+        console.print(
+            "[yellow]BROWSER_VNC_CHANNEL=chrome[/yellow] — выполните "
+            "[cyan]install-playwright --browser chrome[/cyan] и install_google_chrome_bookworm.sh"
+        )
 
 
 def _account_platform_name(account) -> str:
@@ -893,7 +904,12 @@ def cmd_browser_vnc_diag(
 
     console.print("[bold]Диагностика noVNC / браузера[/bold]")
     console.print(f"  BROWSER_VNC_ENABLED={settings.browser_vnc_enabled}")
+    console.print(f"  BROWSER_VNC_CHANNEL={settings.browser_vnc_channel}")
+    console.print(f"  PLAYWRIGHT_STUDIO_CHANNEL={settings.playwright_studio_channel}")
     console.print(f"  DISPLAY={os.environ.get('DISPLAY', ':99')}")
+    chrome_bin = shutil_which("google-chrome-stable") or shutil_which("google-chrome")
+    chrome_status = f"[green]{chrome_bin}[/green]" if chrome_bin else "[red]нет[/red]"
+    console.print(f"  google-chrome-stable: {chrome_status}")
 
     tools = {
         "Xvfb": shutil_which("Xvfb"),

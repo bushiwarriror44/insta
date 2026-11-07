@@ -686,6 +686,21 @@ export function InstagramBrowserPanel({
           {session?.page_url ? (
             <p className="text-xs text-rose-200/80 font-mono break-all">{session.page_url}</p>
           ) : null}
+          <div className="text-xs text-rose-100/90 space-y-1 pt-1">
+            <p className="font-medium text-rose-200">Импорт сессии (надёжный обход)</p>
+            <ol className="list-decimal list-inside space-y-0.5 max-w-prose">
+              <li>Войдите в Studio в обычном Chrome на доверенном ПК.</li>
+              <li>
+                Скопируйте <span className="font-mono">state.json</span> на сервер:{" "}
+                <span className="font-mono">data/playwright/youtube/{username}/state.json</span>
+              </li>
+              <li>Проверка «Подключение» в админке; VNC — для 2FA, не первый вход.</li>
+            </ol>
+            <p className="text-rose-200/70 pt-1">
+              Подробно: <span className="font-mono">docs/google-studio-vnc-runbook.md</span> в репозитории.
+              «Вставить в VNC» не обходит rejected.
+            </p>
+          </div>
         </div>
       ) : null}
 
