@@ -177,6 +177,31 @@ def _is_suspicious_browser_url(url: str | None) -> bool:
     return lower.startswith("chrome-error://") or lower.startswith("chrome://newtab")
 
 
+def _google_signin_rejected(url: str | None) -> bool:
+    if not url:
+        return False
+    lower = url.lower()
+    return "signin/rejected" in lower or "signin/v3/rejected" in lower
+
+
+def _google_signin_rejected_warning() -> str:
+    return (
+        "Google отклонил вход («браузер небезопасен»). "
+        "Смените прокси или: python -m app.cli proxy-studio-check <username>. "
+        "Не используйте «Google автозаполнение» — введите логин вручную в VNC "
+        "или кнопками «Вставить» после клика в поле. "
+        "Если отказ повторяется: войдите в обычном Chrome и «Сохранить сессию и куки»."
+    )
+
+
+def _maybe_warn_google_signin_rejected(session: BrowserSessionState, url: str | None) -> None:
+    if not _google_signin_rejected(url):
+        return
+    msg = _google_signin_rejected_warning()
+    session.launch_warning = msg
+    session.log("warn", "login", msg)
+
+
 def _on_studio_platform(url: str | None, platform: str) -> bool:
     if not url:
         return False
@@ -258,6 +283,11 @@ async def _open_studio_urls(
             and "accounts.google.com" in (page.url or "")
         ):
             await _try_google_studio_autofill(session, page, account)
+        _maybe_warn_google_signin_rejected(session, page.url)
+        return
+
+    if _google_signin_rejected(page.url):
+        _maybe_warn_google_signin_rejected(session, page.url)
         return
 
     session.launch_warning = _studio_goto_warning(platform, last_http, page.url)
@@ -285,6 +315,7 @@ async def _try_google_studio_autofill(session: BrowserSessionState, page, accoun
     except Exception as exc:  # noqa: BLE001
         session.log("warn", "autofill", f"Google autofill: {exc}")
         logger.warning("browser_session.google_autofill_failed", username=session.username, error=str(exc))
+    _maybe_warn_google_signin_rejected(session, page.url)
 
 
 def _goto_warning_message(http_status: int | None) -> str:
@@ -725,7 +756,7 @@ class BrowserSessionManager:
         account,
         proxy,
         *,
-        autofill_login: bool = True,
+        autofill_login: bool = False,
         surface: LoginSurface | str | None = None,
         proxy_snapshot: Any = None,
         studio_autofill: bool = False,
@@ -1293,6 +1324,7 @@ class BrowserSessionManager:
                             "poll",
                             f"Подозрительный URL страницы: {session.page_url}",
                         )
+                    _maybe_warn_google_signin_rejected(session, session.page_url)
             except Exception as exc:
                 session.log("warn", "poll", f"Ошибка опроса: {exc}")
                 logger.warning("browser_session.poll_error", username=session.username, error=str(exc))
@@ -1308,6 +1340,30 @@ class BrowserSessionManager:
             session.status = BrowserSessionStatus.awaiting_code
         if needs_code and not was_awaiting:
             session.log("warn", "code", "Обнаружен 2FA/challenge — нужен код подтверждения")
+
+    _PASTE_TEXT_MAX_LEN = 2000
+
+    @staticmethod
+    def _sanitize_paste_text(text: str) -> str:
+        cleaned = "".join(
+            ch for ch in text if ch in ("\n", "\t") or (ord(ch) >= 32 and ord(ch) != 127)
+        )
+        return cleaned[: BrowserSessionManager._PASTE_TEXT_MAX_LEN]
+
+    async def paste_text(self, account, text: str) -> None:
+        session = self._sessions.get(account.username)
+        if session is None or session.page is None:
+            raise RuntimeError("нет активной браузерной сессии для этого аккаунта")
+        if session.status not in (
+            BrowserSessionStatus.running,
+            BrowserSessionStatus.awaiting_code,
+        ):
+            raise RuntimeError("браузерная сессия не запущена")
+        payload = self._sanitize_paste_text(text or "")
+        if not payload:
+            raise ValueError("пустой текст для вставки")
+        await session.page.keyboard.insert_text(payload)
+        session.log("info", "paste", f"Вставлено в VNC: {len(payload)} символов")
 
     async def submit_code(self, db: Session, account, code: str | None) -> bool:
         session = self._sessions.get(account.username)

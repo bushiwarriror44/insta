@@ -84,6 +84,10 @@ Instagram-app User-Agent в Chromium Studio **не** подставляется.
 
 YouTube/TikTok в VNC: при старте открывается Studio (ladder: Studio → Google accounts при fail). Если страница пустая — в UI будет **warning**; кнопки «Открыть Studio» / «Google автозаполнение». Навигация идёт **в фоне** — noVNC подключается до завершения `goto`. `browser-vnc-diag` в `docker compose exec` **не видит** in-memory сессию API — смотрите `GET .../browser/status`.
 
+**Google «Couldn't sign you in» / `accounts.google.com/.../signin/rejected`:** Playwright Chromium на «плохом» прокси или IP часто получает отказ («браузер небезопасен»). В `GET .../browser/status` появится `warning`; в UI — красный alert. Обход: сменить прокси, `proxy-studio-check`, **не** жать «Google автозаполнение» — ввод вручную в VNC или кнопки «Вставить логин/пароль в VNC» (фокус в поле в Google, затем вставка). Повторный отказ: войти в обычном Chrome и импортировать сессию через «Сохранить сессию и куки».
+
+**Буфер и VNC:** кнопки на панели копируют в локальный буфер ОС; `POST /api/accounts/{username}/browser/paste` вставляет текст в сфокусированное поле Chromium (Playwright). Для обмена с noVNC используйте иконку буфера в панели noVNC или сочетание из подсказки в UI (зависит от сборки noVNC).
+
 Проверка прокси на Google с VPS (URL прокси из БД, без ручной подстановки USER/PASS):
 
 ```bash

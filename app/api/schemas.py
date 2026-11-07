@@ -328,6 +328,10 @@ class BrowserCodeIn(BaseModel):
     code: Optional[str] = Field(default=None, max_length=64)
 
 
+class BrowserPasteIn(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+
+
 class BrowserSaveOut(BrowserSessionOut):
     session_imported: bool = False
     session_id_saved: bool = False

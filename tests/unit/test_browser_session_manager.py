@@ -5,7 +5,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.browser.session_manager import BrowserSessionManager, BrowserSessionStatus
+from app.browser.session_manager import (
+    BrowserSessionManager,
+    BrowserSessionState,
+    BrowserSessionStatus,
+    _google_signin_rejected,
+    _maybe_warn_google_signin_rejected,
+)
 
 
 def test_proxy_login_blocked_ignores_unknown_cache():
@@ -1005,3 +1011,42 @@ async def test_apply_proxy_snapshot_updates_session_fields():
     assert session.proxy_ip == "9.9.9.9"
     assert session.proxy_geo_country == "US"
     assert session.proxy_instagram_login_reachable is False
+
+
+def test_google_signin_rejected_url():
+    assert _google_signin_rejected("https://accounts.google.com/v3/signin/rejected?flow=x") is True
+    assert _google_signin_rejected("https://studio.youtube.com/") is False
+    assert _google_signin_rejected(None) is False
+
+
+def test_maybe_warn_google_signin_rejected_sets_warning():
+    session = BrowserSessionState(username="yt")
+    _maybe_warn_google_signin_rejected(session, "https://accounts.google.com/v3/signin/rejected")
+    assert session.launch_warning is not None
+    assert "Google отклонил" in session.launch_warning
+
+
+def test_status_dict_exposes_google_warning():
+    mgr = BrowserSessionManager()
+    session = BrowserSessionState(username="yt")
+    session.launch_warning = "Google отклонил вход"
+    session.status = BrowserSessionStatus.running
+    mgr._sessions["yt"] = session
+    data = mgr.status_dict("yt")
+    assert data["warning"] == "Google отклонил вход"
+
+
+@pytest.mark.asyncio
+async def test_paste_text_requires_running_session():
+    mgr = BrowserSessionManager()
+    page = AsyncMock()
+    page.keyboard.insert_text = AsyncMock()
+    session = BrowserSessionState(
+        username="alice",
+        page=page,
+        status=BrowserSessionStatus.stopped,
+    )
+    mgr._sessions["alice"] = session
+    account = MagicMock(username="alice")
+    with pytest.raises(RuntimeError, match="не запущена"):
+        await mgr.paste_text(account, "hello")

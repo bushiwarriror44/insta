@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.accounts.login_identifier import resolve_login_identifier
 from app.api.deps import AuthDep, AuthPrincipal, get_db, resolve_principal, verify_ws_token
-from app.api.schemas import BrowserCodeIn, BrowserSaveOut, BrowserSessionOut, DiagnosticLogLineOut
+from app.api.schemas import BrowserCodeIn, BrowserPasteIn, BrowserSaveOut, BrowserSessionOut, DiagnosticLogLineOut
 from app.behavior.playwright_surface import resolve_playwright_surface
 from app.browser.session_manager import NavTarget, browser_session_manager
 from app.db import Account, Proxy
@@ -121,6 +121,23 @@ def browser_session_status(
     db: Session = Depends(get_db),
     principal: AuthPrincipal = Depends(resolve_principal),
 ) -> BrowserSessionOut:
+    return _browser_session_response(username, db, principal)
+
+
+@router.post("/{username}/browser/paste", response_model=BrowserSessionOut, dependencies=[AuthDep])
+async def paste_in_browser(
+    username: str,
+    payload: BrowserPasteIn,
+    db: Session = Depends(get_db),
+    principal: AuthPrincipal = Depends(resolve_principal),
+) -> BrowserSessionOut:
+    account = _get_account(username, db)
+    try:
+        await browser_session_manager.paste_text(account, payload.text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _browser_session_response(username, db, principal)
 
 

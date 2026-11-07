@@ -3,6 +3,7 @@ import {
   Bell,
   CheckCircle2,
   Clapperboard,
+  ClipboardPaste,
   Compass,
   Cookie,
   Copy,
@@ -43,7 +44,10 @@ import {
   copyTextToClipboard,
   formatDiagnosticLogPlain,
 } from "./DiagnosticLogPanel";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { StatusBadge } from "./StatusBadge";
+
+const VNC_PASTE_HINT_LS_KEY = "insta.vncPasteHintSeen";
 
 type BrowserNavTarget =
   | "auto"
@@ -119,6 +123,7 @@ export function InstagramBrowserPanel({
   const [totpAvailable, setTotpAvailable] = useState(true);
   const [totpSeedCopied, setTotpSeedCopied] = useState(false);
   const [totpCodeCopied, setTotpCodeCopied] = useState(false);
+  const [googleAutofillConfirmOpen, setGoogleAutofillConfirmOpen] = useState(false);
   const [lastStatusAt, setLastStatusAt] = useState<Date | null>(null);
   const pollRef = useRef<number | null>(null);
   const totpPollRef = useRef<number | null>(null);
@@ -252,8 +257,21 @@ export function InstagramBrowserPanel({
   }, [vncPath, session, adminToken]);
 
   const isSetup = mode === "setup";
+
+  const isGoogleSigninRejected = useMemo(() => {
+    const url = (session?.page_url ?? "").toLowerCase();
+    if (url.includes("signin/rejected") || url.includes("signin/v3/rejected")) {
+      return true;
+    }
+    const warn = session?.warning?.trim() ?? "";
+    return warn.startsWith("Google отклонил");
+  }, [session?.page_url, session?.warning]);
+
+  const showGoogleRejectedAlert = session?.status === "running" && isGoogleSigninRejected;
+
   const showBlankWarning =
     session?.status === "running" &&
+    !showGoogleRejectedAlert &&
     Boolean(
       session.warning ||
         session.page_url === "about:blank" ||
@@ -511,6 +529,59 @@ export function InstagramBrowserPanel({
     }
   }
 
+  async function copyAccountLogin() {
+    const value = session?.account_login?.trim();
+    if (!value) return;
+    const ok = await copyTextToClipboard(value);
+    push(ok ? "Логин скопирован" : "Не удалось скопировать логин", ok ? "success" : "error");
+  }
+
+  async function copyAccountPassword() {
+    const value = session?.account_password ?? "";
+    if (!value) return;
+    const ok = await copyTextToClipboard(value);
+    push(ok ? "Пароль скопирован" : "Не удалось скопировать пароль", ok ? "success" : "error");
+  }
+
+  async function pasteIntoVnc(text: string) {
+    if (!navReady) {
+      push("Сначала дождитесь готовности браузера", "error");
+      return;
+    }
+    const payload = text.trim();
+    if (!payload) return;
+    setBusy(true);
+    try {
+      const data = await api.accounts.browserPaste(username, payload);
+      applySession(data);
+      push("Текст вставлен в активный браузер VNC", "success");
+      if (!window.localStorage.getItem(VNC_PASTE_HINT_LS_KEY)) {
+        window.localStorage.setItem(VNC_PASTE_HINT_LS_KEY, "1");
+        push(
+          "Кликните в поле email/пароля в окне VNC, затем повторите «Вставить», если символы не появились",
+          "info"
+        );
+      }
+    } catch (err) {
+      push(formatApiError(err), "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function onGoogleAutofillClick() {
+    if (platform === "youtube") {
+      setGoogleAutofillConfirmOpen(true);
+      return;
+    }
+    void openStudio({ autofill: true });
+  }
+
+  function confirmGoogleAutofill() {
+    setGoogleAutofillConfirmOpen(false);
+    void openStudio({ autofill: true });
+  }
+
   const setupStep = savedOk ? 4 : live ? 2 : 1;
 
   const showStatusSkeleton =
@@ -531,6 +602,7 @@ export function InstagramBrowserPanel({
       return "Инициализация прокси и браузера…";
     }
     if (session.status === "running") {
+      if (showGoogleRejectedAlert) return "Google отклонил вход — см. инструкцию выше";
       if (showBlankWarning) return "Страница ещё не готова — см. предупреждение выше";
       if (savedOk) return "Сессия сохранена, при необходимости остановите браузер";
       return navReady ? "Можно переходить по разделам и сохранять сессию" : "Скоро откроется навигация";
@@ -542,7 +614,7 @@ export function InstagramBrowserPanel({
       return "Запустите браузер для работы в VNC";
     }
     return null;
-  }, [session, showBlankWarning, savedOk, navReady, live]);
+  }, [session, showBlankWarning, showGoogleRejectedAlert, savedOk, navReady, live]);
 
   return (
     <div className="space-y-4">
@@ -600,6 +672,23 @@ export function InstagramBrowserPanel({
         </div>
       ) : null}
 
+      {showGoogleRejectedAlert ? (
+        <div
+          className="rounded-lg border border-rose-500/50 bg-rose-950/35 p-3 text-sm text-rose-100 max-w-prose space-y-2 transition-colors duration-200"
+          role="alert"
+          aria-live="assertive"
+        >
+          <p className="font-medium text-rose-200">Google отклонил автоматизированный вход</p>
+          <p>
+            {session?.warning?.trim() ||
+              "Смените прокси или войдите вручную в VNC (кнопки «Вставить» после клика в поле)."}
+          </p>
+          {session?.page_url ? (
+            <p className="text-xs text-rose-200/80 font-mono break-all">{session.page_url}</p>
+          ) : null}
+        </div>
+      ) : null}
+
       {showBlankWarning ? (
         <div
           className="rounded-lg border border-amber-500/40 bg-amber-950/30 p-3 text-sm text-amber-100 max-w-prose transition-colors duration-200"
@@ -653,6 +742,44 @@ export function InstagramBrowserPanel({
               </button>
             ) : null}
           </p>
+          <div className="flex flex-wrap gap-2 pt-1">
+            <button
+              type="button"
+              className="btn-ghost text-xs"
+              disabled={!session.account_login}
+              onClick={() => void copyAccountLogin()}
+            >
+              <Copy size={12} className="shrink-0" />
+              Копировать логин
+            </button>
+            <button
+              type="button"
+              className="btn-ghost text-xs"
+              disabled={!session.account_password}
+              onClick={() => void copyAccountPassword()}
+            >
+              <Copy size={12} className="shrink-0" />
+              Копировать пароль
+            </button>
+            <button
+              type="button"
+              className="btn-ghost text-xs"
+              disabled={busy || !navReady || !session.account_login}
+              onClick={() => void pasteIntoVnc(session.account_login ?? "")}
+            >
+              <ClipboardPaste size={12} className="shrink-0" />
+              Вставить логин в VNC
+            </button>
+            <button
+              type="button"
+              className="btn-ghost text-xs"
+              disabled={busy || !navReady || !session.account_password}
+              onClick={() => void pasteIntoVnc(session.account_password ?? "")}
+            >
+              <ClipboardPaste size={12} className="shrink-0" />
+              Вставить пароль в VNC
+            </button>
+          </div>
           <div className="space-y-1">
             <label className="text-slate-400 text-xs" htmlFor={`account-notes-${username}`}>
               Заметки
@@ -783,6 +910,12 @@ export function InstagramBrowserPanel({
 
         <div>
           <p className="mb-2 text-[10px] uppercase tracking-wide text-slate-500">Запуск и открытие</p>
+          {platform === "youtube" ? (
+            <p className="mb-2 text-xs text-slate-500 max-w-prose">
+              «Google автозаполнение» имитирует ввод с клавиатуры; при отказе Google используйте «Вставить в
+              VNC» или ручной ввод.
+            </p>
+          ) : null}
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
@@ -810,7 +943,7 @@ export function InstagramBrowserPanel({
                     type="button"
                     className="btn-ghost text-xs hidden sm:inline-flex"
                     disabled={busy || !navReady}
-                    onClick={() => void openStudio({ autofill: true })}
+                    onClick={onGoogleAutofillClick}
                   >
                     <Keyboard size={14} className="shrink-0" />
                     Google автозаполнение
@@ -850,7 +983,7 @@ export function InstagramBrowserPanel({
                         type="button"
                         className="btn-ghost w-full justify-center text-xs"
                         disabled={busy || !navReady}
-                        onClick={() => void openStudio({ autofill: true })}
+                        onClick={onGoogleAutofillClick}
                       >
                         <Keyboard size={14} className="shrink-0" />
                         Google автозаполнение
@@ -1152,6 +1285,13 @@ export function InstagramBrowserPanel({
           ) : null}
           {vncUrl ? (
             <>
+              {live ? (
+                <p className="px-3 py-2 text-xs text-slate-500 border-b border-slate-800 max-w-prose">
+                  Буфер noVNC: иконка буфера в левой панели noVNC или сочетание Ctrl+Shift+Alt (зависит от
+                  сборки). Кнопки «Копировать» здесь — в буфер вашего ПК; «Вставить в VNC» шлёт текст в
+                  сфокусированное поле Chromium (кликните в поле Google перед вставкой).
+                </p>
+              ) : null}
               <iframe
                 title={vncIframeTitle}
                 src={vncUrl}
@@ -1189,6 +1329,16 @@ export function InstagramBrowserPanel({
       </div>
 
       {session?.error ? <p className="text-xs text-rose-300">{session.error}</p> : null}
+
+      <ConfirmDialog
+        open={googleAutofillConfirmOpen}
+        title="Google автозаполнение"
+        body="Google может отклонить автоматизированный ввод (signin/rejected). Предпочтительно ручной ввод в VNC или кнопки «Вставить» после клика в поле email/пароля."
+        confirmLabel="Всё равно автозаполнить"
+        cancelLabel="Отмена"
+        onConfirm={confirmGoogleAutofill}
+        onCancel={() => setGoogleAutofillConfirmOpen(false)}
+      />
     </div>
   );
 }

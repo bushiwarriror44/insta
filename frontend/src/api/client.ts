@@ -484,6 +484,11 @@ export const api = {
         `/api/accounts/${encodeURIComponent(username)}/browser/code`,
         { method: "POST", body: { code } }
       ),
+    browserPaste: (username: string, text: string) =>
+      request<BrowserSessionOut>(
+        `/api/accounts/${encodeURIComponent(username)}/browser/paste`,
+        { method: "POST", body: { text } }
+      ),
     browserSave: (username: string, opts?: { stopAfterSave?: boolean }) =>
       request<BrowserSaveOut>(
         `/api/accounts/${encodeURIComponent(username)}/browser/save`,

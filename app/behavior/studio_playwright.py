@@ -123,6 +123,8 @@ async def _detect_studio_challenge(page, platform: StudioPlatform) -> bool:
 async def _try_google_identifier(page, login_id: str) -> bool:
     if not login_id:
         return False
+    from app.behavior.warmup_playwright import _human_type_locator
+
     selectors = (
         'input[type="email"]',
         "#identifierId",
@@ -134,7 +136,7 @@ async def _try_google_identifier(page, login_id: str) -> bool:
             if await loc.count() == 0:
                 continue
             await loc.wait_for(state="visible", timeout=_STEP_WAIT_MS)
-            await loc.fill(login_id, timeout=_STEP_WAIT_MS)
+            await _human_type_locator(page, loc, login_id)
             next_btn = page.get_by_role("button", name="Next")
             if await next_btn.count():
                 await next_btn.first.click(timeout=_STEP_WAIT_MS)
@@ -150,6 +152,8 @@ async def _try_google_identifier(page, login_id: str) -> bool:
 async def _try_google_password(page, password: str) -> bool:
     if not password:
         return False
+    from app.behavior.warmup_playwright import _human_type_locator
+
     selectors = (
         'input[type="password"]',
         'input[name="Passwd"]',
@@ -161,7 +165,7 @@ async def _try_google_password(page, password: str) -> bool:
             if await loc.count() == 0:
                 continue
             await loc.wait_for(state="visible", timeout=_STEP_WAIT_MS)
-            await loc.fill(password, timeout=_STEP_WAIT_MS)
+            await _human_type_locator(page, loc, password)
             next_btn = page.get_by_role("button", name="Next")
             if await next_btn.count():
                 await next_btn.first.click(timeout=_STEP_WAIT_MS)

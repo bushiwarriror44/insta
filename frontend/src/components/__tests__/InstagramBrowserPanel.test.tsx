@@ -20,6 +20,7 @@ const apiMock = vi.hoisted(() => ({
   browserStop: vi.fn(),
   browserSubmitCode: vi.fn(),
   browserOpenInstagram: vi.fn(),
+  browserPaste: vi.fn(),
   updateNotes: vi.fn(),
   getTotp: vi.fn(),
 }));
@@ -106,7 +107,7 @@ describe("InstagramBrowserPanel", () => {
 
     expect(await screen.findByText(/Автопереход на Instagram/i)).toBeInTheDocument();
     expect(screen.getByText(/instagram.com\/accounts\/login/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Копировать лог/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Копировать лог$/i })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: /диагностика/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Рилс$/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Лента$/i })).toBeInTheDocument();
@@ -321,6 +322,103 @@ describe("InstagramBrowserPanel", () => {
     expect(
       await screen.findByText(/Секрет TOTP не задан — добавьте в настройках аккаунта/i)
     ).toBeInTheDocument();
+  });
+
+  it("shows Google signin/rejected alert", async () => {
+    apiMock.browserStatus.mockResolvedValue({
+      username: "ytuser",
+      status: "running",
+      awaiting_code: false,
+      vnc_path: "api/accounts/ytuser/browser/vnc/ws",
+      page_url: "https://accounts.google.com/v3/signin/rejected",
+      warning:
+        "Google отклонил вход («браузер небезопасен»). Смените прокси или войдите вручную в VNC.",
+      account_username: "ytuser",
+      account_login: "yt@mail.com",
+      account_password: "x",
+      account_notes: null,
+    });
+
+    render(
+      <ToastProvider>
+        <InstagramBrowserPanel username="ytuser" adminToken="tok" platform="youtube" />
+      </ToastProvider>
+    );
+
+    expect(await screen.findByText(/Google отклонил автоматизированный вход/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/signin\/rejected/i).length).toBeGreaterThan(0);
+  });
+
+  it("copy and paste account credentials", async () => {
+    const { copyTextToClipboard } = await import("../DiagnosticLogPanel");
+    const copySpy = vi.mocked(copyTextToClipboard);
+    copySpy.mockResolvedValue(true);
+    apiMock.browserPaste.mockResolvedValue({
+      username: "alice",
+      status: "running",
+      awaiting_code: false,
+      vnc_path: "api/accounts/alice/browser/vnc/ws",
+      account_username: "alice",
+      account_login: "alice@mail.com",
+      account_password: "secret123",
+    });
+
+    render(
+      <ToastProvider>
+        <InstagramBrowserPanel username="alice" adminToken="tok" />
+      </ToastProvider>
+    );
+
+    await screen.findByRole("button", { name: /Копировать логин/i });
+    fireEvent.click(screen.getByRole("button", { name: /Копировать пароль/i }));
+    await waitFor(() => {
+      expect(copySpy).toHaveBeenCalledWith("secret123");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Вставить логин в VNC/i }));
+    await waitFor(() => {
+      expect(apiMock.browserPaste).toHaveBeenCalledWith("alice", "alice@mail.com");
+    });
+  });
+
+  it("confirms YouTube Google autofill", async () => {
+    apiMock.browserStatus.mockResolvedValue({
+      username: "ytuser",
+      status: "running",
+      awaiting_code: false,
+      vnc_path: "api/accounts/ytuser/browser/vnc/ws",
+      account_username: "ytuser",
+      account_login: "yt@mail.com",
+      account_password: "secret",
+      account_notes: null,
+    });
+    apiMock.browserOpenInstagram.mockResolvedValue({
+      username: "ytuser",
+      status: "running",
+      awaiting_code: false,
+      vnc_path: "api/accounts/ytuser/browser/vnc/ws",
+    });
+
+    render(
+      <ToastProvider>
+        <InstagramBrowserPanel username="ytuser" adminToken="tok" platform="youtube" />
+      </ToastProvider>
+    );
+
+    await screen.findByTitle(/Браузер VNC YouTube · @ytuser/i);
+    const autofillBtn = primaryToolbarButton(/Google автозаполнение/i);
+    expect(autofillBtn).not.toBeDisabled();
+    fireEvent.click(autofillBtn);
+    expect(
+      await screen.findByText(/Google может отклонить автоматизированный ввод/i)
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Всё равно автозаполнить/i }));
+    await waitFor(() => {
+      expect(apiMock.browserOpenInstagram).toHaveBeenCalledWith("ytuser", {
+        autofill: true,
+        target: "auto",
+      });
+    });
   });
 
   it("shows Studio actions for YouTube, not Instagram quick nav", async () => {

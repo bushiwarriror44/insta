@@ -1,6 +1,9 @@
 """Tests for headless Studio login."""
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from app.behavior import studio_playwright as sp
 
@@ -63,5 +66,33 @@ def test_probe_liveness_skips_without_cookies(monkeypatch):
     )
     assert out.ok is False
     assert "диске" in (out.error or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_try_google_identifier_uses_human_type_not_fill(monkeypatch):
+    human = AsyncMock()
+    monkeypatch.setattr("app.behavior.warmup_playwright._human_type_locator", human)
+    monkeypatch.setattr(sp.asyncio, "sleep", AsyncMock())
+
+    loc = MagicMock()
+    loc.count = AsyncMock(return_value=1)
+    loc.wait_for = AsyncMock()
+    loc.fill = AsyncMock()
+
+    chain = MagicMock()
+    chain.first = loc
+    page = MagicMock()
+    page.locator = MagicMock(return_value=chain)
+
+    next_btn = MagicMock()
+    next_btn.count = AsyncMock(return_value=0)
+    page.get_by_role = MagicMock(return_value=next_btn)
+    page.keyboard = MagicMock()
+    page.keyboard.press = AsyncMock()
+
+    ok = await sp._try_google_identifier(page, "user@example.com")
+    assert ok is True
+    human.assert_awaited_once()
+    loc.fill.assert_not_awaited()
 
 

@@ -2,6 +2,7 @@
 #
 # Copy to /etc/nginx/sites-available/insta and reload nginx.
 # REQUIRED for noVNC: WebSocket Upgrade headers on the outer proxy.
+# Clipboard in embedded noVNC also needs Permissions-Policy (see add_header below).
 #
 #   sudo cp deploy/host-nginx.conf.example /etc/nginx/sites-available/insta
 #   sudo nginx -t && sudo systemctl reload nginx
@@ -19,6 +20,7 @@ server {
     client_max_body_size 512m;
 
     location / {
+        add_header Permissions-Policy "clipboard-read=*, clipboard-write=*" always;
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
