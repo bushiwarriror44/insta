@@ -23,6 +23,8 @@ const apiMock = vi.hoisted(() => ({
   browserPaste: vi.fn(),
   updateNotes: vi.fn(),
   getTotp: vi.fn(),
+  importCookiesFile: vi.fn(),
+  testConnection: vi.fn(),
 }));
 
 vi.mock("../../api/client", async () => {
@@ -61,6 +63,8 @@ describe("InstagramBrowserPanel", () => {
     apiMock.browserSave.mockReset();
     apiMock.updateNotes.mockReset();
     apiMock.getTotp.mockReset();
+    apiMock.importCookiesFile.mockReset();
+    apiMock.testConnection.mockReset();
     apiMock.getTotp.mockResolvedValue({
       totp_seed: "JBSWY3DPEHPK3PXP",
       code: "654321",
@@ -350,6 +354,50 @@ describe("InstagramBrowserPanel", () => {
     expect(screen.getByText(/Импорт сессии \(надёжный обход\)/i)).toBeInTheDocument();
     expect(screen.getByText(/google-studio-vnc-runbook/i)).toBeInTheDocument();
     expect(screen.getByText(/не обходит rejected/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Загрузить Playwright state/i })).toBeInTheDocument();
+  });
+
+  it("imports Playwright state and probes Studio connection", async () => {
+    apiMock.browserStatus.mockResolvedValue({
+      username: "ytuser",
+      status: "running",
+      awaiting_code: false,
+      vnc_path: "api/accounts/ytuser/browser/vnc/ws",
+      page_url: "https://accounts.google.com/v3/signin/rejected",
+      account_username: "ytuser",
+      account_login: "yt@mail.com",
+      account_password: "x",
+      account_notes: null,
+    });
+    apiMock.importCookiesFile.mockResolvedValue({
+      format: "playwright_state",
+      playwright_state_saved: true,
+    });
+    apiMock.testConnection.mockResolvedValue({
+      overall_ok: true,
+      studio_liveness_ok: true,
+    });
+
+    render(
+      <ToastProvider>
+        <InstagramBrowserPanel username="ytuser" adminToken="tok" platform="youtube" />
+      </ToastProvider>
+    );
+
+    await screen.findByRole("button", { name: /Загрузить Playwright state/i });
+    fireEvent.click(screen.getByRole("button", { name: /Загрузить Playwright state/i }));
+
+    const input = document.getElementById("studio-state-file-ytuser") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    const file = new File(['{"cookies":[]}'], "state.json", { type: "application/json" });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(apiMock.importCookiesFile).toHaveBeenCalledWith("ytuser", file);
+    });
+    await waitFor(() => {
+      expect(apiMock.testConnection).toHaveBeenCalledWith("ytuser", { probeStudio: true });
+    });
   });
 
   it("copy and paste account credentials", async () => {

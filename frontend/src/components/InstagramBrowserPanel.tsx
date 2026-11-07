@@ -25,6 +25,7 @@ import {
   Send,
   Smartphone,
   Square,
+  Upload,
   User,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -48,6 +49,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { StatusBadge } from "./StatusBadge";
 
 const VNC_PASTE_HINT_LS_KEY = "insta.vncPasteHintSeen";
+const STUDIO_STATE_IMPORT_MAX_BYTES = 5 * 1024 * 1024;
 
 type BrowserNavTarget =
   | "auto"
@@ -124,9 +126,11 @@ export function InstagramBrowserPanel({
   const [totpSeedCopied, setTotpSeedCopied] = useState(false);
   const [totpCodeCopied, setTotpCodeCopied] = useState(false);
   const [googleAutofillConfirmOpen, setGoogleAutofillConfirmOpen] = useState(false);
+  const [stateImportBusy, setStateImportBusy] = useState(false);
   const [lastStatusAt, setLastStatusAt] = useState<Date | null>(null);
   const pollRef = useRef<number | null>(null);
   const totpPollRef = useRef<number | null>(null);
+  const studioStateInputRef = useRef<HTMLInputElement>(null);
   const prevPageUrlForSaveRef = useRef<string | null | "__init__">("__init__");
 
   const applySession = useCallback((data: BrowserSessionOut) => {
@@ -582,6 +586,95 @@ export function InstagramBrowserPanel({
     void openStudio({ autofill: true });
   }
 
+  async function importStudioStateFile(file: File) {
+    if (platform !== "youtube") return;
+    if (file.size === 0) {
+      push("Файл пуст", "error");
+      return;
+    }
+    if (file.size > STUDIO_STATE_IMPORT_MAX_BYTES) {
+      push("Файл слишком большой (макс. 5 МБ)", "error");
+      return;
+    }
+    const nameOk = file.name.toLowerCase().endsWith(".json");
+    const typeOk = !file.type || file.type === "application/json";
+    if (!nameOk && !typeOk) {
+      push("Нужен JSON Playwright state (state.json)", "error");
+      return;
+    }
+    setStateImportBusy(true);
+    try {
+      const result = await api.accounts.importCookiesFile(username, file);
+      if (result.format !== "playwright_state" && !result.playwright_state_saved) {
+        push("Не удалось сохранить Playwright state — проверьте формат JSON", "error");
+        return;
+      }
+      push("Playwright state сохранён на сервере", "success");
+      const probe = await api.accounts.testConnection(username, { probeStudio: true });
+      if (probe.overall_ok) {
+        if (probe.studio_liveness_ok === false) {
+          const detail = probe.studio_liveness_error?.trim();
+          push(
+            detail
+              ? `Подключение OK, но Studio liveness: ${detail}`
+              : "Подключение OK, Studio liveness сомнителен — смените прокси или обновите cookies",
+            "info"
+          );
+        } else {
+          push("Подключение и Studio probe успешны", "success");
+        }
+      } else {
+        push("State импортирован, но проверка подключения не прошла", "error");
+      }
+    } catch (err) {
+      push(formatApiError(err), "error");
+    } finally {
+      setStateImportBusy(false);
+      void refreshStatus();
+    }
+  }
+
+  function onStudioStateFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (file) void importStudioStateFile(file);
+  }
+
+  const studioStateImportButton =
+    platform === "youtube" ? (
+      <button
+        type="button"
+        className="btn-ghost text-xs inline-flex items-center gap-1"
+        disabled={stateImportBusy || busy}
+        aria-label="Загрузить Playwright state"
+        onClick={() => studioStateInputRef.current?.click()}
+      >
+        {stateImportBusy ? (
+          <Loader2 size={12} className="shrink-0 animate-spin" aria-hidden />
+        ) : (
+          <Upload size={12} className="shrink-0" aria-hidden />
+        )}
+        Загрузить Playwright state
+      </button>
+    ) : null;
+
+  const studioStateImportHint =
+    platform === "youtube" ? (
+      <p className="text-xs text-slate-500 max-w-prose">
+        Войдите в Studio в обычном Chrome на ПК, экспортируйте{" "}
+        <span className="font-mono">state.json</span>, выберите файл — импорт и проверка подключения
+        (probe Studio) выполнятся автоматически. Google-login в VNC не нужен.
+      </p>
+    ) : null;
+
+  const studioStateImportBlock =
+    platform === "youtube" ? (
+      <div className="space-y-2">
+        {studioStateImportButton}
+        {studioStateImportHint}
+      </div>
+    ) : null;
+
   const setupStep = savedOk ? 4 : live ? 2 : 1;
 
   const showStatusSkeleton =
@@ -618,6 +711,17 @@ export function InstagramBrowserPanel({
 
   return (
     <div className="space-y-4">
+      {platform === "youtube" ? (
+        <input
+          ref={studioStateInputRef}
+          id={`studio-state-file-${username}`}
+          type="file"
+          accept=".json,application/json"
+          className="sr-only"
+          tabIndex={-1}
+          onChange={onStudioStateFileChange}
+        />
+      ) : null}
       {isSetup ? (
         <p className="text-xs text-slate-400">
           Браузер открыт в режиме:{" "}
@@ -686,19 +790,16 @@ export function InstagramBrowserPanel({
           {session?.page_url ? (
             <p className="text-xs text-rose-200/80 font-mono break-all">{session.page_url}</p>
           ) : null}
-          <div className="text-xs text-rose-100/90 space-y-1 pt-1">
+          <div className="text-xs text-rose-100/90 space-y-2 pt-1">
             <p className="font-medium text-rose-200">Импорт сессии (надёжный обход)</p>
-            <ol className="list-decimal list-inside space-y-0.5 max-w-prose">
-              <li>Войдите в Studio в обычном Chrome на доверенном ПК.</li>
-              <li>
-                Скопируйте <span className="font-mono">state.json</span> на сервер:{" "}
-                <span className="font-mono">data/playwright/youtube/{username}/state.json</span>
-              </li>
-              <li>Проверка «Подключение» в админке; VNC — для 2FA, не первый вход.</li>
-            </ol>
-            <p className="text-rose-200/70 pt-1">
-              Подробно: <span className="font-mono">docs/google-studio-vnc-runbook.md</span> в репозитории.
-              «Вставить в VNC» не обходит rejected.
+            {studioStateImportBlock ? (
+              <div className="[&_p]:text-rose-100/80 [&_button]:border-rose-400/30">
+                {studioStateImportBlock}
+              </div>
+            ) : null}
+            <p className="text-rose-200/70">
+              «Вставить в VNC» не обходит rejected. Подробно:{" "}
+              <span className="font-mono">docs/google-studio-vnc-runbook.md</span>.
             </p>
           </div>
         </div>
@@ -795,6 +896,7 @@ export function InstagramBrowserPanel({
               Вставить пароль в VNC
             </button>
           </div>
+          {!showGoogleRejectedAlert ? studioStateImportBlock : null}
           <div className="space-y-1">
             <label className="text-slate-400 text-xs" htmlFor={`account-notes-${username}`}>
               Заметки

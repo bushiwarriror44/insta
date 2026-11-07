@@ -11,13 +11,14 @@
 3. Сохраните Playwright storage state в `state.json` (cookies + localStorage):
    - экспорт через админку с машины, где логин уже прошёл (`GET /api/accounts/{username}/playwright-state`), **или**
    - локальный скрипт Playwright: `context.storage_state(path="state.json")` после ручного логина.
-4. Скопируйте файл на VPS (путь записи для YouTube):
+4. **Основной путь (без SSH):** в админке откройте браузер YouTube для аккаунта → **«Загрузить Playwright state»** → выберите файл. UI вызовет `POST .../cookies/import` и сразу **Проверку подключения** с `probe_studio=true`. Успех в toast: state на диске, Studio probe OK.
+5. **Fallback для ops:** `scp` на VPS:
    - `data/playwright/youtube/<username>/state.json`
    - пример:
      ```bash
      scp state.json root@VPS:/opt/insta/data/playwright/youtube/AuraBluekudsv/state.json
      ```
-5. В админке: **Подключение** для аккаунта (при необходимости с probe Studio).
+   Затем вручную **Подключение** (probe Studio) в админке.
 6. Используйте VNC дальше только для **2FA / обновления сессии**, не как основной способ первого Google-login.
 
 Импорт через чат: `import_cookies` — см. [assistant-handbook.md](assistant-handbook.md).

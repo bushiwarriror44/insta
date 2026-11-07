@@ -89,8 +89,8 @@ YouTube/TikTok в VNC: при старте открывается Studio (ladder
 **Обход rejected:**
 
 1. Вход в **домашнем Google Chrome** → Studio открыт.
-2. Импорт `state.json`: `data/playwright/youtube/<username>/state.json` — см. [google-studio-vnc-runbook.md](google-studio-vnc-runbook.md).
-3. `test_connection` / probe Studio через прокси аккаунта.
+2. Импорт `state.json`: в панели браузера YouTube — **«Загрузить Playwright state»** (импорт + автоматический probe Studio); файл попадает в `data/playwright/youtube/<username>/state.json`. Альтернатива: `scp` — см. [google-studio-vnc-runbook.md](google-studio-vnc-runbook.md).
+3. При загрузке через UI probe Studio уже выполняется; иначе — **Подключение** / `test_connection` в админке.
 4. Смена прокси при повторном отказе; VNC — для 2FA, не для первого login.
 5. Опционально `BROWSER_VNC_CHANNEL=chrome` (runbook) — не заменяет плохой IP.
 
