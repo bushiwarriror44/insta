@@ -822,6 +822,38 @@ export const api = {
       }),
   },
 
+  heroSms: {
+    status: () => request<import("./types").HeroSmsStatusOut>("/api/hero-sms/status"),
+    setApiKey: (apiKey: string) =>
+      request<import("./types").HeroSmsStatusOut>("/api/hero-sms/api-key", {
+        method: "PUT",
+        body: { api_key: apiKey },
+      }),
+    countries: () => request<unknown>("/api/hero-sms/countries"),
+    services: () => request<unknown>("/api/hero-sms/services"),
+    prices: (service: string, country?: number) => {
+      const q = new URLSearchParams({ service });
+      if (country != null) q.set("country", String(country));
+      return request<import("./types").HeroSmsPricesOut>(`/api/hero-sms/prices?${q}`);
+    },
+    order: (body: import("./types").HeroSmsOrderIn) =>
+      request<import("./types").HeroSmsOrderOut>("/api/hero-sms/order", { method: "POST", body }),
+    active: () => request<import("./types").HeroSmsActiveOut>("/api/hero-sms/activations/active"),
+    activationStatus: (id: string) =>
+      request<import("./types").HeroSmsActivationStatusOut>(
+        `/api/hero-sms/activations/${encodeURIComponent(id)}/status`
+      ),
+    activationAction: (id: string, status: 3 | 6 | 8) =>
+      request<{ result: string }>(`/api/hero-sms/activations/${encodeURIComponent(id)}/action`, {
+        method: "POST",
+        body: { status },
+      }),
+    history: (size = 20) =>
+      request<import("./types").HeroSmsHistoryOut>(
+        `/api/hero-sms/history?size=${encodeURIComponent(String(size))}`
+      ),
+  },
+
   floppydata: {
     status: () => request<import("./types").FloppydataStatusOut>("/api/floppydata/status"),
     setApiKey: (apiKey: string) =>

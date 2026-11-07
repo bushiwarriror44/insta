@@ -22,6 +22,7 @@ from app.api.routes import (
     events,
     factory,
     floppydata,
+    hero_sms,
     gpu,
     health,
     jobs,
@@ -150,6 +151,7 @@ def create_app() -> FastAPI:
     app.include_router(browser.router)
     app.include_router(proxies.router)
     app.include_router(floppydata.router)
+    app.include_router(hero_sms.router)
     app.include_router(videos.router)
     app.include_router(jobs.router)
     app.include_router(diagnostics.router)

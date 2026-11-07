@@ -117,6 +117,95 @@ export interface FloppydataStatusOut {
   error?: string | null;
 }
 
+export interface HeroSmsFormState {
+  service: string;
+  country_id?: number | null;
+  operator?: string | null;
+  strict_price?: boolean;
+}
+
+export interface HeroSmsStatusOut {
+  configured: boolean;
+  key_from_env: boolean;
+  balance?: number | null;
+  last_form?: HeroSmsFormState | null;
+  error?: string | null;
+}
+
+export interface HeroSmsPriceRow {
+  country_id: number;
+  cost?: number | null;
+  count: number;
+  physical_count: number;
+}
+
+export interface HeroSmsPricesOut {
+  service: string;
+  rows: HeroSmsPriceRow[];
+}
+
+export interface HeroSmsOrderIn {
+  service: string;
+  country_id: number;
+  operator?: string | null;
+  max_price?: number | null;
+  strict_price?: boolean;
+}
+
+export interface HeroSmsOrderOut {
+  activation_id: string;
+  phone_number: string;
+  phone_e164: string;
+  activation_cost?: number | null;
+  country_id?: number | null;
+  service_code?: string | null;
+  activation_time?: string | null;
+  activation_end_time?: string | null;
+  can_get_another_sms?: boolean;
+}
+
+export interface HeroSmsSmsOut {
+  code?: string | null;
+  text?: string | null;
+  date_time?: string | null;
+}
+
+export interface HeroSmsActivationStatusOut {
+  activation_id: string;
+  sms?: HeroSmsSmsOut | null;
+  waiting: boolean;
+}
+
+export interface HeroSmsActiveActivationOut {
+  activation_id: string;
+  service_code: string;
+  phone_number: string;
+  phone_e164: string;
+  activation_cost?: number | null;
+  country_id?: number | null;
+  sms_code?: string | null;
+  sms_text?: string | null;
+  activation_time?: string | null;
+  receive_sms_date?: string | null;
+}
+
+export interface HeroSmsActiveOut {
+  items: HeroSmsActiveActivationOut[];
+}
+
+export interface HeroSmsHistoryItemOut {
+  id: string;
+  date?: string | null;
+  phone?: string | null;
+  sms?: string | null;
+  cost?: number | null;
+  status?: string | null;
+}
+
+export interface HeroSmsHistoryOut {
+  items: HeroSmsHistoryItemOut[];
+}
+
 export interface FloppydataGenerateIn {
   type: FloppydataProxyType;
   country: string;

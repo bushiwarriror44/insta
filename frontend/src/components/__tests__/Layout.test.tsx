@@ -85,6 +85,8 @@ function renderAt(path = "/") {
               <div>ACC</div>
             </>
           } />
+          <Route path="/hero-sms" element={<div>HEROSMS</div>} />
+          <Route path="/browser" element={<div>BROWSER</div>} />
           <Route path="/publishing" element={<div>PUB</div>} />
           <Route path="/agent" element={<div>AGENT</div>} />
           <Route path="/renders" element={<div>RENDERS</div>} />
@@ -133,6 +135,8 @@ describe("Layout", () => {
     renderAt("/accounts");
     expect(screen.getByTestId("nav-dashboard")).toBeInTheDocument();
     expect(screen.getByTestId("nav-accounts")).toBeInTheDocument();
+    expect(screen.getByTestId("nav-hero-sms")).toBeInTheDocument();
+    expect(screen.getByTestId("nav-browser")).toBeInTheDocument();
     expect(screen.getByTestId("nav-publishing")).toBeInTheDocument();
     expect(screen.getByTestId("nav-agent")).toBeInTheDocument();
     expect(screen.getByTestId("nav-renders")).toBeInTheDocument();

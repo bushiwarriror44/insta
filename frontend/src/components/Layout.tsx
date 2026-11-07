@@ -7,6 +7,8 @@ import {
   KeyRound,
   LayoutDashboard,
   Library,
+  MonitorPlay,
+  Smartphone,
   LogOut,
   Menu,
   Settings as SettingsIcon,
@@ -34,6 +36,8 @@ import { Modal } from "./Modal";
 const NAV = [
   { to: "/", label: "Панель", icon: LayoutDashboard, end: true, testId: "nav-dashboard" },
   { to: "/accounts", label: "Аккаунты", icon: Users, testId: "nav-accounts" },
+  { to: "/hero-sms", label: "Hero SMS", icon: Smartphone, testId: "nav-hero-sms" },
+  { to: "/browser", label: "Браузер", icon: MonitorPlay, testId: "nav-browser" },
   { to: "/publishing", label: "Библиотека", icon: Library, testId: "nav-publishing" },
   { to: "/agent", label: "Агент", icon: Sparkles, testId: "nav-agent", badge: "questions" as const },
   { to: "/renders", label: "Рендеры", icon: Clapperboard, testId: "nav-renders" },

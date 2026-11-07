@@ -140,6 +140,8 @@ class Settings(BaseSettings):
     outbound_proxy: str = Field(default="")
     floppydata_api_key: str = Field(default="")
     floppydata_base_url: str = Field(default="https://api.floppydata.net")
+    hero_sms_api_key: str = Field(default="")
+    hero_sms_handler_url: str = Field(default="https://hero-sms.com/stubs/handler_api.php")
     media_dir: Path = Field(default=Path("data/videos/source"))
 
     def effective_generation_timeout(self) -> float:

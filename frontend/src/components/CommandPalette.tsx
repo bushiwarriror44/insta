@@ -9,6 +9,8 @@ import {
   KeyRound,
   LayoutDashboard,
   Library,
+  MonitorPlay,
+  Smartphone,
   MessageSquare,
   Settings as SettingsIcon,
   Sparkles,
@@ -36,6 +38,8 @@ interface Command {
 const PAGES: { label: string; to: string; icon: LucideIcon }[] = [
   { label: "Панель", to: "/", icon: LayoutDashboard },
   { label: "Аккаунты", to: "/accounts", icon: Users },
+  { label: "Hero SMS", to: "/hero-sms", icon: Smartphone },
+  { label: "Браузер", to: "/browser", icon: MonitorPlay },
   { label: "Библиотека", to: "/publishing", icon: Library },
   { label: "Агент", to: "/agent", icon: Sparkles },
   { label: "Рендеры", to: "/renders", icon: Clapperboard },
@@ -133,6 +137,14 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
         icon: Users,
         go: () => navigate(`/accounts?username=${encodeURIComponent(account.username)}`),
       });
+      if (account.proxy_label) {
+        all.push({
+          label: `Браузер · @${account.username}`,
+          hint: `vnc · ${account.platform || "instagram"}`,
+          icon: MonitorPlay,
+          go: () => navigate(`/browser?username=${encodeURIComponent(account.username)}`),
+        });
+      }
     }
     for (const job of jobs) {
       all.push({

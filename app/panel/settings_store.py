@@ -133,6 +133,57 @@ def floppydata_key_from_env() -> bool:
     return bool((settings.floppydata_api_key or "").strip())
 
 
+def resolve_hero_sms_api_key(db: Session) -> str:
+    """Env HERO_SMS_API_KEY wins; otherwise PanelSettings.hero_sms_api_key."""
+    env_key = (settings.hero_sms_api_key or "").strip()
+    if env_key:
+        return env_key
+    row = get_or_create_panel_settings(db)
+    return (getattr(row, "hero_sms_api_key", None) or "").strip()
+
+
+def set_hero_sms_api_key(db: Session, api_key: str) -> str:
+    row = get_or_create_panel_settings(db)
+    cleaned = (api_key or "").strip()
+    row.hero_sms_api_key = cleaned or None
+    db.commit()
+    db.refresh(row)
+    return (row.hero_sms_api_key or "").strip()
+
+
+def hero_sms_key_from_env() -> bool:
+    return bool((settings.hero_sms_api_key or "").strip())
+
+
+def get_hero_sms_last_form(db: Session) -> dict[str, Any] | None:
+    row = get_or_create_panel_settings(db)
+    raw = getattr(row, "hero_sms_last_form", None)
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def set_hero_sms_last_form(db: Session, form: dict[str, Any] | None) -> dict[str, Any] | None:
+    row = get_or_create_panel_settings(db)
+    if not form:
+        row.hero_sms_last_form = None
+        db.commit()
+        db.refresh(row)
+        return None
+    cleaned: dict[str, Any] = {}
+    for key in ("service", "country_id", "operator", "strict_price"):
+        if key in form and form[key] is not None:
+            cleaned[key] = form[key]
+    row.hero_sms_last_form = json.dumps(cleaned, ensure_ascii=False) if cleaned else None
+    db.commit()
+    db.refresh(row)
+    return cleaned or None
+
+
 def get_floppydata_last_form(db: Session) -> dict[str, Any] | None:
     row = get_or_create_panel_settings(db)
     raw = getattr(row, "floppydata_last_form", None)

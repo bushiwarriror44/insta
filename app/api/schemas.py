@@ -613,6 +613,107 @@ class FloppydataImportIn(BaseModel):
     form: Optional[FloppydataFormState] = None
 
 
+class HeroSmsFormState(BaseModel):
+    service: str = Field(default="", max_length=32)
+    country_id: Optional[int] = Field(default=None, ge=0)
+    operator: Optional[str] = Field(default=None, max_length=64)
+    strict_price: bool = False
+
+
+class HeroSmsStatusOut(BaseModel):
+    configured: bool
+    key_from_env: bool
+    balance: Optional[float] = None
+    last_form: Optional[HeroSmsFormState] = None
+    error: Optional[str] = None
+
+
+class HeroSmsApiKeyIn(BaseModel):
+    api_key: str = Field(default="", max_length=500)
+
+
+class HeroSmsPriceRow(BaseModel):
+    country_id: int
+    cost: Optional[float] = None
+    count: int = 0
+    physical_count: int = 0
+
+
+class HeroSmsPricesOut(BaseModel):
+    service: str
+    rows: list[HeroSmsPriceRow]
+
+
+class HeroSmsOrderIn(BaseModel):
+    service: str = Field(min_length=1, max_length=32)
+    country_id: int = Field(ge=0)
+    operator: Optional[str] = Field(default=None, max_length=64)
+    max_price: Optional[float] = Field(default=None, ge=0)
+    strict_price: bool = False
+
+
+class HeroSmsOrderOut(BaseModel):
+    activation_id: str
+    phone_number: str
+    phone_e164: str
+    activation_cost: Optional[float] = None
+    country_id: Optional[int] = None
+    service_code: Optional[str] = None
+    activation_time: Optional[str] = None
+    activation_end_time: Optional[str] = None
+    can_get_another_sms: bool = False
+
+
+class HeroSmsSmsOut(BaseModel):
+    code: Optional[str] = None
+    text: Optional[str] = None
+    date_time: Optional[str] = None
+
+
+class HeroSmsActivationStatusOut(BaseModel):
+    activation_id: str
+    sms: Optional[HeroSmsSmsOut] = None
+    waiting: bool = True
+
+
+class HeroSmsSetStatusIn(BaseModel):
+    status: Literal[3, 6, 8]
+
+
+class HeroSmsSetStatusOut(BaseModel):
+    result: str
+
+
+class HeroSmsActiveActivationOut(BaseModel):
+    activation_id: str
+    service_code: str = ""
+    phone_number: str = ""
+    phone_e164: str = ""
+    activation_cost: Optional[float] = None
+    country_id: Optional[int] = None
+    sms_code: Optional[str] = None
+    sms_text: Optional[str] = None
+    activation_time: Optional[str] = None
+    receive_sms_date: Optional[str] = None
+
+
+class HeroSmsActiveOut(BaseModel):
+    items: list[HeroSmsActiveActivationOut]
+
+
+class HeroSmsHistoryItemOut(BaseModel):
+    id: str
+    date: Optional[str] = None
+    phone: Optional[str] = None
+    sms: Optional[str] = None
+    cost: Optional[float] = None
+    status: Optional[str] = None
+
+
+class HeroSmsHistoryOut(BaseModel):
+    items: list[HeroSmsHistoryItemOut]
+
+
 class PanelEntryPathUpdateIn(BaseModel):
     path: str = Field(min_length=12, max_length=200)
     current_password: str = Field(min_length=1)

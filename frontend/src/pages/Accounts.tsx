@@ -19,7 +19,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { api, formatApiError } from "../api/client";
 import { Card } from "../components/Card";
@@ -202,6 +202,12 @@ export function Accounts() {
   const [proxyCheckProgress, setProxyCheckProgress] = useState({ done: 0, total: 0 });
   const download = searchParams.get("download");
   const downloadFormat = searchParams.get("format") === "txt" ? "txt" : "json";
+  const phoneFromUrl = searchParams.get("phone")?.trim() || "";
+
+  useEffect(() => {
+    if (!phoneFromUrl) return;
+    setOpenAccount(true);
+  }, [phoneFromUrl]);
 
   const reload = useCallback(async () => {
     const [a, p] = await Promise.all([api.accounts.list(), api.proxies.list()]);
@@ -1294,6 +1300,22 @@ export function Accounts() {
                             <MonitorPlay size={12} />
                             Браузер
                           </button>
+                          <Link
+                            to={`/browser?username=${encodeURIComponent(a.username)}`}
+                            className="inline-flex items-center gap-1 text-[11px] font-normal text-sky-300/80 hover:text-sky-200 disabled:pointer-events-none disabled:opacity-40"
+                            aria-disabled={!a.proxy_label}
+                            tabIndex={a.proxy_label ? 0 : -1}
+                            title={
+                              a.proxy_label
+                                ? "Открыть на странице «Браузер»"
+                                : "Сначала назначьте прокси"
+                            }
+                            onClick={(e) => {
+                              if (!a.proxy_label) e.preventDefault();
+                            }}
+                          >
+                            Вкладка
+                          </Link>
                         </div>
                       </div>
                     </td>
@@ -1479,6 +1501,7 @@ export function Accounts() {
       <AddAccountModal
         open={openAccount}
         proxies={proxies}
+        prefillLoginIdentifier={phoneFromUrl}
         onClose={() => setOpenAccount(false)}
         onSaved={onCreatedAccount}
       />
@@ -1616,11 +1639,13 @@ export function Accounts() {
 function AddAccountModal({
   open,
   proxies,
+  prefillLoginIdentifier,
   onClose,
   onSaved,
 }: {
   open: boolean;
   proxies: ProxyOut[];
+  prefillLoginIdentifier?: string;
   onClose: () => void;
   onSaved: () => void | Promise<void>;
 }) {
@@ -1658,6 +1683,13 @@ function AddAccountModal({
       }));
     }
   }, [open, proxies, form.proxy_label]);
+
+  useEffect(() => {
+    const phone = prefillLoginIdentifier?.trim();
+    if (open && phone) {
+      setForm((f) => ({ ...f, login_identifier: phone }));
+    }
+  }, [open, prefillLoginIdentifier]);
 
   function selectProxy(label: string) {
     const proxy = proxies.find((p) => p.label === label);

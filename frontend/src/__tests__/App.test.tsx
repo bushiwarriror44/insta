@@ -20,6 +20,12 @@ vi.mock("../pages/Dashboard", () => ({
 vi.mock("../pages/Accounts", () => ({
   Accounts: () => <div>ACCOUNTS_PAGE</div>,
 }));
+vi.mock("../pages/Browser", () => ({
+  Browser: () => <div>BROWSER_PAGE</div>,
+}));
+vi.mock("../pages/HeroSms", () => ({
+  HeroSms: () => <div>HEROSMS_PAGE</div>,
+}));
 vi.mock("../pages/Upload", () => ({
   Upload: () => <div>UPLOAD_ALIAS</div>,
 }));
@@ -165,6 +171,30 @@ describe("App routing", () => {
     });
     renderAt("/accounts");
     expect(screen.getByText("ACCOUNTS_PAGE")).toBeInTheDocument();
+  });
+
+  it("renders the hero sms page when at /hero-sms", () => {
+    useAuthMock.mockReturnValue({
+      state: { state: "open" },
+      authRequired: false,
+      logout: vi.fn(),
+      login: vi.fn(),
+      retryBootstrap: vi.fn(),
+    });
+    renderAt("/hero-sms");
+    expect(screen.getByText("HEROSMS_PAGE")).toBeInTheDocument();
+  });
+
+  it("renders the browser page when at /browser", () => {
+    useAuthMock.mockReturnValue({
+      state: { state: "open" },
+      authRequired: false,
+      logout: vi.fn(),
+      login: vi.fn(),
+      retryBootstrap: vi.fn(),
+    });
+    renderAt("/browser");
+    expect(screen.getByText("BROWSER_PAGE")).toBeInTheDocument();
   });
 
   it("redirects /upload to /publishing", () => {

@@ -327,6 +327,8 @@ class PanelSettings(Base):
     llm_gateway_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     floppydata_api_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     floppydata_last_form: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    hero_sms_api_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    hero_sms_last_form: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )

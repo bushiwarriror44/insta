@@ -5,6 +5,8 @@ import { Layout } from "./components/Layout";
 import { Loader } from "./components/Loader";
 import { useAuth } from "./context/AuthContext";
 import { Accounts } from "./pages/Accounts";
+import { Browser } from "./pages/Browser";
+import { HeroSms } from "./pages/HeroSms";
 import { Activity } from "./pages/Activity";
 import { Administration } from "./pages/Administration";
 import { Agent } from "./pages/Agent";
@@ -57,6 +59,8 @@ export default function App() {
       <Route element={<Layout />}>
         <Route index element={<Dashboard />} />
         <Route path="/accounts" element={<Accounts />} />
+        <Route path="/hero-sms" element={<HeroSms />} />
+        <Route path="/browser" element={<Browser />} />
         <Route path="/publishing" element={<Publishing />} />
         <Route path="/upload" element={<Navigate to="/publishing" replace />} />
         <Route path="/agent" element={<Agent />} />
