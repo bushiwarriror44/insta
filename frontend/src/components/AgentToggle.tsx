@@ -4,6 +4,7 @@ import clsx from "clsx";
 
 import { api, formatApiError } from "../api/client";
 import type { WorkerProcessOut } from "../api/types";
+import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
 import { usePollWhenVisible } from "../hooks/usePollWhenVisible";
 
@@ -19,6 +20,7 @@ const IDLE: WorkerProcessOut = {
 
 export function AgentToggle({ compact = false }: { compact?: boolean }) {
   const { push } = useToast();
+  const confirm = useConfirm();
   const [worker, setWorker] = useState<WorkerProcessOut | null>(null);
   const [busy, setBusy] = useState(false);
   const seenRunning = useRef<boolean | null>(null);
@@ -54,7 +56,18 @@ export function AgentToggle({ compact = false }: { compact?: boolean }) {
   const current = worker ?? IDLE;
 
   async function run(action: "start" | "stop") {
-    if (action === "stop" && !window.confirm("Остановить воркер очереди?")) return;
+    if (
+      action === "stop" &&
+      !(await confirm({
+        title: "Остановить воркер?",
+        body: "Очередь рендеров и публикаций перестанет обрабатываться, пока воркер не запустят снова.",
+        confirmLabel: "Остановить",
+        cancelLabel: "Отмена",
+        danger: true,
+      }))
+    ) {
+      return;
+    }
     setBusy(true);
     try {
       if (action === "stop") stoppedByUs.current = true;

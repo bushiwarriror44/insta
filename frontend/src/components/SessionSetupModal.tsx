@@ -9,7 +9,7 @@ import {
   Sparkles,
   XCircle,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, formatApiError } from "../api/client";
 import type {
@@ -22,8 +22,9 @@ import type {
   InstagramAuthStepOut,
   LoginSurface,
 } from "../api/types";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { DiagnosticLogPanel } from "./DiagnosticLogPanel";
-import { InstagramBrowserPanel } from "./InstagramBrowserPanel";
+import { LazyInstagramBrowserPanel } from "./LazyInstagramBrowserPanel";
 import { Modal } from "./Modal";
 import { useToast } from "../context/ToastContext";
 import { useAuth } from "../context/AuthContext";
@@ -140,6 +141,22 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
   const [manualSaved, setManualSaved] = useState(false);
   const [loginDebugUrl, setLoginDebugUrl] = useState<string | null>(null);
   const loginDebugUrlRef = useRef<string | null>(null);
+  const [browserRunning, setBrowserRunning] = useState(false);
+  const [browserCloseConfirmOpen, setBrowserCloseConfirmOpen] = useState(false);
+
+  const forceClose = useCallback(() => {
+    setBrowserRunning(false);
+    setBrowserCloseConfirmOpen(false);
+    onClose();
+  }, [onClose]);
+
+  const requestClose = useCallback(() => {
+    if (browserRunning) {
+      setBrowserCloseConfirmOpen(true);
+      return;
+    }
+    forceClose();
+  }, [browserRunning, forceClose]);
 
   const success =
     firstLoginResult?.ok === true ||
@@ -159,6 +176,8 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
     setManualSaved(false);
     setAutoBusy(false);
     setManualBusy(false);
+    setBrowserRunning(false);
+    setBrowserCloseConfirmOpen(false);
     if (loginDebugUrlRef.current) {
       URL.revokeObjectURL(loginDebugUrlRef.current);
       loginDebugUrlRef.current = null;
@@ -309,9 +328,19 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
   const studioLabel = platform === "youtube" ? "YouTube Studio" : platform === "tiktok" ? "TikTok Studio" : "";
 
   return (
+    <>
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={requestClose}
+      onBeforeClose={() => {
+        if (browserRunning) {
+          setBrowserCloseConfirmOpen(true);
+          return false;
+        }
+        return true;
+      }}
+      closeOnBackdrop={!browserRunning}
+      trapFocus
       title={`Настройка сессии · @${account?.username ?? ""}`}
       widthClass="max-w-4xl"
       footer={
@@ -325,7 +354,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
               <ArrowLeft size={16} /> Назад
             </button>
           ) : (
-            <button type="button" onClick={onClose} className="btn-ghost">
+            <button type="button" onClick={requestClose} className="btn-ghost">
               <XCircle size={16} /> Закрыть
             </button>
           )}
@@ -546,7 +575,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
           </div>
         ) : connectionMode === "browser" ? (
           account ? (
-            <InstagramBrowserPanel
+            <LazyInstagramBrowserPanel
               username={account.username}
               adminToken={adminToken}
               mode="setup"
@@ -558,6 +587,7 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
               loginSurface={loginSurface}
               hasProxy={Boolean(account.proxy_label)}
               onSessionSaved={handleBrowserSessionSaved}
+              onRunningChange={setBrowserRunning}
             />
           ) : null
         ) : (
@@ -665,5 +695,16 @@ export function SessionSetupModal({ account, open, onClose, onCompleted }: Props
         )}
       </div>
     </Modal>
+    <ConfirmDialog
+      open={browserCloseConfirmOpen}
+      title="Закрыть браузер?"
+      body="Активная VNC-сессия может прерваться."
+      confirmLabel="Закрыть браузер"
+      cancelLabel="Остаться"
+      danger
+      onConfirm={forceClose}
+      onCancel={() => setBrowserCloseConfirmOpen(false)}
+    />
+    </>
   );
 }

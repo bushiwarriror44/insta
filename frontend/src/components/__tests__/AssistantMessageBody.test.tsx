@@ -21,6 +21,15 @@ describe("AssistantMessageBody", () => {
     expect(screen.getByText("foo")).toBeInTheDocument();
   });
 
+  it("streaming mode linkifies URLs and hides copy", () => {
+    render(
+      <AssistantMessageBody content="Смотри https://example.com/live" streaming showCaret />
+    );
+    expect(screen.getByRole("link", { name: /example\.com/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /скопировать ответ/i })).not.toBeInTheDocument();
+    expect(document.querySelector(".assistant-stream-caret")).toBeTruthy();
+  });
+
   it("copies content when copy is clicked", async () => {
     const onCopyToast = vi.fn();
     const user = userEvent.setup();

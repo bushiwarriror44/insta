@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -124,11 +124,10 @@ describe("Operators page", () => {
         active: true,
       },
     ]);
-    vi.spyOn(window, "confirm").mockReturnValue(false);
-
     renderOperators();
     expect(await screen.findByText("temp")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /отозвать/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^отмена$/i }));
 
     expect(apiMock.revoke).not.toHaveBeenCalled();
   });
@@ -145,11 +144,11 @@ describe("Operators page", () => {
     };
     apiMock.list.mockResolvedValue([row]);
     apiMock.revoke.mockResolvedValue({ ...row, active: false, revoked_at: new Date().toISOString() });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-
     renderOperators();
     expect(await screen.findByText("temp")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /отозвать/i }));
+    const dialog = await screen.findByRole("dialog", { name: /отозвать пароль/i });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^отозвать$/i }));
 
     await waitFor(() => {
       expect(apiMock.revoke).toHaveBeenCalledWith(7);

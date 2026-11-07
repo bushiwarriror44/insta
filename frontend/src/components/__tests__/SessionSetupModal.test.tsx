@@ -20,6 +20,8 @@ const account = {
   session_source: "none",
 } as const;
 
+const lazyVncMock = vi.hoisted(() => ({ simulateRunning: false }));
+
 const apiMock = vi.hoisted(() => ({
   accounts: {
     firstLogin: vi.fn(),
@@ -49,6 +51,22 @@ vi.mock("../../api/client", async () => {
   };
 });
 
+vi.mock("../LazyInstagramBrowserPanel", async () => {
+  const React = await import("react");
+  return {
+    LazyInstagramBrowserPanel: ({
+      onRunningChange,
+    }: {
+      onRunningChange?: (running: boolean) => void;
+    }) => {
+      React.useEffect(() => {
+        if (lazyVncMock.simulateRunning) onRunningChange?.(true);
+      }, [onRunningChange]);
+      return <div data-testid="lazy-vnc" />;
+    },
+  };
+});
+
 function renderModal(open = true) {
   const onCompleted = vi.fn();
   const onClose = vi.fn();
@@ -66,6 +84,7 @@ function renderModal(open = true) {
 }
 
 beforeEach(() => {
+  lazyVncMock.simulateRunning = false;
   apiMock.accounts.firstLogin.mockReset();
   apiMock.accounts.updateSession.mockReset();
   apiMock.accounts.testConnection.mockReset();
@@ -169,7 +188,17 @@ describe("SessionSetupModal", () => {
     fireEvent.click(screen.getByRole("button", { name: /Через браузер/i }));
     const doneBtn = screen.getByRole("button", { name: /Готово/i });
     expect(doneBtn).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Запустить браузер/i })).toBeInTheDocument();
+    expect(screen.getByTestId("lazy-vnc")).toBeInTheDocument();
+  });
+
+  it("confirms close when browser VNC is running", async () => {
+    lazyVncMock.simulateRunning = true;
+    const { onClose } = renderModal();
+    fireEvent.click(screen.getByRole("button", { name: /Через браузер/i }));
+    await waitFor(() => expect(screen.getByTestId("lazy-vnc")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /^Закрыть$/i }));
+    expect(screen.getByText("Закрыть браузер?")).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("switches to browser mode on challenge from auto", async () => {
@@ -185,10 +214,7 @@ describe("SessionSetupModal", () => {
     renderModal();
     fireEvent.click(screen.getByRole("button", { name: /Автоматически/i }));
     fireEvent.click(screen.getByRole("button", { name: /Создать сессию/i }));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Запустить браузер/i })).toBeInTheDocument()
-    );
-    expect(screen.getByRole("button", { name: /Открыть браузер/i })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("lazy-vnc")).toBeInTheDocument());
   });
 
   it("shows open browser for 2FA error from auto login", async () => {
@@ -208,7 +234,7 @@ describe("SessionSetupModal", () => {
       expect(screen.getByText(/двухфакторн/i)).toBeInTheDocument()
     );
     fireEvent.click(screen.getByRole("button", { name: /Открыть браузер/i }));
-    expect(screen.getByRole("button", { name: /Запустить браузер/i })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("lazy-vnc")).toBeInTheDocument());
   });
 
   it("shows toast from API user_hint on failed auto login", async () => {

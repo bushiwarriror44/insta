@@ -10,11 +10,13 @@
 | Автономный HTTP | `POST /api/assistant/run` | 12 (`RUN_ROUNDS`) | да |
 | CLI | `python -m app.cli ask "…"` | 12 | да |
 
-Чат UI шлёт `messages` (история), плюс по желанию `page`, `account_id`, `job_id`. Stream — тот же контракт, события SSE. В доке кнопка «Мануал» и подсказка текущего экрана; во время tool-стрима — одно предложение про шаг. SSE `type=tool` несёт `name`. После `list_accounts` / `list_renders` / `list_clips` — `type=cards` (снимок блоков) и поле `cards` в `type=done` (массив `{ kind, items }`). После успешного `start_browser` в `done` может быть `browser_target` (`username`, `platform`, `proxy_label`) — док открывает VNC в run-режиме.
+Чат UI шлёт `messages` (история), плюс по желанию `page`, `account_id`, `job_id`. Stream — тот же контракт, события SSE. В доке кнопка «Мануал» и подсказка текущего экрана; во время tool-стрима — одно предложение про шаг. SSE `type=tool` несёт `name`. Токены в стриме отображаются в том же пузыре, что и готовый ответ (ссылки, inline-код); кнопку «Агент» при свёрнутом доке виден индикатор занятости. После `list_accounts` / `list_renders` / `list_clips` — `type=cards` (снимок блоков) и поле `cards` в `type=done` (массив `{ kind, items }`). После успешного `start_browser` в `done` может быть `browser_target` (`username`, `platform`, `proxy_label`) — док открывает VNC в run-режиме.
 
 Run шлёт **один** `prompt`, без истории. Страницы панели `open_page` не обязан открывать. Живой Playwright можно стартовать.
 
 Нужны живой API и Ollama. Если баннер «Агент остановлен» — воркер мёртв; чат может поставить задачу, но рендер / склейка / публикация из очереди не поедут, пока воркер не запущен.
+
+В панели: **Ctrl+K** — палитра переходов (недавние страницы в `localStorage`); опасные действия и закрытие активного VNC — через единый `ConfirmDialog`, не системный confirm. Ручной чеклист UI — [`ui-smoke.md`](ui-smoke.md).
 
 ## Пример промпта (run / `cli ask`)
 

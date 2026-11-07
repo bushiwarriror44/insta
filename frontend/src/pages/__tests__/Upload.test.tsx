@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -152,12 +152,12 @@ describe("Upload page (library alias)", () => {
 
   it("removes a video after confirm from preview panel", async () => {
     apiMock.videos.remove.mockResolvedValue(undefined);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-
     renderUpload();
     await screen.findAllByText("clip.mp4");
 
     fireEvent.click(screen.getByRole("button", { name: /^удалить$/i }));
+    const dialog = await screen.findByRole("dialog", { name: /удалить файл/i });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^удалить$/i }));
 
     await waitFor(() =>
       expect(apiMock.videos.remove).toHaveBeenCalledWith("clip.mp4")

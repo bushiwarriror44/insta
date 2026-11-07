@@ -51,6 +51,11 @@ vi.mock("../pages/Administration", () => ({
   Administration: () => <div>ADMINISTRATION_PAGE</div>,
 }));
 
+vi.mock("../context/ConfirmContext", () => ({
+  useConfirm: () => vi.fn(async () => true),
+  ConfirmProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
 vi.mock("../context/ToastContext", () => ({
   useToast: () => ({ push: vi.fn() }),
   ToastProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,

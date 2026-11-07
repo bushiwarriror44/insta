@@ -26,7 +26,6 @@ import { Card } from "../components/Card";
 import { CountryFlag, countryCodeToFlag } from "../components/CountryFlag";
 import { DiagnosticLogPanel, copyTextToClipboard } from "../components/DiagnosticLogPanel";
 import { EmptyState } from "../components/EmptyState";
-import { Loader } from "../components/Loader";
 import { Modal } from "../components/Modal";
 import { PageHeader } from "../components/PageHeader";
 import {
@@ -35,8 +34,11 @@ import {
   SESSION_EXPIRED_MOBILE_HINT,
   SessionSetupModal,
 } from "../components/SessionSetupModal";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { FloppydataProxyPanel } from "../components/FloppydataProxyPanel";
-import { InstagramBrowserPanel } from "../components/InstagramBrowserPanel";
+import { LazyInstagramBrowserPanel } from "../components/LazyInstagramBrowserPanel";
+import { PageShell } from "../components/PageShell";
+import { TableSkeleton } from "../components/TableSkeleton";
 import {
   PlatformIcon,
   platformLabel,
@@ -44,6 +46,7 @@ import {
 } from "../components/PlatformIcon";
 import { StatusBadge } from "../components/StatusBadge";
 import { useAuth } from "../context/AuthContext";
+import { useConfirm } from "../context/ConfirmContext";
 
 type AccountsMainTab = "accounts" | "proxies" | "proxy-check" | "floppydata";
 type ProxyCheckFilter = "" | "ok" | "bad" | "geo-mismatch" | "ig-bad";
@@ -147,6 +150,7 @@ function RowIconButton({
 
 export function Accounts() {
   const { push } = useToast();
+  const confirm = useConfirm();
   const { state: authState } = useAuth();
   const adminToken = authState.state === "authed" ? authState.token : null;
   const [accounts, setAccounts] = useState<AccountOut[]>([]);
@@ -159,6 +163,8 @@ export function Accounts() {
   const [sessionAccount, setSessionAccount] = useState<AccountOut | null>(null);
   const [sessionSetupAccount, setSessionSetupAccount] = useState<AccountOut | null>(null);
   const [browserAccount, setBrowserAccount] = useState<AccountOut | null>(null);
+  const [browserRunning, setBrowserRunning] = useState(false);
+  const [browserCloseConfirmOpen, setBrowserCloseConfirmOpen] = useState(false);
   const [connectionAccount, setConnectionAccount] = useState<AccountOut | null>(null);
   const [testingAll, setTestingAll] = useState(false);
   const [testAllProgress, setTestAllProgress] = useState({ done: 0, total: 0, ok: 0 });
@@ -519,10 +525,49 @@ export function Accounts() {
     }
   }, [accounts, push]);
 
-  if (loading) return <Loader />;
+  const closeBrowserModal = useCallback(() => {
+    setBrowserAccount(null);
+    setBrowserRunning(false);
+    setBrowserCloseConfirmOpen(false);
+  }, []);
+
+  const requestBrowserClose = useCallback(() => {
+    if (browserRunning) {
+      setBrowserCloseConfirmOpen(true);
+      return;
+    }
+    closeBrowserModal();
+  }, [browserRunning, closeBrowserModal]);
+
+  const clearAccountFilters = useCallback(() => {
+    setAccountQuery("");
+    setStatusFilter("");
+    const next = new URLSearchParams(searchParams);
+    next.delete("id");
+    next.delete("username");
+    next.delete("q");
+    next.delete("status");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  const hasAccountFilters =
+    Boolean(accountQuery.trim()) ||
+    Boolean(statusFilter) ||
+    askedId > 0 ||
+    Boolean(askedUser) ||
+    Boolean(askedQ);
+
+  if (loading) {
+    return (
+      <PageShell>
+        <PageHeader icon={Users} title="Аккаунты" description="Загрузка списков…" />
+        <TableSkeleton rows={8} columns={5} />
+      </PageShell>
+    );
+  }
 
   return (
-    <div className="space-y-6">
+    <PageShell>
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <PageHeader
           icon={Users}
@@ -732,7 +777,17 @@ export function Accounts() {
                         }
                         onClick={async () => {
                           if ((p.accounts_count ?? 0) > 0) return;
-                          if (!window.confirm(`Удалить прокси «${p.label}» навсегда?`)) return;
+                          if (
+                            !(await confirm({
+                              title: "Удалить прокси?",
+                              body: `Прокси «${p.label}» будет удалён без возможности восстановления.`,
+                              confirmLabel: "Удалить",
+                              cancelLabel: "Отмена",
+                              danger: true,
+                            }))
+                          ) {
+                            return;
+                          }
                           try {
                             await api.proxies.remove(p.label);
                             await reload();
@@ -1096,6 +1151,11 @@ export function Accounts() {
               value={accountQuery}
               onChange={(e) => setAccountQuery(e.target.value)}
             />
+            {hasAccountFilters ? (
+              <button type="button" className="btn-ghost text-xs py-1" onClick={clearAccountFilters}>
+                Сбросить фильтры
+              </button>
+            ) : null}
             {accounts.length > 0 ? (
             <button
               type="button"
@@ -1134,8 +1194,8 @@ export function Accounts() {
             {statusFilter ? "Нет аккаунтов с этим статусом." : "Никого не нашлось."}
           </EmptyState>
         ) : (
-          <div className="table-scroll">
-          <table className="table-base">
+          <div className="table-scroll -mx-1 max-w-[calc(100vw-2rem)] sm:max-w-none">
+          <table className="table-base min-w-[44rem]">
             <colgroup>
               <col className="w-[28%]" />
               <col className="w-[12%]" />
@@ -1490,14 +1550,39 @@ export function Accounts() {
         onClose={() => setSessionSetupAccount(null)}
         onCompleted={onSessionSetupCompleted}
       />
+      <ConfirmDialog
+        open={browserCloseConfirmOpen}
+        title="Закрыть браузер?"
+        body="Активная VNC-сессия может прерваться."
+        confirmLabel="Закрыть браузер"
+        cancelLabel="Остаться"
+        danger
+        onConfirm={closeBrowserModal}
+        onCancel={() => setBrowserCloseConfirmOpen(false)}
+      />
       <Modal
         open={browserAccount !== null}
-        onClose={() => setBrowserAccount(null)}
-        title={`Браузер · @${browserAccount?.username ?? ""}`}
+        onClose={requestBrowserClose}
+        onBeforeClose={() => {
+          if (browserRunning) {
+            setBrowserCloseConfirmOpen(true);
+            return false;
+          }
+          return true;
+        }}
+        closeOnBackdrop={!browserRunning}
+        trapFocus
+        title={
+          browserAccount
+            ? `Браузер · @${browserAccount.username} · ${platformLabel(browserAccount.platform)}${
+                browserAccount.proxy_label ? ` · ${browserAccount.proxy_label}` : ""
+              }`
+            : "Браузер"
+        }
         widthClass="max-w-5xl"
       >
         {browserAccount ? (
-          <InstagramBrowserPanel
+          <LazyInstagramBrowserPanel
             username={browserAccount.username}
             adminToken={adminToken}
             platform={
@@ -1508,6 +1593,7 @@ export function Accounts() {
             hasProxy={Boolean(browserAccount.proxy_label)}
             loginSurface={browserAccount.login_surface === "desktop" ? "desktop" : "mobile"}
             onSessionSaved={() => void onBrowserSessionSaved()}
+            onRunningChange={setBrowserRunning}
           />
         ) : null}
       </Modal>
@@ -1523,7 +1609,7 @@ export function Accounts() {
         onClose={() => setEditingProxy(null)}
         onSaved={onUpdatedProxy}
       />
-    </div>
+    </PageShell>
   );
 }
 

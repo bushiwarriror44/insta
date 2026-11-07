@@ -6,10 +6,12 @@ import { api, formatApiError } from "../api/client";
 import { Card } from "../components/Card";
 import { DropZone } from "../components/DropZone";
 import { EmptyState } from "../components/EmptyState";
-import { Loader } from "../components/Loader";
 import { MediaLibraryGrid } from "../components/MediaLibraryGrid";
 import { MediaPreviewPanel } from "../components/MediaPreviewPanel";
 import { PageHeader } from "../components/PageHeader";
+import { PageShell } from "../components/PageShell";
+import { TableSkeleton } from "../components/TableSkeleton";
+import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
 import { useAssistantMutate } from "../lib/assistantMutate";
 import type { AccountOut, PostType, PublicationOut, VideoOut } from "../api/types";
@@ -90,6 +92,7 @@ async function fetchLibraryMedia(): Promise<VideoOut[]> {
 
 export function Publishing() {
   const { push } = useToast();
+  const confirm = useConfirm();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabFromUrl = (() => {
     const tab = searchParams.get("tab");
@@ -103,6 +106,7 @@ export function Publishing() {
   const [media, setMedia] = useState<VideoOut[]>([]);
   const [publications, setPublications] = useState<PublicationOut[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [refreshingId, setRefreshingId] = useState<number | null>(null);
@@ -220,8 +224,11 @@ export function Publishing() {
     (async () => {
       try {
         await reload();
+        if (!cancelled) setLoadError(null);
       } catch (err) {
-        push((err as Error).message, "error");
+        const message = formatApiError(err);
+        if (!cancelled) setLoadError(message);
+        push(message, "error");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -484,7 +491,17 @@ export function Publishing() {
 
   async function deleteSelected() {
     if (!selectedFilename) return;
-    if (!window.confirm(`Удалить ${selectedFilename}?`)) return;
+    if (
+      !(await confirm({
+        title: "Удалить файл?",
+        body: `«${selectedFilename}» будет удалён из библиотеки без возможности восстановления.`,
+        confirmLabel: "Удалить",
+        cancelLabel: "Отмена",
+        danger: true,
+      }))
+    ) {
+      return;
+    }
     try {
       await api.videos.remove(selectedFilename);
       push("Медиафайл удалён", "info");
@@ -515,10 +532,34 @@ export function Publishing() {
     }
   }
 
-  if (loading) return <Loader />;
+  const retryLoad = () => {
+    setLoading(true);
+    setLoadError(null);
+    void reload()
+      .then(() => setLoadError(null))
+      .catch((err) => {
+        const message = formatApiError(err);
+        setLoadError(message);
+        push(message, "error");
+      })
+      .finally(() => setLoading(false));
+  };
+
+  if (loading) {
+    return (
+      <PageShell>
+        <PageHeader icon={Library} title="Библиотека" description="Загрузка медиатеки…" />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="card h-28 animate-pulse bg-slate-800/40" />
+          <div className="card h-28 animate-pulse bg-slate-800/40" />
+        </div>
+        <TableSkeleton rows={5} columns={4} />
+      </PageShell>
+    );
+  }
 
   return (
-    <div className="space-y-6">
+    <PageShell error={loadError} onRetry={retryLoad}>
       <PageHeader
         icon={Library}
         title="Библиотека"
@@ -604,7 +645,7 @@ export function Publishing() {
           staging
           multiple
           title="Перетащите готовые Reels (.mp4)"
-          hint=".mp4 / .mov / фото — до 512 МБ"
+          hint=".mp4 / .mov / фото — до 512 МБ. Или вставьте картинку Ctrl+V в чат агента как референс."
           onFile={(file) => uploadFiles([file])}
           onFiles={uploadFiles}
         />
@@ -636,7 +677,16 @@ export function Publishing() {
                           : "ошибка"}
                   </span>
                 </div>
-                <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                <div
+                  className="h-1.5 rounded-full bg-slate-800 overflow-hidden"
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={
+                    item.status === "pending" ? 0 : item.status === "done" ? 100 : item.pct
+                  }
+                  aria-label={`Загрузка ${item.name}`}
+                >
                   <div
                     className={
                       item.status === "error"
@@ -809,6 +859,6 @@ export function Publishing() {
           </div>
         )}
       </Card>
-    </div>
+    </PageShell>
   );
 }

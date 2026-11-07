@@ -14,6 +14,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { api, formatApiError } from "../api/client";
 import type { GpuLogsOut, GpuOut, LlmGatewayCredentialsOut } from "../api/types";
 import { GpuConnectBar } from "./GpuConnectBar";
+import { LazyInstagramBrowserPanel } from "./LazyInstagramBrowserPanel";
 import {
   ask,
   type AskField,
@@ -64,8 +65,6 @@ import {
 } from "./AssistantCards";
 import { AssistantCardsSkeleton } from "./AssistantCardsSkeleton";
 import type { AssistantCardBlock } from "../api/assistant";
-import { InstagramBrowserPanel } from "./InstagramBrowserPanel";
-
 type DockTab = "agent" | "api" | "mcp";
 
 const HIDDEN_KEY = "assistant-dock:hidden";
@@ -318,6 +317,19 @@ const CARD_LOADING_LABEL: Record<AssistantCardKind, string> = {
   renders: "рендеры",
   clips: "медиа в библиотеке",
 };
+
+function fabBusyShortLabel(v: Live): string {
+  if (v.progressText?.trim()) {
+    const t = v.progressText.trim();
+    return t.length > 20 ? `${t.slice(0, 20)}…` : t;
+  }
+  if (v.writing) return "Пишет";
+  if (v.think?.trim()) return "Рассуждает";
+  return "Думает";
+}
+
+const ASSISTANT_BUBBLE_SHELL =
+  "rounded-2xl rounded-bl-md bg-slate-900/80 px-3 py-2 ring-1 ring-slate-800/80";
 
 function emptyLive(): Live {
   return {
@@ -1117,6 +1129,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const progressDetail = view.progressDetail;
   const activeGeneration = view.activeGeneration;
   const anyBusy = Object.values(live).some((item) => item.busy);
+  const fabBusyView = anyBusy ? Object.values(live).find((item) => item.busy) ?? view : null;
 
   const navigateFromChat = useCallback(
     (path: string) => openInPlace(navigate, path),
@@ -1565,10 +1578,22 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
           >
             {anyBusy ? <ThinkingSparkle quiet /> : <Sparkle size={16} className="text-sky-300" />}
             <span>Агент</span>
-            {anyBusy ? (
-              <span className="sr-only" aria-live="polite">
-                печатает
-              </span>
+            {anyBusy && fabBusyView ? (
+              <>
+                <span
+                  data-testid="assistant-fab-busy"
+                  className="flex items-center gap-1.5 rounded-full border border-sky-500/30 bg-sky-950/40 px-2 py-0.5 text-[11px] text-sky-200 ring-1 ring-sky-500/20"
+                >
+                  <span
+                    className="assistant-fab-pulse-dot h-1.5 w-1.5 rounded-full bg-sky-400"
+                    aria-hidden
+                  />
+                  {fabBusyShortLabel(fabBusyView)}
+                </span>
+                <span className="sr-only" aria-live="polite">
+                  {fabBusyShortLabel(fabBusyView)}
+                </span>
+              </>
             ) : null}
           </button>
         </div>
@@ -1772,8 +1797,8 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                   className={clsx(
                     "max-w-[92%] space-y-1",
                     message.role === "user"
-                      ? "rounded-2xl rounded-br-md bg-slate-800/70 px-3 py-2"
-                      : "rounded-2xl rounded-bl-md bg-slate-900/80 px-3 py-2 ring-1 ring-slate-800/80"
+                      ? "rounded-2xl rounded-br-md border border-sky-900/30 bg-slate-800/90 px-3 py-2 ring-1 ring-sky-500/15"
+                      : ASSISTANT_BUBBLE_SHELL
                   )}
                 >
                 {message.role === "assistant" && message.wires?.length ? (
@@ -1870,42 +1895,45 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
             ) : null}
             {busy && liveWires.length ? <WireList lines={liveWires} /> : null}
             {busy ? (
-              <div className="space-y-2" role="status">
-                {!progressText ? (
-                  <div className="flex items-center gap-2 text-sm text-slate-400">
-                    <ThinkingSparkle quiet={Boolean(writing)} />
-                    <span>
-                      {writing
-                        ? "Пишет…"
-                        : draftThink
-                          ? "Рассуждает…"
-                          : doing.length
-                            ? doing[doing.length - 1]
-                            : `Думает… ${seconds} с`}
-                    </span>
-                  </div>
-                ) : null}
-                {!writing && doingName && toolHint(doingName) ? (
-                  <p data-testid="assistant-tool-hint" className="text-xs text-slate-500">
-                    {toolHint(doingName)}
-                  </p>
-                ) : null}
-                {draftThink ? <Reason text={draftThink} live={!writing} /> : null}
-                {writing ? (
-                  <p className="whitespace-pre-wrap text-sm text-slate-100">{writing}</p>
-                ) : null}
-                {doing.map((what, n) => (
-                  <p key={n} className="text-xs text-slate-400">
-                    {what}
-                  </p>
-                ))}
-                {pending.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
-                    {pending.map((src, i) => (
-                      <img key={i} src={src} alt="Снимок страницы панели" className="h-28 w-auto rounded-lg border border-slate-800" />
-                    ))}
-                  </div>
-                )}
+              <div className="assistant-msg-in flex items-start justify-start gap-2">
+                <Sparkle size={14} className="mt-2.5 shrink-0 text-sky-400" aria-hidden />
+                <div className={clsx("max-w-[92%] space-y-2", ASSISTANT_BUBBLE_SHELL)} role="status">
+                  {!progressText ? (
+                    <div className="flex items-center gap-2 text-sm text-slate-400">
+                      <ThinkingSparkle quiet={Boolean(writing)} />
+                      <span>
+                        {writing
+                          ? "Пишет…"
+                          : draftThink
+                            ? "Рассуждает…"
+                            : doing.length
+                              ? doing[doing.length - 1]
+                              : `Думает… ${seconds} с`}
+                      </span>
+                    </div>
+                  ) : null}
+                  {!writing && doingName && toolHint(doingName) ? (
+                    <p data-testid="assistant-tool-hint" className="text-xs text-slate-500">
+                      {toolHint(doingName)}
+                    </p>
+                  ) : null}
+                  {draftThink ? <Reason text={draftThink} live={!writing} /> : null}
+                  {writing ? (
+                    <AssistantMessageBody content={writing} streaming showCaret />
+                  ) : null}
+                  {doing.map((what, n) => (
+                    <p key={n} className="text-xs text-slate-400">
+                      {what}
+                    </p>
+                  ))}
+                  {pending.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {pending.map((src, i) => (
+                        <img key={i} src={src} alt="Снимок страницы панели" className="h-28 w-auto rounded-lg border border-slate-800" />
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             ) : null}
             {!busy && note && <p className="text-xs text-slate-400">{note}</p>}
@@ -2485,7 +2513,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         widthClass="max-w-5xl"
       >
         {chatBrowserAccount ? (
-          <InstagramBrowserPanel
+          <LazyInstagramBrowserPanel
             username={chatBrowserAccount.username}
             adminToken={adminToken}
             platform={

@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,6 +11,11 @@ const useAuthMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../../context/AuthContext", () => ({
   useAuth: useAuthMock,
+}));
+
+vi.mock("../../context/ConfirmContext", () => ({
+  useConfirm: () => vi.fn(async () => true),
+  ConfirmProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
 vi.mock("../../context/ToastContext", () => ({
@@ -67,7 +73,12 @@ function renderAt(path = "/") {
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route element={<Layout />}>
-          <Route path="/" element={<div>HOME</div>} />
+          <Route path="/" element={
+            <div>
+              <button type="button">В main</button>
+              HOME
+            </div>
+          } />
           <Route path="/accounts" element={
             <>
               <input data-page-search aria-label="Поиск аккаунтов" />
@@ -177,6 +188,29 @@ describe("Layout", () => {
     renderAt();
     expect(screen.getByText(/открытый режим/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /выйти/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps keyboard focus inside the mobile nav drawer", async () => {
+    useAuthMock.mockReturnValue({
+      state: { state: "open" },
+      role: null,
+      authRequired: false,
+      logout: vi.fn(),
+      login: vi.fn(),
+      retryBootstrap: vi.fn(),
+    });
+    const user = userEvent.setup();
+    renderAt();
+    fireEvent.click(screen.getByRole("button", { name: /^Меню$/i }));
+    const aside = screen.getByLabelText("Навигация");
+    await waitFor(() => {
+      expect(aside.contains(document.activeElement)).toBe(true);
+    });
+    for (let i = 0; i < 15; i++) {
+      await user.tab();
+    }
+    expect(aside.contains(document.activeElement)).toBe(true);
+    expect(screen.getByRole("button", { name: "В main" })).not.toHaveFocus();
   });
 
   it("shows logout button only when authed", () => {

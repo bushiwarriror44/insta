@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ConfirmProvider } from "../../context/ConfirmContext";
 import { ToastProvider } from "../../context/ToastContext";
 import type { EventOut, JobOut } from "../../api/types";
 import { Activity } from "../Activity";
@@ -77,8 +78,10 @@ function renderActivity(path = "/activity") {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <ToastProvider>
-        <LocationProbe />
-        <Activity />
+        <ConfirmProvider>
+          <LocationProbe />
+          <Activity />
+        </ConfirmProvider>
       </ToastProvider>
     </MemoryRouter>
   );

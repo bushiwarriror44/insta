@@ -3,7 +3,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   LayoutDashboard,
-  RefreshCw,
   Server,
   Users,
 } from "lucide-react";
@@ -15,6 +14,7 @@ import { Card } from "../components/Card";
 import { EmptyState } from "../components/EmptyState";
 import { Loader } from "../components/Loader";
 import { PageHeader } from "../components/PageHeader";
+import { PageShell } from "../components/PageShell";
 import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
 import { useToast } from "../context/ToastContext";
@@ -68,36 +68,44 @@ export function Dashboard() {
   const poll = useCallback(() => refresh({ isInitial: !hasDataRef.current }), [refresh]);
   usePollWhenVisible(poll, POLL_INTERVAL_MS);
 
-  if (loading && !data) return <Loader />;
+  const retryDashboard = () => {
+    setLoading(true);
+    setLoadError(null);
+    hasDataRef.current = false;
+    void refresh({ isInitial: true });
+  };
 
-  if (!data && loadError) {
+  if (loading && !data) {
     return (
-      <div className="min-h-[40vh] grid place-items-center">
-        <div className="card w-full max-w-md p-8 space-y-4 text-center">
-          <h1 className="text-xl font-semibold">Не удалось загрузить панель</h1>
-          <p className="text-sm text-slate-400 break-words">{loadError}</p>
-          <button
-            type="button"
-            className="btn-primary w-full"
-            onClick={() => {
-              setLoading(true);
-              setLoadError(null);
-              hasDataRef.current = false;
-              void refresh({ isInitial: true });
-            }}
-          >
-            <RefreshCw size={16} />
-            Повторить
-          </button>
+      <PageShell>
+        <PageHeader
+          icon={LayoutDashboard}
+          title="Панель"
+          description="Загрузка сводки…"
+        />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }, (_, i) => (
+            <div key={i} className="card h-20 animate-pulse bg-slate-800/40" />
+          ))}
         </div>
-      </div>
+        <Loader label="Подключение к API…" />
+      </PageShell>
     );
   }
 
-  if (!data) return <Loader />;
+  if (!data) {
+    return (
+      <PageShell
+        error={loadError ?? "Не удалось загрузить панель"}
+        onRetry={retryDashboard}
+      >
+        <PageHeader icon={LayoutDashboard} title="Панель" />
+      </PageShell>
+    );
+  }
 
   return (
-    <div className="space-y-6">
+    <PageShell>
       <PageHeader
         icon={LayoutDashboard}
         title="Панель"
@@ -281,6 +289,6 @@ export function Dashboard() {
           )}
         </Card>
       </div>
-    </div>
+    </PageShell>
   );
 }

@@ -7,6 +7,7 @@ import { api, formatApiError } from "../api/client";
 import { Card } from "../components/Card";
 import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
+import { TableSkeleton } from "../components/TableSkeleton";
 import { StatusBadge } from "../components/StatusBadge";
 import { useToast } from "../context/ToastContext";
 import { usePollWhenVisible } from "../hooks/usePollWhenVisible";
@@ -175,6 +176,8 @@ export function Renders() {
   const [localOffer, setLocalOffer] = useState<LocalSwitchOffer | null>(null);
   const [localOfferBusy, setLocalOfferBusy] = useState(false);
   const highlightRef = useRef<HTMLTableRowElement | null>(null);
+  const [bootLoading, setBootLoading] = useState(true);
+  const bootedRef = useRef(false);
 
   const durations = durationChoices(backend, inputMode);
   const frameSizes =
@@ -248,6 +251,14 @@ export function Renders() {
   );
 
   useAssistantMutate(() => reload().catch(() => undefined));
+
+  useEffect(() => {
+    if (bootedRef.current) return;
+    bootedRef.current = true;
+    void reload()
+      .catch((err) => push(formatApiError(err), "error"))
+      .finally(() => setBootLoading(false));
+  }, [reload, push]);
 
   const poll = useCallback(
     () => reload().catch((err) => push(formatApiError(err), "error")),
@@ -773,6 +784,9 @@ export function Renders() {
       </Card>
       <Card>
         <h2 className="font-medium mb-3">Рендеры</h2>
+        {bootLoading ? (
+          <TableSkeleton rows={5} columns={8} />
+        ) : (
         <div className="table-scroll">
         <table className="table-base">
           <thead>
@@ -869,6 +883,7 @@ export function Renders() {
           </tbody>
         </table>
         </div>
+        )}
       </Card>
       <Card id="renders-join-block" className="scroll-mt-6">
         <h2 className="font-medium">Склейки</h2>
@@ -973,6 +988,9 @@ export function Renders() {
             Склеить
           </button>
         </div>
+        {bootLoading ? (
+          <TableSkeleton rows={4} columns={5} className="mt-3" />
+        ) : (
         <div className="table-scroll">
         <table className="table-base">
           <thead>
@@ -1050,6 +1068,7 @@ export function Renders() {
           </tbody>
         </table>
         </div>
+        )}
       </Card>
       <RenderLocalSwitchModal
         offer={localOffer}

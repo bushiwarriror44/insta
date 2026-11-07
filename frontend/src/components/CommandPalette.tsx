@@ -15,11 +15,12 @@ import {
   Users,
   Wrench,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
+import { pushPaletteRecent, readPaletteRecent, type PaletteRecentEntry } from "../lib/paletteRecent";
 import { showAssistant } from "../lib/uiEvents";
 import type { AccountOut, JobOut, VideoOut } from "../api/types";
 import { EmptyState } from "./EmptyState";
@@ -29,6 +30,7 @@ interface Command {
   hint: string;
   icon: LucideIcon;
   go: () => void;
+  recent?: PaletteRecentEntry;
 }
 
 const PAGES: { label: string; to: string; icon: LucideIcon }[] = [
@@ -52,6 +54,12 @@ const OWNER_PAGES: { label: string; to: string; icon: LucideIcon }[] = [
   { label: "Доступы", to: "/operators", icon: KeyRound },
   { label: "Настройки", to: "/settings", icon: SettingsIcon },
 ];
+
+const ALL_NAV_PAGES = [...PAGES, ADMIN_PAGE, ...OWNER_PAGES];
+
+function iconForPath(to: string): LucideIcon {
+  return ALL_NAV_PAGES.find((page) => page.to === to)?.icon ?? LayoutDashboard;
+}
 
 export function CommandPalette({ onClose }: { onClose: () => void }) {
   const { role, authRequired } = useAuth();
@@ -104,6 +112,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       hint: "страница",
       icon: page.icon,
       go: () => navigate(page.to),
+      recent: { to: page.to, label: page.label },
     }));
     all.push({
       label: "Спросить агента",
@@ -142,20 +151,41 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       });
     }
     const needle = query.trim().toLowerCase();
-    if (!needle) return all;
-    return all.filter(
-      (c) =>
-        c.label.toLowerCase().includes(needle) || c.hint.toLowerCase().includes(needle)
-    );
+    const filtered = needle
+      ? all.filter(
+          (c) =>
+            c.label.toLowerCase().includes(needle) || c.hint.toLowerCase().includes(needle)
+        )
+      : all;
+    if (needle) return filtered;
+
+    const stored = readPaletteRecent();
+    const recent: Command[] = stored.map((entry) => ({
+      label: entry.label,
+      hint: "недавно",
+      icon: iconForPath(entry.to),
+      go: () => navigate(entry.to),
+      recent: entry,
+    }));
+    const recentTos = new Set(stored.map((entry) => entry.to));
+    const rest = filtered.filter((c) => !c.recent?.to || !recentTos.has(c.recent.to));
+    return [...recent, ...rest];
   }, [accounts, authRequired, clips, jobs, navigate, query, role]);
 
   useEffect(() => setActive(0), [query, commands.length]);
 
   const run = (command: Command | undefined) => {
     if (!command) return;
+    if (command.recent) pushPaletteRecent(command.recent);
     command.go();
     onClose();
   };
+
+  const showRecentHeading = !query.trim() && commands.some((c) => c.hint === "недавно");
+  const recentCount = showRecentHeading
+    ? commands.findIndex((c) => c.hint !== "недавно")
+    : 0;
+  const recentDividerAt = recentCount < 0 ? commands.length : recentCount;
 
   return (
     <div
@@ -200,7 +230,18 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
             commands.map((command, i) => {
               const Icon = command.icon;
               return (
-                <li key={`${command.hint}-${command.label}`}>
+                <Fragment key={`${command.hint}-${command.label}-${i}`}>
+                  {showRecentHeading && i === 0 ? (
+                    <li className="px-4 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                      Недавние
+                    </li>
+                  ) : null}
+                  {showRecentHeading && i === recentDividerAt && recentDividerAt < commands.length ? (
+                    <li className="px-4 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                      Все
+                    </li>
+                  ) : null}
+                  <li className="list-none">
                   <button
                     type="button"
                     className={`flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-sm ${
@@ -215,7 +256,8 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
                     </span>
                     <span className="text-xs text-slate-500 shrink-0">{command.hint}</span>
                   </button>
-                </li>
+                  </li>
+                </Fragment>
               );
             })
           )}

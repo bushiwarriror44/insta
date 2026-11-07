@@ -39,6 +39,11 @@ vi.mock("../../api/client", () => ({
 
 const toastPush = vi.hoisted(() => vi.fn());
 
+vi.mock("../../context/ConfirmContext", () => ({
+  useConfirm: () => vi.fn(async () => true),
+  ConfirmProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
 vi.mock("../../context/ToastContext", () => ({
   useToast: () => ({ push: toastPush }),
 }));

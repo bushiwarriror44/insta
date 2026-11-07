@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ConfirmProvider } from "../../context/ConfirmContext";
 import { ToastProvider } from "../../context/ToastContext";
 import { Renders } from "../Renders";
 
@@ -82,7 +83,9 @@ function renderRenders(initialEntry = "/renders") {
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <ToastProvider>
-        <Renders />
+        <ConfirmProvider>
+          <Renders />
+        </ConfirmProvider>
       </ToastProvider>
     </MemoryRouter>
   );

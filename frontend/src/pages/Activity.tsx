@@ -10,6 +10,8 @@ import { EmptyState } from "../components/EmptyState";
 import { Loader } from "../components/Loader";
 import { Modal } from "../components/Modal";
 import { PageHeader } from "../components/PageHeader";
+import { PageShell } from "../components/PageShell";
+import { TableSkeleton } from "../components/TableSkeleton";
 import { StatusBadge } from "../components/StatusBadge";
 import { useToast } from "../context/ToastContext";
 import { useHotkeys } from "../hooks/useHotkeys";
@@ -311,10 +313,21 @@ export function Activity() {
     jobRuns.find((r) => r.id === selectedRunId) ?? jobRuns[jobRuns.length - 1] ?? null;
   const activeLines = activeRun?.logs ?? [];
 
-  if (loading) return <Loader />;
+  if (loading) {
+    return (
+      <PageShell>
+        <PageHeader
+          icon={ActivityIcon}
+          title="Активность"
+          description="Загрузка очереди и журнала…"
+        />
+        <TableSkeleton rows={8} columns={6} />
+      </PageShell>
+    );
+  }
 
   return (
-    <div className="space-y-6">
+    <PageShell>
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <PageHeader
           icon={ActivityIcon}
@@ -664,6 +677,7 @@ export function Activity() {
       <Modal
         open={selectedJob !== null}
         onClose={closeLogs}
+        trapFocus
         title={selectedJob ? `Логи задачи #${selectedJob.id}` : "Логи задачи"}
         footer={
           <button type="button" className="btn-ghost" onClick={closeLogs}>
@@ -721,6 +735,6 @@ export function Activity() {
           </div>
         ) : null}
       </Modal>
-    </div>
+    </PageShell>
   );
 }

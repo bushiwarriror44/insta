@@ -120,11 +120,11 @@ describe("Maintenance page", () => {
   });
 
   it("restores a backup after confirm", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     apiMock.maintenance.backups.mockResolvedValue([copy]);
     renderMaintenance();
     expect(await screen.findByText(/app-20260908-210000\.db/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /восстановить app-20260908-210000\.db/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^восстановить$/i }));
     await waitFor(() =>
       expect(apiMock.maintenance.restoreBackup).toHaveBeenCalledWith("app-20260908-210000.db")
     );

@@ -22,6 +22,7 @@ export function RenderLocalSwitchModal({
     <Modal
       open={offer !== null}
       onClose={busy ? () => undefined : onCancel}
+      trapFocus
       title="Переключить на локальный Wan?"
       footer={
         <>

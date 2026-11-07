@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ConfirmProvider } from "../../context/ConfirmContext";
 import { ToastProvider } from "../../context/ToastContext";
 import type { AccountOut, ProxyOut } from "../../api/types";
 import { byLabel } from "../../test/utils";
@@ -90,6 +91,30 @@ vi.mock("../../context/AuthContext", () => ({
     authRequired: false,
   }),
   AuthProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+
+vi.mock("../../components/LazyInstagramBrowserPanel", () => ({
+  LazyInstagramBrowserPanel: ({
+    username,
+    onSessionSaved,
+  }: {
+    username: string;
+    onSessionSaved?: (result: unknown) => void;
+  }) => (
+    <button
+      type="button"
+      onClick={() => {
+        void (async () => {
+          const result = await apiMock.accounts.browserSave(username, {
+            stopAfterSave: false,
+          });
+          onSessionSaved?.(result);
+        })();
+      }}
+    >
+      Сохранить сессию и куки
+    </button>
+  ),
 }));
 
 const proxy: ProxyOut = {
@@ -204,7 +229,9 @@ function renderAccounts(path = "/accounts") {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <ToastProvider>
-        <Accounts />
+        <ConfirmProvider>
+          <Accounts />
+        </ConfirmProvider>
       </ToastProvider>
     </MemoryRouter>
   );
@@ -1084,10 +1111,9 @@ describe("Accounts page", () => {
     fireEvent.click(screen.getByRole("button", { name: /^браузер$/i }));
     await screen.findByRole("heading", { name: /браузер · @alice/i });
 
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /сохранить сессию/i })).not.toBeDisabled();
-    });
-    fireEvent.click(screen.getByRole("button", { name: /сохранить сессию/i }));
+    const saveBtn = await screen.findByRole("button", { name: /сохранить сессию и куки/i });
+    expect(saveBtn).not.toBeDisabled();
+    fireEvent.click(saveBtn);
 
     await waitFor(() => {
       expect(apiMock.accounts.browserSave).toHaveBeenCalledWith("alice", {
@@ -1289,8 +1315,6 @@ describe("Accounts page", () => {
       apiMock.proxies.list.mockResolvedValue([]);
       return { ok: true };
     });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-
     renderAccounts();
     await screen.findByText("Аккаунтов пока нет");
     await openProxiesTab();
@@ -1298,10 +1322,10 @@ describe("Accounts page", () => {
     fireEvent.click(
       screen.getByRole("button", { name: /удалить прокси res-de-1/i })
     );
+    fireEvent.click(await screen.findByRole("button", { name: /^удалить$/i }));
     await waitFor(() =>
       expect(apiMock.proxies.remove).toHaveBeenCalledWith("res-de-1")
     );
-    confirmSpy.mockRestore();
   });
 
   it("renders cooldown badge and cooldown-until column for cooldown accounts", async () => {

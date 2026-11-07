@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { Modal } from "../Modal";
@@ -86,5 +86,17 @@ describe("Modal", () => {
     const xBtn = screen.getByRole("button", { name: /закрыть/i });
     fireEvent.click(xBtn);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("moves focus to first focusable child when trapFocus is enabled", async () => {
+    render(
+      <Modal open trapFocus onClose={() => {}} title="t">
+        <button type="button">First</button>
+        <button type="button">Second</button>
+      </Modal>
+    );
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /^закрыть$/i })).toHaveFocus();
+    });
   });
 });

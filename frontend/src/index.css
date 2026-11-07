@@ -145,3 +145,72 @@
 .assistant-msg-in {
   animation: assistant-msg-in 180ms ease-out;
 }
+
+@keyframes assistant-cards-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.assistant-cards-in {
+  animation: assistant-cards-in 200ms ease-out;
+}
+
+@keyframes assistant-stream-caret-blink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  55%,
+  100% {
+    opacity: 0.15;
+  }
+}
+
+.assistant-stream-caret {
+  margin-left: 1px;
+  display: inline-block;
+  color: rgb(125 211 252);
+  animation: assistant-stream-caret-blink 1s step-end infinite;
+}
+
+@keyframes assistant-fab-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.assistant-fab-pulse-dot {
+  animation: assistant-fab-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-msg-in,
+  .assistant-cards-in {
+    animation: none;
+  }
+
+  .assistant-sparkle,
+  .assistant-sparkle-quiet {
+    animation: none;
+    opacity: 0.85;
+    transform: none;
+  }
+
+  .assistant-stream-caret,
+  .assistant-fab-pulse-dot {
+    animation: none;
+    opacity: 1;
+  }
+}

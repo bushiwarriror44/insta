@@ -9,12 +9,15 @@ import { copyTextToClipboard } from "../components/DiagnosticLogPanel";
 import { EmptyState } from "../components/EmptyState";
 import { Modal } from "../components/Modal";
 import { PageHeader } from "../components/PageHeader";
+import { TableSkeleton } from "../components/TableSkeleton";
 import { useAuth } from "../context/AuthContext";
+import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
 
 export function Operators() {
   const { role } = useAuth();
   const { push } = useToast();
+  const confirm = useConfirm();
   const [rows, setRows] = useState<PanelOperatorOut[]>([]);
   const [loading, setLoading] = useState(true);
   const [label, setLabel] = useState("");
@@ -63,7 +66,17 @@ export function Operators() {
 
   async function onRevoke(row: PanelOperatorOut) {
     if (!row.active) return;
-    if (!window.confirm(`Отозвать пароль оператора «${row.label}»?`)) return;
+    if (
+      !(await confirm({
+        title: "Отозвать пароль?",
+        body: `Оператор «${row.label}» больше не сможет войти с текущим паролем.`,
+        confirmLabel: "Отозвать",
+        cancelLabel: "Отмена",
+        danger: true,
+      }))
+    ) {
+      return;
+    }
     setRevokingId(row.id);
     try {
       await api.operators.revoke(row.id);
@@ -111,7 +124,10 @@ export function Operators() {
         </button>
       </form>
 
-      <div className="card overflow-hidden">
+      <div className="card overflow-hidden p-2 sm:p-0">
+        {loading ? (
+          <TableSkeleton rows={5} columns={5} />
+        ) : (
         <div className="table-scroll">
         <table className="table-base">
           <thead>
@@ -124,13 +140,7 @@ export function Operators() {
             </tr>
           </thead>
           <tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={5} className="px-2 py-8 text-center text-slate-500">
-                  Загрузка…
-                </td>
-              </tr>
-            ) : rows.length === 0 ? (
+            {rows.length === 0 ? (
               <tr>
                 <td colSpan={5}>
                   <EmptyState title="Операторов пока нет">
@@ -177,11 +187,13 @@ export function Operators() {
           </tbody>
         </table>
         </div>
+        )}
       </div>
 
       <Modal
         open={created !== null}
         onClose={() => setCreated(null)}
+        trapFocus
         title="Пароль оператора"
         footer={
           <button type="button" className="btn-primary" onClick={() => setCreated(null)}>

@@ -4,6 +4,8 @@ import { CheckCircle2, AlertTriangle, X, Info } from "lucide-react";
 import clsx from "clsx";
 import { Link } from "react-router-dom";
 
+import { ConfirmProvider } from "./ConfirmContext";
+
 type ToastKind = "success" | "error" | "info";
 
 export type ToastAction = {
@@ -45,7 +47,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   return (
     <Ctx.Provider value={value}>
-      {children}
+      <ConfirmProvider>
+        {children}
+      </ConfirmProvider>
       <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm">
         {items.map((t) => (
           <div

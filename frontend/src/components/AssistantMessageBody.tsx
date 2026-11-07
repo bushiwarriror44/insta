@@ -1,5 +1,5 @@
 import { Check, Copy } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useDeferredValue, useMemo, useState, type ReactNode } from "react";
 
 import { copyTextToClipboard } from "./DiagnosticLogPanel";
 
@@ -9,6 +9,8 @@ const FENCE_RE = /```([\s\S]*?)```/g;
 type Props = {
   content: string;
   onCopyToast?: (ok: boolean) => void;
+  streaming?: boolean;
+  showCaret?: boolean;
 };
 
 function linkifySegment(text: string, keyBase: string) {
@@ -95,9 +97,12 @@ function parseBlocks(content: string): Block[] {
   return blocks;
 }
 
-export function AssistantMessageBody({ content, onCopyToast }: Props) {
-  const blocks = useMemo(() => parseBlocks(content), [content]);
+export function AssistantMessageBody({ content, onCopyToast, streaming = false, showCaret }: Props) {
+  const deferredContent = useDeferredValue(content);
+  const parseSource = streaming ? deferredContent : content;
+  const blocks = useMemo(() => parseBlocks(parseSource), [parseSource]);
   const [copied, setCopied] = useState(false);
+  const caretOn = (showCaret ?? streaming) && streaming;
 
   const copy = async () => {
     const ok = await copyTextToClipboard(content);
@@ -108,17 +113,23 @@ export function AssistantMessageBody({ content, onCopyToast }: Props) {
     }
   };
 
+  const lastIndex = blocks.length - 1;
+
   return (
-    <div className="group relative space-y-2 text-sm text-slate-100">
-      <button
-        type="button"
-        className="absolute -top-1 right-0 rounded-md border border-transparent p-1 text-slate-500 opacity-0 transition hover:border-slate-700 hover:bg-slate-800 hover:text-slate-200 focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
-        aria-label="Скопировать ответ"
-        title="Скопировать ответ"
-        onClick={() => void copy()}
-      >
-        {copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
-      </button>
+    <div
+      className={clsxStreamingRoot(streaming)}
+    >
+      {!streaming ? (
+        <button
+          type="button"
+          className="absolute -top-1 right-0 rounded-md border border-transparent p-1 text-slate-500 opacity-0 transition hover:border-slate-700 hover:bg-slate-800 hover:text-slate-200 focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+          aria-label="Скопировать ответ"
+          title="Скопировать ответ"
+          onClick={() => void copy()}
+        >
+          {copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+        </button>
+      ) : null}
       {blocks.map((block, i) =>
         block.type === "code" ? (
           <pre
@@ -130,9 +141,28 @@ export function AssistantMessageBody({ content, onCopyToast }: Props) {
         ) : (
           <p key={`p-${i}`} className="whitespace-pre-wrap">
             {linkifySegment(block.text, `p-${i}`)}
+            {caretOn && i === lastIndex ? (
+              <span className="assistant-stream-caret" aria-hidden>
+                ▍
+              </span>
+            ) : null}
           </p>
         )
       )}
+      {caretOn && blocks.length === 0 && content ? (
+        <p className="whitespace-pre-wrap text-sm text-slate-100">
+          {content}
+          <span className="assistant-stream-caret" aria-hidden>
+            ▍
+          </span>
+        </p>
+      ) : null}
     </div>
   );
+}
+
+function clsxStreamingRoot(streaming: boolean) {
+  return streaming
+    ? "relative space-y-2 text-sm text-slate-100"
+    : "group relative space-y-2 text-sm text-slate-100";
 }

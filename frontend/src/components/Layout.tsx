@@ -14,7 +14,7 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, Outlet } from "react-router-dom";
 import clsx from "clsx";
 
@@ -22,6 +22,7 @@ import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useGpuPresence } from "../hooks/useGpuPresence";
 import { useHotkeys } from "../hooks/useHotkeys";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 import { usePollWhenVisible } from "../hooks/usePollWhenVisible";
 import { focusPageSearch, REFRESH_NAV_BADGES, showAssistant } from "../lib/uiEvents";
 import { AgentToggle } from "./AgentToggle";
@@ -57,6 +58,9 @@ export function Layout() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const navAsideRef = useRef<HTMLElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  useFocusTrap(navAsideRef, navOpen);
   const [badges, setBadges] = useState<Badges>({
     review: 0,
     failed: 0,
@@ -64,7 +68,10 @@ export function Layout() {
     questionsAccountId: null,
   });
 
-  const closeNav = useCallback(() => setNavOpen(false), []);
+  const closeNav = useCallback(() => {
+    setNavOpen(false);
+    window.requestAnimationFrame(() => menuButtonRef.current?.focus());
+  }, []);
 
   const loadBadges = useCallback(async () => {
     try {
@@ -141,6 +148,7 @@ export function Layout() {
       ) : null}
 
       <aside
+        ref={navAsideRef}
         className={clsx(
           "fixed inset-y-0 left-0 z-40 flex w-60 max-w-[85vw] flex-col border-r border-slate-800 bg-slate-950 transition-transform duration-200 md:static md:z-auto md:h-screen md:max-w-none md:shrink-0 md:translate-x-0 md:bg-slate-900/40",
           navOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
@@ -227,6 +235,7 @@ export function Layout() {
         <header className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-slate-800 bg-slate-950/80 px-3 py-3 backdrop-blur sm:px-6 sm:py-4">
           <div className="flex min-w-0 items-center gap-2">
             <button
+              ref={menuButtonRef}
               type="button"
               className="btn-ghost shrink-0 px-2 py-1 md:hidden"
               aria-label="Меню"
@@ -264,7 +273,7 @@ export function Layout() {
       </main>
       <Assistant onHiddenChange={setDockHidden} />
       {paletteOpen ? <CommandPalette onClose={() => setPaletteOpen(false)} /> : null}
-      <Modal open={helpOpen} onClose={() => setHelpOpen(false)} title="Клавиши">
+      <Modal open={helpOpen} onClose={() => setHelpOpen(false)} title="Клавиши" trapFocus>
         <ul className="space-y-2 text-sm text-slate-300">
           <li>
             <kbd className="font-mono text-xs">Ctrl</kbd>+<kbd className="font-mono text-xs">K</kbd> — палитра

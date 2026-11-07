@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ConfirmProvider } from "../../context/ConfirmContext";
 import { ToastProvider } from "../../context/ToastContext";
 import { Assistant } from "../Assistant";
 import { ask } from "../../api/assistant";
@@ -63,8 +64,8 @@ vi.mock("../../api/assistant", () => ({
   ask: vi.fn(),
 }));
 
-vi.mock("../InstagramBrowserPanel", () => ({
-  InstagramBrowserPanel: ({
+vi.mock("../LazyInstagramBrowserPanel", () => ({
+  LazyInstagramBrowserPanel: ({
     username,
     onRunningChange,
   }: {
@@ -90,8 +91,10 @@ function renderDock(ui = <Assistant />, path = "/") {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <ToastProvider>
-        <LocationProbe />
-        {ui}
+        <ConfirmProvider>
+          <LocationProbe />
+          {ui}
+        </ConfirmProvider>
       </ToastProvider>
     </MemoryRouter>
   );
@@ -291,7 +294,7 @@ describe("Assistant", () => {
   it("shows cards skeleton while list_accounts tool runs", async () => {
     askMock.mockImplementationOnce(async (_messages, onStep) => {
       onStep({ type: "tool", text: "Смотрю аккаунты", name: "list_accounts" });
-      await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 200));
       onStep({
         type: "cards",
         cards: [{ kind: "accounts", items: [{ id: 1, username: "a", status: "active", proxy_label: "p" }] }],
@@ -697,6 +700,26 @@ describe("Assistant", () => {
     expect(screen.getByRole("status")).toBeInTheDocument();
     release();
     await waitFor(() => expect(screen.queryByTestId("assistant-sparkle")).not.toBeInTheDocument());
+  });
+
+  it("shows a visible busy pill on the collapsed agent button while streaming", async () => {
+    let release!: () => void;
+    askMock.mockImplementation(async (_messages, onStep) => {
+      onStep({ type: "token", text: "ответ" });
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "тест");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    await screen.findByRole("status");
+    await user.click(screen.getByRole("button", { name: /^скрыть$/i }));
+    const fabBusy = await screen.findByTestId("assistant-fab-busy");
+    expect(fabBusy).toHaveTextContent(/пишет/i);
+    release();
+    await waitFor(() => expect(screen.queryByTestId("assistant-fab-busy")).not.toBeInTheDocument());
   });
 
   it("hides the dock and remembers it", async () => {

@@ -67,7 +67,7 @@ const QUICK_NAV: { target: Exclude<BrowserNavTarget, "auto">; label: string; Ico
   { target: "login", label: "Вход", Icon: LogIn },
 ];
 
-interface Props {
+export interface InstagramBrowserPanelProps {
   username: string;
   adminToken?: string | null;
   mode?: "standalone" | "setup";
@@ -102,7 +102,7 @@ export function InstagramBrowserPanel({
   hasProxy = true,
   onSessionSaved,
   onRunningChange,
-}: Props) {
+}: InstagramBrowserPanelProps) {
   const isStudio = platform === "youtube" || platform === "tiktok";
   const studioLabel = platform === "youtube" ? "YouTube Studio" : platform === "tiktok" ? "TikTok Studio" : "";
   const { push } = useToast();

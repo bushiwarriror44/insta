@@ -19,6 +19,7 @@ export function GpuConfirm({
     <Modal
       open={action !== null}
       onClose={busy ? () => undefined : onNo}
+      trapFocus
       title={stopping ? "Остановить видеокарту?" : "Запустить видеокарту?"}
       footer={
         <>

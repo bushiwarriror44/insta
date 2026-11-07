@@ -7,6 +7,7 @@ import { api, formatApiError } from "../api/client";
 import type { PanelSettingsOut } from "../api/types";
 import { copyTextToClipboard } from "../components/DiagnosticLogPanel";
 import { PageHeader } from "../components/PageHeader";
+import { PageShell } from "../components/PageShell";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 
@@ -99,7 +100,7 @@ export function Settings() {
   }
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <PageShell className="max-w-2xl">
       <PageHeader
         icon={SettingsIcon}
         title="Настройки"
@@ -107,7 +108,10 @@ export function Settings() {
       />
 
       {loading || !data ? (
-        <p className="text-slate-500 text-sm">Загрузка…</p>
+        <div className="space-y-3">
+          <div className="card h-32 animate-pulse bg-slate-800/40" />
+          <div className="card h-40 animate-pulse bg-slate-800/40" />
+        </div>
       ) : (
         <>
           <section className="card p-4 space-y-3">
@@ -218,6 +222,6 @@ export function Settings() {
           </section>
         </>
       )}
-    </div>
+    </PageShell>
   );
 }

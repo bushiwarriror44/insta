@@ -6,6 +6,7 @@ import { Card } from "../components/Card";
 import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { useAuth } from "../context/AuthContext";
+import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
 import type { BackupOut, RuntimeOut } from "../api/types";
 
@@ -19,6 +20,7 @@ function applyContext(rt: RuntimeOut, current: number) {
 export function Maintenance() {
   const { role } = useAuth();
   const { push } = useToast();
+  const confirm = useConfirm();
   const [runtime, setRuntime] = useState<RuntimeOut | null>(null);
   const [backups, setBackups] = useState<BackupOut[]>([]);
   const [context, setContext] = useState(8192);
@@ -41,9 +43,13 @@ export function Maintenance() {
   async function onRestore(row: BackupOut) {
     if (!canRestore) return;
     if (
-      !window.confirm(
-        `Восстановить базу из «${row.name}»? Текущая база будет заменена. Перезапустите API/worker после восстановления.`
-      )
+      !(await confirm({
+        title: "Восстановить базу?",
+        body: `Текущая база будет заменена копией «${row.name}». После восстановления перезапустите API и worker.`,
+        confirmLabel: "Восстановить",
+        cancelLabel: "Отмена",
+        danger: true,
+      }))
     ) {
       return;
     }

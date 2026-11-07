@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ConfirmProvider } from "../../context/ConfirmContext";
 import { ToastProvider } from "../../context/ToastContext";
 import { Dashboard } from "../Dashboard";
 import type { DashboardSummary } from "../../api/types";
@@ -51,7 +52,9 @@ function renderDashboard() {
   return render(
     <MemoryRouter>
       <ToastProvider>
-        <Dashboard />
+        <ConfirmProvider>
+          <Dashboard />
+        </ConfirmProvider>
       </ToastProvider>
     </MemoryRouter>
   );
@@ -230,10 +233,8 @@ describe("Dashboard page", () => {
     apiMock.dashboard.mockRejectedValueOnce(new Error("dashboard down"));
     renderDashboard();
 
-    expect(
-      await screen.findByRole("heading", { name: /не удалось загрузить панель/i })
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/загрузка/i)).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent(/dashboard down/i);
+    expect(screen.getByRole("heading", { name: /^панель$/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /повторить/i })).toBeInTheDocument();
 
     apiMock.dashboard.mockResolvedValueOnce(summary());

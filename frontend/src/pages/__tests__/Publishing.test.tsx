@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -133,6 +133,15 @@ function renderPublishing(initialEntry = "/publishing") {
 }
 
 describe("Publishing page", () => {
+  it("shows library header while initial load is in progress", () => {
+    apiMock.videos.list.mockImplementation(() => new Promise(() => {}));
+    apiMock.accounts.list.mockImplementation(() => new Promise(() => {}));
+    apiMock.publications.list.mockImplementation(() => new Promise(() => {}));
+    renderPublishing();
+    expect(screen.getByRole("heading", { name: /библиотека/i })).toBeInTheDocument();
+    expect(screen.getByText(/загрузка медиатеки/i)).toBeInTheDocument();
+  });
+
   it("renders media library grid and publication statistics", async () => {
     renderPublishing();
     await screen.findAllByText("clip.mp4");
@@ -326,7 +335,6 @@ describe("Publishing page", () => {
   });
 
   it("after delete selects remaining media and syncs tab/post type", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     apiMock.videos.list.mockResolvedValue([video, image]);
     apiMock.videos.remove.mockImplementation(async () => {
       apiMock.videos.list.mockResolvedValue([image]);
@@ -337,6 +345,8 @@ describe("Publishing page", () => {
     await waitFor(() => expect(byLabel(/тип публикации/i)).toHaveValue("reel"));
 
     fireEvent.click(screen.getByRole("button", { name: /^удалить$/i }));
+    const dialog = await screen.findByRole("dialog", { name: /удалить файл/i });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^удалить$/i }));
 
     await waitFor(() => expect(apiMock.videos.remove).toHaveBeenCalledWith("clip.mp4"));
     await waitFor(() => {
