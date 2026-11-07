@@ -1,10 +1,23 @@
 # YouTube Studio / Google signin/rejected — runbook оператора
 
-Страница **«Couldn't sign you in»** (`accounts.google.com/.../signin/rejected`) после email — отказ anti-bot Google к **Playwright Chromium** (или к IP прокси), а не сбой noVNC или paste API. HEAD `HTTP 200` на studio.youtube.com **не** означает, что интерактивный вход разрешён.
+Страница **«Couldn't sign you in»** (`accounts.google.com/.../signin/rejected`) после email — отказ anti-bot Google к **браузеру под CDP (Playwright)** и/или к IP прокси, а не сбой noVNC. HEAD `HTTP 200` на studio.youtube.com **не** означает, что интерактивный вход разрешён.
+
+## Первый вход из админки (рекомендуется): native Chrome без Playwright
+
+По умолчанию `STUDIO_VNC_NATIVE_CHROME=true`: YouTube/TikTok VNC запускает **google-chrome-stable** subprocess с `--user-data-dir` на volume, **без** Playwright и без `--remote-debugging-port`. Логин — только с клавиатуры noVNC; «Вставить» и «Код» в этом режиме недоступны.
+
+1. Карточка YouTube → **Браузер** → дождитесь в логах `native Chrome (без CDP)`.
+2. В noVNC войдите в Google / Studio (email, пароль, 2FA).
+3. **Сохранить сессию** — API останавливает Chrome, экспортирует `data/playwright/youtube/<username>/state.json` из профиля.
+4. **Проверка подключения** с `probe_studio=true`.
+
+Профиль Chrome: `data/playwright/youtube/<username>/chrome_profile/`. Отключить native: `STUDIO_VNC_NATIVE_CHROME=false` (fallback на Playwright — выше риск `signin/rejected`).
+
+Если rejected **и в native Chrome** — смените прокси (mobile/residential), не только канал браузера.
 
 Подробнее о сессиях: [accounts-sessions.md](accounts-sessions.md).
 
-## Быстрый обход (рекомендуется): импорт `state.json` с домашнего Chrome
+## Запасной путь: импорт `state.json` с домашнего Chrome
 
 1. На **доверенном ПК** откройте обычный **Google Chrome** (не Chromium), желательно с residential IP того же региона, что прокси аккаунта.
 2. Войдите в [studio.youtube.com](https://studio.youtube.com) до рабочего интерфейса (2FA при необходимости).

@@ -12,7 +12,7 @@
 
 **Instagram:** единый `login_surface` в карточке, в `first-login` и в `browser/start`; не включать `probe_mobile` без нужды (может сжечь web-cookie); не смешивать web (`state.json` / sessionid) и mobile dump; IMAP/TOTP в карточке до автовхода; стабильные профили на диске (`web_desktop_profile.json`, `playwright_chrome_major`) не сбрасывать без причины.
 
-**YouTube / TikTok:** `proxy-studio-check` до VNC; при Google `signin/rejected` — импорт `state.json` из домашнего Chrome ([runbook](google-studio-vnc-runbook.md)); `BROWSER_VNC_CHANNEL=chrome`, `PLAYWRIGHT_STUDIO_CHANNEL=chrome`, при медленном прокси — `BROWSER_GOTO_TIMEOUT_SEC=90`; перед публикацией — `test_connection?probe_studio=true`.
+**YouTube / TikTok:** `proxy-studio-check` до VNC; первый вход — VNC с `STUDIO_VNC_NATIVE_CHROME=true` (native Chrome без CDP, см. [runbook](google-studio-vnc-runbook.md)); при повторном `signin/rejected` или сбое — импорт `state.json` с домашнего Chrome; `BROWSER_VNC_CHANNEL=chrome`, `PLAYWRIGHT_STUDIO_CHANNEL=chrome`, при медленном прокси — `BROWSER_GOTO_TIMEOUT_SEC=90`; перед публикацией — `test_connection?probe_studio=true`.
 
 **Браузер Instagram (опционально):** `PLAYWRIGHT_INSTAGRAM_CHANNEL=chrome` в `.env`, если в образе установлен `google-chrome-stable` (как для Studio).
 

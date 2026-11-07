@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import subprocess
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -61,6 +62,14 @@ from app.behavior.playwright_surface import (
     studio_vnc_launch_args,
     vnc_screen_size,
 )
+from app.browser.studio_native_chrome import (
+    export_storage_state_from_native_profile,
+    launch_native_chrome,
+    native_chrome_profile_dir,
+    native_chrome_running,
+    resolve_google_chrome_binary,
+    stop_native_chrome,
+)
 from app.browser.vnc_stack import VncStack, allocate_ports, vnc_stack_available
 from app.diagnostics.collector import DiagnosticCollector
 from app.db.models import DiagnosticRunKind
@@ -102,6 +111,14 @@ def _studio_desktop_geometry(platform_value: str) -> tuple[int, int] | None:
     if platform_value in ("youtube", "tiktok"):
         return (settings.browser_studio_vnc_width, settings.browser_studio_vnc_height)
     return None
+
+
+def _should_use_native_studio_vnc(platform_value: str) -> bool:
+    if platform_value not in ("youtube", "tiktok"):
+        return False
+    if not settings.studio_vnc_native_chrome:
+        return False
+    return resolve_google_chrome_binary() is not None
 
 
 async def _platform_logged_in(context, page, platform: str) -> bool:
@@ -193,13 +210,25 @@ def _google_signin_rejected(url: str | None) -> bool:
     return "signin/rejected" in lower or "signin/v3/rejected" in lower
 
 
-def _google_signin_rejected_warning() -> str:
+_NATIVE_CHROME_VNC_HINT = (
+    "Режим нативного Chrome (без Playwright/CDP) — вводите email, пароль и 2FA "
+    "вручную в окне VNC; кнопки «Вставить» и «Код» недоступны."
+)
+
+
+def _google_signin_rejected_warning(*, playwright_controlled: bool = True) -> str:
+    if playwright_controlled:
+        return (
+            "Google отклонил вход (часто Playwright/CDP, не только IP). "
+            "Включите STUDIO_VNC_NATIVE_CHROME=true и перезапустите VNC, "
+            "или смените прокси (mobile/residential): "
+            "python -m app.cli proxy-studio-check <username>. "
+            "Запасной путь — импорт state.json с домашнего Chrome."
+        )
     return (
-        "Google отклонил вход («браузер небезопасен»). "
-        "Смените прокси или: python -m app.cli proxy-studio-check <username>. "
-        "Не используйте «Google автозаполнение» — введите логин вручную в VNC "
-        "или кнопками «Вставить» после клика в поле. "
-        "Если отказ повторяется: войдите в обычном Chrome и «Сохранить сессию и куки»."
+        "Google отклонил вход. Смените прокси (mobile/residential): "
+        "python -m app.cli proxy-studio-check <username>. "
+        "Нативный Chrome уже без CDP — отказ обычно из‑за IP/гео прокси."
     )
 
 
@@ -622,6 +651,7 @@ class BrowserSessionState:
     error: str | None = None
     launch_warning: str | None = None
     proxy_label: str | None = None
+    proxy_url: str | None = None
     proxy_ip: str | None = None
     proxy_geo_country: str | None = None
     proxy_country: str | None = None
@@ -646,6 +676,8 @@ class BrowserSessionState:
     auto_stop_task: asyncio.Task | None = None
     studio_nav_task: asyncio.Task | None = None
     login_orchestration: bool = False
+    native_chrome_mode: bool = False
+    native_chrome_proc: subprocess.Popen[Any] | None = None
 
     def log(self, level: LogLevel, step: str, message: str) -> None:
         line = {
@@ -854,6 +886,7 @@ class BrowserSessionManager:
                 vnc_stack=vnc,
                 login_surface=resolved_surface,
                 proxy_label=getattr(proxy, "label", None),
+                proxy_url=getattr(proxy, "url", None),
                 proxy_country=getattr(proxy, "country", None),
                 proxy_timezone=normalize_playwright_timezone(
                     getattr(proxy, "timezone", None),
@@ -950,11 +983,18 @@ class BrowserSessionManager:
                 studio_autofill=studio_autofill,
             )
             session.status = BrowserSessionStatus.running
-            session.log(
-                "info",
-                "browser",
-                f"Chromium запущен; URL={session.page_url or '—'}",
-            )
+            if session.native_chrome_mode:
+                session.log(
+                    "info",
+                    "browser",
+                    f"native Chrome (без CDP); URL={session.page_url or '—'}",
+                )
+            else:
+                session.log(
+                    "info",
+                    "browser",
+                    f"Chromium запущен; URL={session.page_url or '—'}",
+                )
             session.poll_task = asyncio.create_task(self._poll_session(session, account))
             timeout_sec = settings.browser_session_timeout_min * 60
             session.auto_stop_task = asyncio.create_task(self._auto_stop(username, timeout_sec))
@@ -967,6 +1007,37 @@ class BrowserSessionManager:
             await self._cleanup_session(session, remove=False)
             raise
 
+    async def _launch_native_studio_browser(
+        self,
+        session: BrowserSessionState,
+        account,
+        proxy,
+        *,
+        platform_value: str,
+    ) -> None:
+        urls = _studio_url_ladder(platform_value)
+        initial_url = urls[0] if urls else _YOUTUBE_STUDIO_URL
+        profile_dir = native_chrome_profile_dir(account.username, platform_value)
+        desktop_geometry = _studio_desktop_geometry(platform_value)
+        session.native_chrome_proc = await asyncio.to_thread(
+            launch_native_chrome,
+            user_data_dir=profile_dir,
+            proxy_url=proxy.url,
+            display=vnc_stack_display(session),
+            initial_url=initial_url,
+            desktop_geometry=desktop_geometry,
+        )
+        session.native_chrome_mode = True
+        session.page_url = initial_url
+        session.last_logged_url = initial_url
+        pid = session.native_chrome_proc.pid if session.native_chrome_proc else "—"
+        session.log(
+            "info",
+            "native_chrome",
+            f"Google Chrome без Playwright (pid={pid}); profile={profile_dir}",
+        )
+        session.log("info", "native_chrome", _NATIVE_CHROME_VNC_HINT)
+
     async def _launch_browser(
         self,
         session: BrowserSessionState,
@@ -977,6 +1048,20 @@ class BrowserSessionManager:
         surface: LoginSurface,
         studio_autofill: bool = False,
     ) -> None:
+        platform_value = _account_platform_value(account)
+        if _should_use_native_studio_vnc(platform_value):
+            await self._launch_native_studio_browser(
+                session, account, proxy, platform_value=platform_value
+            )
+            return
+        if platform_value in ("youtube", "tiktok") and settings.studio_vnc_native_chrome:
+            if resolve_google_chrome_binary() is None:
+                session.log(
+                    "warn",
+                    "native_chrome",
+                    "google-chrome-stable не найден — fallback на Playwright (CDP)",
+                )
+
         try:
             from playwright.async_api import async_playwright
         except ImportError as exc:
@@ -1361,6 +1446,15 @@ class BrowserSessionManager:
     async def _poll_session(self, session: BrowserSessionState, account) -> None:
         while session.status in (BrowserSessionStatus.running, BrowserSessionStatus.awaiting_code):
             try:
+                if session.native_chrome_mode:
+                    if not native_chrome_running(session.native_chrome_proc):
+                        session.log(
+                            "warn",
+                            "poll",
+                            "Native Chrome завершился — войдите и нажмите «Сохранить сессию» или перезапустите браузер",
+                        )
+                    await asyncio.sleep(2.0)
+                    continue
                 if session.page is None or session.context is None:
                     break
                 platform_value = _account_platform_value(account)
@@ -1416,7 +1510,11 @@ class BrowserSessionManager:
 
     async def paste_text(self, account, text: str) -> None:
         session = self._sessions.get(account.username)
-        if session is None or session.page is None:
+        if session is None:
+            raise RuntimeError("нет активной браузерной сессии для этого аккаунта")
+        if session.native_chrome_mode:
+            raise RuntimeError(_NATIVE_CHROME_VNC_HINT)
+        if session.page is None:
             raise RuntimeError("нет активной браузерной сессии для этого аккаунта")
         if session.status not in (
             BrowserSessionStatus.running,
@@ -1431,7 +1529,11 @@ class BrowserSessionManager:
 
     async def submit_code(self, db: Session, account, code: str | None) -> bool:
         session = self._sessions.get(account.username)
-        if session is None or session.page is None:
+        if session is None:
+            raise RuntimeError("нет активной браузерной сессии для этого аккаунта")
+        if session.native_chrome_mode:
+            raise RuntimeError(_NATIVE_CHROME_VNC_HINT)
+        if session.page is None:
             raise RuntimeError("нет активной браузерной сессии для этого аккаунта")
 
         resolved = (code or "").strip()
@@ -1460,7 +1562,56 @@ class BrowserSessionManager:
 
     async def save_session(self, db: Session, account) -> dict[str, Any]:
         session = self._sessions.get(account.username)
-        if session is None or session.context is None:
+        if session is None:
+            raise RuntimeError("нет активной браузерной сессии для этого аккаунта")
+
+        if session.native_chrome_mode:
+            platform = _account_platform_value(account)
+            label = {"youtube": "YouTube", "tiktok": "TikTok"}.get(platform, "Studio")
+            if native_chrome_running(session.native_chrome_proc):
+                session.log("info", "save", "Остановка native Chrome перед экспортом cookies…")
+                await stop_native_chrome(session.native_chrome_proc)
+            session.native_chrome_proc = None
+            state_file = playwright_state_write_path(account.username, platform)
+            proxy_url = (session.proxy_url or "").strip()
+            if not proxy_url and getattr(account, "proxy", None) is not None:
+                proxy_url = (account.proxy.url or "").strip()
+            if not proxy_url:
+                raise RuntimeError("для экспорта cookies нужен прокси аккаунта")
+            proxy_country = session.proxy_country or getattr(account.proxy, "country", None) if getattr(account, "proxy", None) else session.proxy_country
+            proxy_timezone = session.proxy_timezone
+            try:
+                await export_storage_state_from_native_profile(
+                    username=account.username,
+                    platform=platform,
+                    proxy_url=proxy_url,
+                    proxy_country=proxy_country,
+                    proxy_timezone=proxy_timezone,
+                    state_out=state_file,
+                )
+            except Exception as exc:  # noqa: BLE001
+                session.log("error", "save", f"Экспорт state.json: {exc}")
+                raise RuntimeError(f"не удалось экспортировать cookies из профиля Chrome: {exc}") from exc
+            try:
+                data = json.loads(state_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RuntimeError("не удалось прочитать export state.json") from exc
+            cookies = data.get("cookies") if isinstance(data, dict) else None
+            if not isinstance(cookies, list) or not cookies_match_platform(cookies, platform):
+                session.log("error", "save", f"Нет cookies {label} — сначала войдите в браузере")
+                raise RuntimeError(
+                    f"Сначала войдите в {label} в браузере — cookies площадки не найдены"
+                )
+            session.status = BrowserSessionStatus.saved
+            session.awaiting_code = False
+            session.log("info", "save", f"Playwright cookies {platform} сохранены в state.json (native profile)")
+            return {
+                "session_imported": False,
+                "session_id_saved": False,
+                "playwright_state_saved": True,
+            }
+
+        if session.context is None:
             raise RuntimeError("нет активной браузерной сессии для этого аккаунта")
 
         if session.page is None or not await _platform_logged_in(
@@ -1557,6 +1708,8 @@ class BrowserSessionManager:
                 await session.pw.stop()
             except Exception:
                 pass
+        if session.native_chrome_proc is not None:
+            await stop_native_chrome(session.native_chrome_proc)
         if session.vnc_stack is not None:
             session.vnc_stack.stop()
 
@@ -1564,6 +1717,8 @@ class BrowserSessionManager:
         session.context = None
         session.browser = None
         session.pw = None
+        session.native_chrome_proc = None
+        session.native_chrome_mode = False
         session.vnc_stack = None
         session.ws_port = 0
         session.vnc_path = ""

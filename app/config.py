@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     browser_studio_vnc_width: int = Field(default=1024, ge=800, le=1280)
     browser_studio_vnc_height: int = Field(default=640, ge=480, le=800)
     browser_vnc_channel: Literal["chromium", "chrome"] = Field(default="chromium")
+    studio_vnc_native_chrome: bool = Field(default=True)
     playwright_studio_channel: Literal["chromium", "chrome"] = Field(default="chromium")
     playwright_instagram_channel: Literal["chromium", "chrome"] = Field(default="chromium")
     publish_require_studio_liveness: bool = Field(default=False)
