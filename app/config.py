@@ -142,6 +142,11 @@ class Settings(BaseSettings):
     floppydata_base_url: str = Field(default="https://api.floppydata.net")
     hero_sms_api_key: str = Field(default="")
     hero_sms_handler_url: str = Field(default="https://hero-sms.com/stubs/handler_api.php")
+    qubax_api_key: str = Field(default="")
+    qubax_base_url: str = Field(default="https://api.qubax.ai/v1")
+    qubax_default_model: str = Field(default="kling-v3-standard-text-to-video")
+    qubax_default_model_i2v: str = Field(default="uncensored-i2v-pro")
+    api_public_base_url: str = Field(default="")
     media_dir: Path = Field(default=Path("data/videos/source"))
 
     def effective_generation_timeout(self) -> float:

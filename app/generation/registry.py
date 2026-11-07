@@ -10,6 +10,7 @@ from app.generation.hfspace import HfSpaceVideoBackend
 from app.generation.huggingface import HuggingFaceVideoBackend
 from app.generation.local import LocalVideoBackend
 from app.generation.pollinations import PollinationsVideoBackend
+from app.generation.qubax import QubaxVideoBackend
 from app.generation.slideshow import SlideshowVideoBackend
 
 DEFAULT_CHAIN = "fal,huggingface,pollinations,local,hfspace"
@@ -21,6 +22,7 @@ _BACKENDS: dict[str, type[VideoBackend]] = {
     LocalVideoBackend.name: LocalVideoBackend,
     HfSpaceVideoBackend.name: HfSpaceVideoBackend,
     SlideshowVideoBackend.name: SlideshowVideoBackend,
+    QubaxVideoBackend.name: QubaxVideoBackend,
     ChainVideoBackend.name: ChainVideoBackend,
 }
 

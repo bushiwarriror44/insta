@@ -26,6 +26,9 @@ vi.mock("../pages/Browser", () => ({
 vi.mock("../pages/HeroSms", () => ({
   HeroSms: () => <div>HEROSMS_PAGE</div>,
 }));
+vi.mock("../pages/Qubax", () => ({
+  Qubax: () => <div>QUBAX_PAGE</div>,
+}));
 vi.mock("../pages/Upload", () => ({
   Upload: () => <div>UPLOAD_ALIAS</div>,
 }));
@@ -171,6 +174,15 @@ describe("App routing", () => {
     });
     renderAt("/accounts");
     expect(screen.getByText("ACCOUNTS_PAGE")).toBeInTheDocument();
+  });
+
+  it("renders the qubax page when at /qubax", () => {
+    useAuthMock.mockReturnValue({
+      state: { state: "authed", token: "t", role: "owner" },
+      retryBootstrap: vi.fn(),
+    });
+    renderAt("/qubax");
+    expect(screen.getByText("QUBAX_PAGE")).toBeInTheDocument();
   });
 
   it("renders the hero sms page when at /hero-sms", () => {

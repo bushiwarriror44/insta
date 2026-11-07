@@ -178,6 +178,7 @@ export function Renders() {
   const highlightRef = useRef<HTMLTableRowElement | null>(null);
   const [bootLoading, setBootLoading] = useState(true);
   const bootedRef = useRef(false);
+  const [qubaxConfigured, setQubaxConfigured] = useState(false);
 
   const durations = durationChoices(backend, inputMode);
   const frameSizes =
@@ -218,7 +219,7 @@ export function Renders() {
   }, [genFromUrl, joinFromUrl, gens, joins]);
 
   const reload = useCallback(async () => {
-    const [g, c, accs, engines, uploads, videos, audios] = await Promise.all([
+    const [g, c, accs, engines, uploads, videos, audios, qxStatus] = await Promise.all([
       api.factory.generations(),
       api.factory.compositions(),
       api.accounts.list(),
@@ -226,11 +227,15 @@ export function Renders() {
       api.videos.list().catch(() => []),
       api.factory.assets({ kind: "video", limit: 100 }).catch(() => []),
       api.factory.assets({ kind: "audio", limit: 100 }).catch(() => []),
+      api.qubax.status().catch(() => ({ configured: false, key_from_env: false })),
     ]);
     setGens(g);
     setJoins(c);
     setAccounts(accs);
-    setBackends(engines);
+    setQubaxConfigured(Boolean(qxStatus.configured));
+    setBackends(
+      engines.filter((engine) => engine.name !== "qubax" || qxStatus.configured)
+    );
     setVideoAssets(videos);
     setAudioAssets(audios);
     setLibraryFiles(
@@ -489,6 +494,24 @@ export function Renders() {
                 </button>
               ))}
             </div>
+            {!qubaxConfigured ? (
+              <p className="text-xs text-slate-500">
+                Чтобы добавить движок Qubax, сохраните ключ на{" "}
+                <a href="/qubax" className="text-brand-300 hover:underline">
+                  /qubax
+                </a>
+                .
+              </p>
+            ) : null}
+            {backend === "qubax" ? (
+              <p className="text-xs text-slate-400">
+                Модель по умолчанию и ключ — на странице{" "}
+                <a href="/qubax" className="text-brand-300 hover:underline">
+                  Qubax
+                </a>
+                . Здесь используется промпт и кадр из референсов (I2V).
+              </p>
+            ) : null}
           </div>
         ) : null}
         <label className="block text-sm text-slate-200">

@@ -329,6 +329,8 @@ class PanelSettings(Base):
     floppydata_last_form: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     hero_sms_api_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     hero_sms_last_form: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    qubax_api_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    qubax_last_form: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
@@ -370,6 +372,26 @@ class MediaAsset(Base):
     @property
     def is_synthetic(self) -> bool:
         return self.source in (AssetSource.generated, AssetSource.composed)
+
+
+class QubaxVideoJob(Base):
+    """Studio jobs submitted to Qubax (separate from generation_jobs queue)."""
+
+    __tablename__ = "qubax_video_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    external_id: Mapped[str] = mapped_column(String(128), index=True)
+    model: Mapped[str] = mapped_column(String(200))
+    prompt: Mapped[str] = mapped_column(Text)
+    params_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    video_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    media_asset_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("media_assets.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class PlanJob(Base):

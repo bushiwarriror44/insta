@@ -206,6 +206,138 @@ export interface HeroSmsHistoryOut {
   items: HeroSmsHistoryItemOut[];
 }
 
+export interface QubaxVariantFormState {
+  model: string;
+  duration?: string | null;
+  aspect_ratio?: string | null;
+}
+
+export interface QubaxFormState {
+  mode?: string;
+  model?: string;
+  prompt?: string;
+  duration?: string;
+  aspect_ratio?: string;
+  image_filename?: string | null;
+  variant_models?: string[];
+  variants?: QubaxVariantFormState[];
+  selected_presets?: string[];
+  model_tab?: string | null;
+  api_public_base_url?: string | null;
+  default_model?: string | null;
+  default_model_i2v?: string | null;
+}
+
+export interface QubaxPanelSettingsOut {
+  api_public_base_url: string;
+  api_public_source: string;
+  api_public_configured: boolean;
+  suggested_api_public_base_url?: string;
+  docs_url?: string;
+  default_model: string;
+  default_model_i2v: string;
+}
+
+export interface QubaxMarketModelOut {
+  id: string;
+  name?: string | null;
+  price?: number | null;
+  unit?: string | null;
+  benchmark?: number | null;
+  discount_pct?: number | null;
+}
+
+export interface QubaxEstimateLineOut {
+  model: string;
+  unit?: string | null;
+  unit_price?: number | null;
+  line_cost?: number | null;
+  duration?: string | null;
+}
+
+export interface QubaxEstimateIn {
+  variants?: QubaxBatchVariantIn[];
+  include_single?: boolean;
+  model?: string | null;
+  duration?: string | null;
+  aspect_ratio?: string | null;
+}
+
+export interface QubaxEstimateOut {
+  items: QubaxEstimateLineOut[];
+  total_usd?: number | null;
+  balance_usd?: number | null;
+  sufficient?: boolean | null;
+  jobs_count: number;
+}
+
+export interface QubaxStatusOut {
+  configured: boolean;
+  key_from_env: boolean;
+  balance?: number | null;
+  last_form?: QubaxFormState | null;
+  settings?: QubaxPanelSettingsOut;
+  error?: string | null;
+}
+
+export interface QubaxModelOut {
+  id: string;
+  owned_by?: string;
+  label?: string | null;
+}
+
+export interface QubaxModelsOut {
+  presets: QubaxModelOut[];
+  models: QubaxModelOut[];
+}
+
+export interface QubaxJobCreateIn {
+  model: string;
+  prompt: string;
+  duration?: string;
+  aspect_ratio?: string;
+  image_filename?: string | null;
+  batch_label?: string | null;
+}
+
+export interface QubaxBatchVariantIn {
+  model: string;
+  duration?: string;
+  aspect_ratio?: string;
+  batch_label?: string | null;
+}
+
+export interface QubaxBatchCreateIn {
+  prompt: string;
+  variants: QubaxBatchVariantIn[];
+  image_filename?: string | null;
+}
+
+export interface QubaxJobOut {
+  id: number;
+  external_id: string;
+  model: string;
+  prompt: string;
+  status: string;
+  video_url?: string | null;
+  last_error?: string | null;
+  media_asset_id?: number | null;
+  params?: Record<string, unknown>;
+  created_at?: string | null;
+  completed_at?: string | null;
+}
+
+export interface QubaxJobListOut {
+  items: QubaxJobOut[];
+  total: number;
+}
+
+export interface QubaxImportOut {
+  job_id: number;
+  media_asset_id: number;
+  filename: string;
+}
+
 export interface FloppydataGenerateIn {
   type: FloppydataProxyType;
   country: string;

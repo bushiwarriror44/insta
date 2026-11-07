@@ -7,6 +7,7 @@ import { useAuth } from "./context/AuthContext";
 import { Accounts } from "./pages/Accounts";
 import { Browser } from "./pages/Browser";
 import { HeroSms } from "./pages/HeroSms";
+import { Qubax } from "./pages/Qubax";
 import { Activity } from "./pages/Activity";
 import { Administration } from "./pages/Administration";
 import { Agent } from "./pages/Agent";
@@ -60,6 +61,7 @@ export default function App() {
         <Route index element={<Dashboard />} />
         <Route path="/accounts" element={<Accounts />} />
         <Route path="/hero-sms" element={<HeroSms />} />
+        <Route path="/qubax" element={<Qubax />} />
         <Route path="/browser" element={<Browser />} />
         <Route path="/publishing" element={<Publishing />} />
         <Route path="/upload" element={<Navigate to="/publishing" replace />} />

@@ -167,6 +167,123 @@ def get_hero_sms_last_form(db: Session) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def resolve_qubax_api_key(db: Session) -> str:
+    env_key = (settings.qubax_api_key or "").strip()
+    if env_key:
+        return env_key
+    row = get_or_create_panel_settings(db)
+    return (getattr(row, "qubax_api_key", None) or "").strip()
+
+
+def set_qubax_api_key(db: Session, api_key: str) -> str:
+    row = get_or_create_panel_settings(db)
+    cleaned = (api_key or "").strip()
+    row.qubax_api_key = cleaned or None
+    db.commit()
+    db.refresh(row)
+    return (row.qubax_api_key or "").strip()
+
+
+def qubax_key_from_env() -> bool:
+    return bool((settings.qubax_api_key or "").strip())
+
+
+def get_qubax_last_form(db: Session) -> dict[str, Any] | None:
+    row = get_or_create_panel_settings(db)
+    raw = getattr(row, "qubax_last_form", None)
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+_QUBAX_FORM_KEYS = (
+    "mode",
+    "model",
+    "prompt",
+    "duration",
+    "aspect_ratio",
+    "image_filename",
+    "variant_models",
+    "variants",
+    "selected_presets",
+    "model_tab",
+    "api_public_base_url",
+    "default_model",
+    "default_model_i2v",
+)
+
+
+def set_qubax_last_form(
+    db: Session,
+    form: dict[str, Any] | None,
+    *,
+    merge: bool = True,
+) -> dict[str, Any] | None:
+    row = get_or_create_panel_settings(db)
+    if form is None:
+        row.qubax_last_form = None
+        db.commit()
+        db.refresh(row)
+        return None
+    base = (get_qubax_last_form(db) or {}) if merge else {}
+    cleaned: dict[str, Any] = {k: v for k, v in base.items() if k in _QUBAX_FORM_KEYS}
+    for key in _QUBAX_FORM_KEYS:
+        if key not in form:
+            continue
+        value = form[key]
+        if value is None and key == "image_filename":
+            cleaned.pop("image_filename", None)
+            continue
+        if value is None and key in ("variants", "variant_models", "selected_presets"):
+            cleaned[key] = []
+            continue
+        if value is not None or key in ("image_filename",):
+            if value is not None and value != "":
+                cleaned[key] = value
+            elif key == "image_filename" and form.get("image_filename") == "":
+                cleaned.pop("image_filename", None)
+    row.qubax_last_form = json.dumps(cleaned, ensure_ascii=False) if cleaned else None
+    db.commit()
+    db.refresh(row)
+    return cleaned or None
+
+
+def resolve_qubax_api_public_base(db: Session) -> tuple[str, str]:
+    """Base URL for signed I2V refs: (url, source: env|panel|salad|none)."""
+    env = (settings.api_public_base_url or "").strip().rstrip("/")
+    if env:
+        return env, "env"
+    form = get_qubax_last_form(db) or {}
+    panel = str(form.get("api_public_base_url") or "").strip().rstrip("/")
+    if panel:
+        return panel, "panel"
+    salad = (settings.salad_gpu_patch_public_base or "").strip().rstrip("/")
+    if salad:
+        return salad, "salad"
+    return "", "none"
+
+
+def resolve_qubax_default_model(db: Session, *, i2v: bool = False) -> str:
+    if i2v:
+        env = (settings.qubax_default_model_i2v or "").strip()
+        fallback = "uncensored-i2v-pro"
+    else:
+        env = (settings.qubax_default_model or "").strip()
+        fallback = "kling-v3-standard-text-to-video"
+    if env:
+        return env
+    form = get_qubax_last_form(db) or {}
+    key = "default_model_i2v" if i2v else "default_model"
+    from_panel = str(form.get(key) or "").strip()
+    if from_panel:
+        return from_panel
+    return fallback
+
+
 def set_hero_sms_last_form(db: Session, form: dict[str, Any] | None) -> dict[str, Any] | None:
     row = get_or_create_panel_settings(db)
     if not form:

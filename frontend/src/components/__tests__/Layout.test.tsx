@@ -136,6 +136,7 @@ describe("Layout", () => {
     expect(screen.getByTestId("nav-dashboard")).toBeInTheDocument();
     expect(screen.getByTestId("nav-accounts")).toBeInTheDocument();
     expect(screen.getByTestId("nav-hero-sms")).toBeInTheDocument();
+    expect(screen.getByTestId("nav-qubax")).toBeInTheDocument();
     expect(screen.getByTestId("nav-browser")).toBeInTheDocument();
     expect(screen.getByTestId("nav-publishing")).toBeInTheDocument();
     expect(screen.getByTestId("nav-agent")).toBeInTheDocument();

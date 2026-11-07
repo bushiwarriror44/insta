@@ -822,6 +822,63 @@ export const api = {
       }),
   },
 
+  qubax: {
+    status: () => request<import("./types").QubaxStatusOut>("/api/qubax/status"),
+    setApiKey: (apiKey: string) =>
+      request<import("./types").QubaxStatusOut>("/api/qubax/api-key", {
+        method: "PUT",
+        body: { api_key: apiKey },
+      }),
+    saveForm: (body: import("./types").QubaxFormState) =>
+      request<import("./types").QubaxStatusOut>("/api/qubax/form", {
+        method: "PUT",
+        body,
+      }),
+    models: (refresh = false) =>
+      request<import("./types").QubaxModelsOut>(
+        `/api/qubax/models${refresh ? "?refresh=true" : ""}`
+      ),
+    modelDetail: (id: string) =>
+      request<Record<string, unknown>>(`/api/qubax/models/${encodeURIComponent(id)}`),
+    marketModel: (id: string) =>
+      request<import("./types").QubaxMarketModelOut>(
+        `/api/qubax/market/models/${encodeURIComponent(id)}`
+      ),
+    marketPrices: (refresh = false) =>
+      request<{ prices: Record<string, import("./types").QubaxMarketModelOut> }>(
+        `/api/qubax/market/prices${refresh ? "?refresh=true" : ""}`
+      ),
+    estimate: (body: import("./types").QubaxEstimateIn) =>
+      request<import("./types").QubaxEstimateOut>("/api/qubax/estimate", {
+        method: "POST",
+        body,
+      }),
+    createJob: (body: import("./types").QubaxJobCreateIn) =>
+      request<import("./types").QubaxJobOut>("/api/qubax/jobs", { method: "POST", body }),
+    createBatch: (body: import("./types").QubaxBatchCreateIn) =>
+      request<import("./types").QubaxJobListOut>("/api/qubax/jobs/batch", { method: "POST", body }),
+    listJobs: (params?: {
+      limit?: number;
+      offset?: number;
+      status?: string;
+      sync_active?: boolean;
+    }) => {
+      const q = new URLSearchParams();
+      if (params?.limit != null) q.set("limit", String(params.limit));
+      if (params?.offset != null) q.set("offset", String(params.offset));
+      if (params?.status) q.set("status", params.status);
+      if (params?.sync_active) q.set("sync_active", "true");
+      const qs = q.toString();
+      return request<import("./types").QubaxJobListOut>(`/api/qubax/jobs${qs ? `?${qs}` : ""}`);
+    },
+    getJob: (id: number) =>
+      request<import("./types").QubaxJobOut>(`/api/qubax/jobs/${id}`),
+    importJob: (id: number) =>
+      request<import("./types").QubaxImportOut>(`/api/qubax/jobs/${id}/import`, {
+        method: "POST",
+      }),
+  },
+
   heroSms: {
     status: () => request<import("./types").HeroSmsStatusOut>("/api/hero-sms/status"),
     setApiKey: (apiKey: string) =>

@@ -24,6 +24,7 @@ from app.panel.settings_store import (
 )
 from app.services.gateway_probe import ollama_reachable
 from app.services.http import client as http_client
+from app.api.request_origin import public_origin
 from app.services.llm_gateway_activity import list_activity, record_activity
 from app.services.llm_gateway_errors import explain_llm_upstream_error
 
@@ -38,16 +39,6 @@ mcp_router = APIRouter(tags=["mcp"])
 
 MCP_PROTOCOL_VERSION = "2024-11-05"
 MCP_SERVER_INFO = {"name": "reels-salad", "version": "0.1.0"}
-
-
-def _public_origin(request: Request) -> str:
-    """Prefer forwarded headers when the panel sits behind a reverse proxy."""
-    forwarded = (request.headers.get("x-forwarded-host") or "").strip()
-    if forwarded:
-        proto = (request.headers.get("x-forwarded-proto") or "https").split(",")[0].strip()
-        host = forwarded.split(",")[0].strip()
-        return f"{proto}://{host}".rstrip("/")
-    return str(request.base_url).rstrip("/")
 
 
 def _client_ip(request: Request) -> str:
@@ -92,7 +83,7 @@ def _mcp_json_block(*, mcp_url: str, api_key: str) -> str:
 
 def _credentials(request: Request, db: Session) -> LlmGatewayCredentialsOut:
     api_key = ensure_llm_gateway_token(db)
-    origin = _public_origin(request)
+    origin = public_origin(request)
     base_url = f"{origin}/llm/v1"
     mcp_url = f"{origin}/mcp"
     return LlmGatewayCredentialsOut(

@@ -719,6 +719,142 @@ class HeroSmsHistoryOut(BaseModel):
     items: list[HeroSmsHistoryItemOut]
 
 
+class QubaxVariantFormState(BaseModel):
+    model: str = Field(default="", max_length=200)
+    duration: Optional[str] = Field(default=None, max_length=8)
+    aspect_ratio: Optional[str] = Field(default=None, max_length=16)
+
+
+class QubaxFormState(BaseModel):
+    mode: str = Field(default="t2v", max_length=16)
+    model: str = Field(default="", max_length=200)
+    prompt: str = Field(default="", max_length=8000)
+    duration: str = Field(default="5s", max_length=8)
+    aspect_ratio: str = Field(default="9:16", max_length=16)
+    image_filename: Optional[str] = Field(default=None, max_length=512)
+    variant_models: list[str] = Field(default_factory=list)
+    variants: list[QubaxVariantFormState] = Field(default_factory=list)
+    selected_presets: list[str] = Field(default_factory=list)
+    model_tab: Optional[str] = Field(default=None, max_length=16)
+    api_public_base_url: Optional[str] = Field(default=None, max_length=500)
+    default_model: Optional[str] = Field(default=None, max_length=200)
+    default_model_i2v: Optional[str] = Field(default=None, max_length=200)
+
+
+class QubaxPanelSettingsOut(BaseModel):
+    api_public_base_url: str = ""
+    api_public_source: str = "none"
+    api_public_configured: bool = False
+    suggested_api_public_base_url: str = ""
+    docs_url: str = "https://qubax.ai/docs"
+    default_model: str = ""
+    default_model_i2v: str = ""
+
+
+class QubaxMarketModelOut(BaseModel):
+    id: str
+    name: Optional[str] = None
+    price: Optional[float] = None
+    unit: Optional[str] = None
+    benchmark: Optional[float] = None
+    discount_pct: Optional[float] = None
+
+
+class QubaxEstimateLineOut(BaseModel):
+    model: str
+    unit: Optional[str] = None
+    unit_price: Optional[float] = None
+    line_cost: Optional[float] = None
+    duration: Optional[str] = None
+
+
+class QubaxEstimateOut(BaseModel):
+    items: list[QubaxEstimateLineOut] = Field(default_factory=list)
+    total_usd: Optional[float] = None
+    balance_usd: Optional[float] = None
+    sufficient: Optional[bool] = None
+    jobs_count: int = 0
+
+
+class QubaxStatusOut(BaseModel):
+    configured: bool
+    key_from_env: bool
+    balance: Optional[float] = None
+    last_form: Optional[QubaxFormState] = None
+    settings: QubaxPanelSettingsOut = Field(default_factory=QubaxPanelSettingsOut)
+    error: Optional[str] = None
+
+
+class QubaxApiKeyIn(BaseModel):
+    api_key: str = Field(default="", max_length=500)
+
+
+class QubaxModelOut(BaseModel):
+    id: str
+    owned_by: str = ""
+    label: Optional[str] = None
+
+
+class QubaxModelsOut(BaseModel):
+    presets: list[QubaxModelOut]
+    models: list[QubaxModelOut]
+
+
+class QubaxJobCreateIn(BaseModel):
+    model: str = Field(min_length=1, max_length=200)
+    prompt: str = Field(min_length=1, max_length=8000)
+    duration: Optional[str] = Field(default=None, max_length=8)
+    aspect_ratio: Optional[str] = Field(default=None, max_length=16)
+    image_filename: Optional[str] = Field(default=None, max_length=512)
+    batch_label: Optional[str] = Field(default=None, max_length=120)
+
+
+class QubaxBatchVariantIn(BaseModel):
+    model: str = Field(min_length=1, max_length=200)
+    duration: Optional[str] = Field(default=None, max_length=8)
+    aspect_ratio: Optional[str] = Field(default=None, max_length=16)
+    batch_label: Optional[str] = Field(default=None, max_length=120)
+
+
+class QubaxEstimateIn(BaseModel):
+    variants: list[QubaxBatchVariantIn] = Field(default_factory=list)
+    include_single: bool = False
+    model: Optional[str] = Field(default=None, max_length=200)
+    duration: Optional[str] = Field(default=None, max_length=8)
+    aspect_ratio: Optional[str] = Field(default=None, max_length=16)
+
+
+class QubaxBatchCreateIn(BaseModel):
+    prompt: str = Field(min_length=1, max_length=8000)
+    variants: list[QubaxBatchVariantIn] = Field(min_length=1, max_length=12)
+    image_filename: Optional[str] = Field(default=None, max_length=512)
+
+
+class QubaxJobOut(BaseModel):
+    id: int
+    external_id: str
+    model: str
+    prompt: str
+    status: str
+    video_url: Optional[str] = None
+    last_error: Optional[str] = None
+    media_asset_id: Optional[int] = None
+    params: dict[str, object] = Field(default_factory=dict)
+    created_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+
+class QubaxJobListOut(BaseModel):
+    items: list[QubaxJobOut]
+    total: int
+
+
+class QubaxImportOut(BaseModel):
+    job_id: int
+    media_asset_id: int
+    filename: str
+
+
 class PanelEntryPathUpdateIn(BaseModel):
     path: str = Field(min_length=12, max_length=200)
     current_password: str = Field(min_length=1)

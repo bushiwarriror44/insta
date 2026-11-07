@@ -39,6 +39,7 @@ const PAGES: { label: string; to: string; icon: LucideIcon }[] = [
   { label: "Панель", to: "/", icon: LayoutDashboard },
   { label: "Аккаунты", to: "/accounts", icon: Users },
   { label: "Hero SMS", to: "/hero-sms", icon: Smartphone },
+  { label: "Qubax", to: "/qubax", icon: Film },
   { label: "Браузер", to: "/browser", icon: MonitorPlay },
   { label: "Библиотека", to: "/publishing", icon: Library },
   { label: "Агент", to: "/agent", icon: Sparkles },
