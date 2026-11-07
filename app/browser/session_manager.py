@@ -62,6 +62,11 @@ from app.behavior.playwright_surface import (
     studio_vnc_launch_args,
     vnc_screen_size,
 )
+from app.browser.chrome_proxy import (
+    native_chrome_proxy_blocked_reason,
+    parse_chrome_upstream,
+)
+from app.browser.local_proxy_forwarder import LocalProxyForwarder
 from app.browser.studio_native_chrome import (
     export_storage_state_from_native_profile,
     launch_native_chrome,
@@ -678,6 +683,7 @@ class BrowserSessionState:
     login_orchestration: bool = False
     native_chrome_mode: bool = False
     native_chrome_proc: subprocess.Popen[Any] | None = None
+    proxy_forwarder: LocalProxyForwarder | None = None
 
     def log(self, level: LogLevel, step: str, message: str) -> None:
         line = {
@@ -1019,10 +1025,46 @@ class BrowserSessionManager:
         initial_url = urls[0] if urls else _YOUTUBE_STUDIO_URL
         profile_dir = native_chrome_profile_dir(account.username, platform_value)
         desktop_geometry = _studio_desktop_geometry(platform_value)
+        upstream = parse_chrome_upstream(proxy.url)
+        blocked = native_chrome_proxy_blocked_reason(upstream)
+        if blocked:
+            raise RuntimeError(blocked)
+
+        proxy_server_value = upstream.chrome_proxy_server_value()
+        auth_label = "no"
+        if upstream.needs_auth:
+            if not upstream.is_http_family:
+                raise RuntimeError(
+                    "Native Chrome не поддерживает прокси с логином для схемы "
+                    f"{upstream.scheme}"
+                )
+            forwarder = LocalProxyForwarder()
+            await asyncio.to_thread(
+                forwarder.start,
+                upstream_host=upstream.host,
+                upstream_port=upstream.port,
+                username=upstream.username or "",
+                password=upstream.password or "",
+            )
+            session.proxy_forwarder = forwarder
+            proxy_server_value = forwarder.local_proxy_server
+            auth_label = "forwarder"
+            session.log(
+                "info",
+                "proxy",
+                f"native_chrome proxy={proxy_server_value} → {upstream.host}:{upstream.port} (auth={auth_label})",
+            )
+        else:
+            session.log(
+                "info",
+                "proxy",
+                f"native_chrome proxy={proxy_server_value} (auth={auth_label})",
+            )
+
         session.native_chrome_proc = await asyncio.to_thread(
             launch_native_chrome,
             user_data_dir=profile_dir,
-            proxy_url=proxy.url,
+            proxy_server_value=proxy_server_value,
             display=vnc_stack_display(session),
             initial_url=initial_url,
             desktop_geometry=desktop_geometry,
@@ -1710,6 +1752,8 @@ class BrowserSessionManager:
                 pass
         if session.native_chrome_proc is not None:
             await stop_native_chrome(session.native_chrome_proc)
+        if session.proxy_forwarder is not None:
+            await asyncio.to_thread(session.proxy_forwarder.stop)
         if session.vnc_stack is not None:
             session.vnc_stack.stop()
 
@@ -1719,6 +1763,7 @@ class BrowserSessionManager:
         session.pw = None
         session.native_chrome_proc = None
         session.native_chrome_mode = False
+        session.proxy_forwarder = None
         session.vnc_stack = None
         session.ws_port = 0
         session.vnc_path = ""

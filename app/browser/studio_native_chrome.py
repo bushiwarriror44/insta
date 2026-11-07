@@ -17,6 +17,7 @@ from app.accounts.studio_desktop_profile import (
 )
 from app.behavior.playwright_channel import chromium_launch_channel_kwargs, normalize_playwright_channel
 from app.behavior.playwright_surface import studio_vnc_launch_args
+from app.browser.chrome_proxy import chrome_proxy_server_flag
 from app.behavior.warmup_playwright import _parse_proxy
 from app.config import settings
 from app.geo.timezone_normalize import normalize_playwright_timezone
@@ -49,17 +50,10 @@ def resolve_google_chrome_binary() -> Path | None:
     return None
 
 
-def chrome_proxy_server_flag(proxy_url: str) -> str | None:
-    url = (proxy_url or "").strip()
-    if not url:
-        return None
-    return f"--proxy-server={url}"
-
-
 def build_native_chrome_argv(
     *,
     user_data_dir: Path,
-    proxy_url: str,
+    proxy_server_value: str,
     initial_url: str,
     desktop_geometry: tuple[int, int] | None,
 ) -> list[str]:
@@ -74,7 +68,7 @@ def build_native_chrome_argv(
             raise RuntimeError(f"unexpected debug flag in studio args: {arg}")
 
     argv.append(f"--user-data-dir={user_data_dir}")
-    proxy_flag = chrome_proxy_server_flag(proxy_url)
+    proxy_flag = chrome_proxy_server_flag(proxy_server_value)
     if proxy_flag:
         argv.append(proxy_flag)
 
@@ -90,14 +84,14 @@ def build_native_chrome_argv(
 def launch_native_chrome(
     *,
     user_data_dir: Path,
-    proxy_url: str,
+    proxy_server_value: str,
     display: str,
     initial_url: str,
     desktop_geometry: tuple[int, int] | None,
 ) -> subprocess.Popen[Any]:
     argv = build_native_chrome_argv(
         user_data_dir=user_data_dir,
-        proxy_url=proxy_url,
+        proxy_server_value=proxy_server_value,
         initial_url=initial_url,
         desktop_geometry=desktop_geometry,
     )

@@ -14,7 +14,7 @@ def test_build_native_chrome_argv_user_data_proxy_no_debug(monkeypatch):
 
     argv = snc.build_native_chrome_argv(
         user_data_dir=Path("/data/playwright/youtube/alice/chrome_profile"),
-        proxy_url="http://user:pass@1.2.3.4:8080",
+        proxy_server_value="http://127.0.0.1:18080",
         initial_url="https://studio.youtube.com",
         desktop_geometry=(1024, 640),
     )
@@ -24,7 +24,10 @@ def test_build_native_chrome_argv_user_data_proxy_no_debug(monkeypatch):
     assert user_data_flags[0].endswith("alice\\chrome_profile") or user_data_flags[0].endswith(
         "alice/chrome_profile"
     )
-    assert "--proxy-server=http://user:pass@1.2.3.4:8080" in argv
+    proxy_flags = [a for a in argv if a.startswith("--proxy-server=")]
+    assert len(proxy_flags) == 1
+    assert "@" not in proxy_flags[0]
+    assert "127.0.0.1:18080" in proxy_flags[0]
     assert argv[-1] == "https://studio.youtube.com"
     assert not any(str(a).startswith("--remote-debugging") for a in argv)
     assert "--enable-automation" not in argv

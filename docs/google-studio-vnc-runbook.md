@@ -15,6 +15,12 @@
 
 Если rejected **и в native Chrome** — смените прокси (mobile/residential), не только канал браузера.
 
+## ERR_NO_SUPPORTED_PROXIES (страница «This site can’t be reached»)
+
+Chrome **не принимает** логин/пароль в `--proxy-server` (`http://user:pass@host:port` → ошибка). В native-режиме API поднимает **локальный forwarder** на `127.0.0.1` и передаёт Chrome только `http://127.0.0.1:<port>`; учётные данные уходят на upstream через `Proxy-Authorization`.
+
+Если ошибка остаётся: проверьте, что прокси аккаунта — **HTTP** с логином (не SOCKS5 с паролем; для SOCKS+auth — `STUDIO_VNC_NATIVE_CHROME=false` или смените прокси). В логах сессии ищите `native_chrome proxy=… (auth=forwarder)`.
+
 Подробнее о сессиях: [accounts-sessions.md](accounts-sessions.md).
 
 ## Запасной путь: импорт `state.json` с домашнего Chrome
