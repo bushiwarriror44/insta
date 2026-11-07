@@ -2173,12 +2173,23 @@ def publish_now(
             "fields": fields,
             "form_kind": "publish",
         }
-    connection = test_connection(db, account_id)
+    from app.config import settings
+
+    account = _account(db, account_id)
+    platform = _account_platform(account)
+    probe_studio = platform in ("youtube", "tiktok") and settings.publish_require_studio_liveness
+    connection = test_connection(db, account_id, probe_studio=probe_studio)
     if not connection.get("ok"):
         return {
             "опубликовано": False,
             "проверка": connection,
             "ошибка": connection.get("error") or "подключение не прошло",
+        }
+    if probe_studio and connection.get("studio_liveness_ok") is False:
+        return {
+            "опубликовано": False,
+            "проверка": connection,
+            "ошибка": connection.get("studio_liveness_error") or "Studio liveness не прошёл (PUBLISH_REQUIRE_STUDIO_LIVENESS)",
         }
     queued = enqueue_publish(
         db,

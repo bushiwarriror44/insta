@@ -76,6 +76,28 @@ def test_playwright_context_kwargs_desktop():
     assert kwargs["viewport"] == {"width": 1280, "height": 800}
 
 
+def test_playwright_context_kwargs_desktop_uses_persisted_profile():
+    from app.accounts.studio_desktop_profile import DesktopPlaywrightProfile
+
+    profile = DesktopPlaywrightProfile(
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0 StableUA",
+        locale="de-DE",
+        viewport_width=1280,
+        viewport_height=800,
+        chrome_major="131",
+    )
+    kwargs = ps.playwright_context_kwargs(
+        "desktop",
+        fingerprint=None,
+        locale="en-US",
+        timezone_id="UTC",
+        desktop_profile=profile,
+    )
+    assert kwargs["user_agent"] == profile.user_agent
+    assert kwargs["locale"] == "de-DE"
+    assert kwargs["viewport"] == {"width": 1280, "height": 800}
+
+
 def test_vnc_screen_size():
     assert ps.vnc_screen_size("mobile") == "430x932x24"
     assert ps.vnc_screen_size("desktop") == "1280x800x24"

@@ -8,6 +8,10 @@ from typing import Literal, Optional
 
 from app.accounts.cookie_formats import studio_session_ready
 from app.accounts.playwright_session import playwright_state_path, save_playwright_state
+from app.accounts.studio_desktop_profile import (
+    ensure_studio_desktop_profile,
+    studio_playwright_context_kwargs,
+)
 from app.behavior.playwright_channel import chromium_launch_channel_kwargs, normalize_playwright_channel
 from app.behavior.warmup_playwright import _parse_proxy, playwright_browsers_available
 from app.config import settings
@@ -226,6 +230,7 @@ async def _async_studio_login(
     login_identifier: str | None = None,
     locale: str = "en-US",
     timezone_id: str = "UTC",
+    proxy_country: str | None = None,
     headless: bool = True,
     on_status: StatusCallback | None = None,
 ) -> StudioLoginResult:
@@ -253,10 +258,15 @@ async def _async_studio_login(
     async with async_playwright() as p:
         browser = await p.chromium.launch(**_studio_chromium_launch_kwargs(headless=headless, proxy=proxy))
         try:
+            profile = ensure_studio_desktop_profile(
+                username, platform, proxy_country=proxy_country
+            )
             context = await browser.new_context(
-                locale=locale,
-                timezone_id=timezone_id,
-                storage_state=storage,
+                **studio_playwright_context_kwargs(
+                    profile,
+                    timezone_id=timezone_id,
+                    storage_state_path=storage,
+                )
             )
             page = await context.new_page()
             target = _studio_url(platform)
@@ -327,6 +337,7 @@ def studio_login(
     login_identifier: str | None = None,
     locale: str = "en_US",
     timezone_id: str = "UTC",
+    proxy_country: str | None = None,
     headless: bool | None = None,
     on_status: StatusCallback | None = None,
 ) -> StudioLoginResult:
@@ -344,6 +355,7 @@ def studio_login(
                 login_identifier=login_identifier,
                 locale=locale.replace("_", "-"),
                 timezone_id=timezone_id,
+                proxy_country=proxy_country,
                 headless=headless,
                 on_status=on_status,
             )
@@ -360,6 +372,7 @@ async def _async_probe_studio_session_liveness(
     platform: StudioPlatform,
     locale: str = "en-US",
     timezone_id: str = "UTC",
+    proxy_country: str | None = None,
     headless: bool = True,
 ) -> StudioLivenessResult:
     if not studio_session_ready(username, platform):
@@ -382,10 +395,15 @@ async def _async_probe_studio_session_liveness(
     async with async_playwright() as p:
         browser = await p.chromium.launch(**_studio_chromium_launch_kwargs(headless=headless, proxy=proxy))
         try:
+            profile = ensure_studio_desktop_profile(
+                username, platform, proxy_country=proxy_country
+            )
             context = await browser.new_context(
-                locale=locale,
-                timezone_id=timezone_id,
-                storage_state=storage,
+                **studio_playwright_context_kwargs(
+                    profile,
+                    timezone_id=timezone_id,
+                    storage_state_path=storage,
+                )
             )
             page = await context.new_page()
             await page.goto(target, wait_until="domcontentloaded", timeout=_NAV_TIMEOUT_MS)
@@ -411,6 +429,7 @@ def probe_studio_session_liveness(
     platform: StudioPlatform,
     locale: str = "en_US",
     timezone_id: str = "UTC",
+    proxy_country: str | None = None,
     headless: bool | None = None,
 ) -> StudioLivenessResult:
     """Open Studio with stored Playwright state and detect login/challenge redirects."""
@@ -423,6 +442,7 @@ def probe_studio_session_liveness(
                 platform=platform,
                 locale=locale.replace("_", "-"),
                 timezone_id=timezone_id,
+                proxy_country=proxy_country,
                 headless=headless,
             )
         )

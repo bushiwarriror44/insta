@@ -913,6 +913,35 @@ def cmd_browser_vnc_diag(
     chrome_bin = shutil_which("google-chrome-stable") or shutil_which("google-chrome")
     chrome_status = f"[green]{chrome_bin}[/green]" if chrome_bin else "[red]нет[/red]"
     console.print(f"  google-chrome-stable: {chrome_status}")
+    if username:
+        from app.accounts.device_factory import load_fingerprint
+        from app.accounts.studio_desktop_profile import desktop_profile_path
+
+        account = None
+        with SessionLocal() as db:
+            account = db.scalar(select(Account).where(Account.username == username))
+        if account is not None:
+            plat = getattr(getattr(account, "platform", None), "value", None) or "instagram"
+            plat_str = str(plat)
+            if plat_str in ("youtube", "tiktok", "instagram"):
+                prof_path = desktop_profile_path(username, plat_str)  # type: ignore[arg-type]
+                if prof_path.exists():
+                    console.print(f"  Desktop Playwright profile: [dim]{prof_path}[/dim]")
+                else:
+                    console.print(
+                        "  Desktop Playwright profile: [yellow]ещё не создан (VNC / first-login)[/yellow]"
+                    )
+            if plat_str == "instagram":
+                fp = load_fingerprint(username)
+                if fp is not None:
+                    ds = fp.settings.get("device_settings")
+                    major = ds.get("playwright_chrome_major") if isinstance(ds, dict) else None
+                    if major:
+                        console.print(f"  Playwright mobile chrome_major: [green]{major}[/green]")
+                    else:
+                        console.print(
+                            "  Playwright mobile chrome_major: [yellow]ещё не задан (mobile VNC)[/yellow]"
+                        )
     for note in _chrome_channel_warnings():
         console.print(f"  [yellow]предупреждение:[/yellow] {note}")
 

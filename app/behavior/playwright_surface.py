@@ -126,6 +126,10 @@ def mouse_jitter_bounds(surface: LoginSurface) -> tuple[int, int, int, int]:
     return 1100, 680, 120, 120
 
 
+def accept_language_header(locale: str) -> str:
+    return _accept_language_for_locale(locale)
+
+
 def _accept_language_for_locale(locale: str) -> str:
     normalized = (locale or "en-US").replace("_", "-")
     base = normalized.split("-", 1)[0]
@@ -156,6 +160,8 @@ def playwright_context_kwargs(
     storage_state_path: str | None = None,
     lightweight: bool = False,
     desktop_geometry: tuple[int, int] | None = None,
+    chrome_major: str | None = None,
+    desktop_profile=None,
 ) -> dict[str, Any]:
     """Build Playwright ``browser.new_context`` kwargs for the given surface."""
     from app.behavior.warmup_playwright import (
@@ -172,7 +178,7 @@ def playwright_context_kwargs(
         resolution = None
         if device_settings:
             resolution = device_settings.get("resolution")
-        user_agent = _ua_for_device(device_settings, None)
+        user_agent = _ua_for_device(device_settings, None, chrome_major=chrome_major)
         if lightweight:
             viewport = vnc_mobile_viewport()
             mobile_scale = 1
@@ -193,12 +199,18 @@ def playwright_context_kwargs(
             },
         }
     else:
-        w, h = _resolve_desktop_geometry(desktop_geometry)
+        if desktop_profile is not None:
+            w, h = desktop_profile.viewport_width, desktop_profile.viewport_height
+            resolved_locale = desktop_profile.locale
+            user_agent = desktop_profile.user_agent
+        else:
+            w, h = _resolve_desktop_geometry(desktop_geometry)
+            user_agent = _desktop_ua()
         viewport = {"width": w, "height": h}
         context = {
             "locale": resolved_locale,
             "timezone_id": timezone_id,
-            "user_agent": _desktop_ua(),
+            "user_agent": user_agent,
             "viewport": viewport,
             "device_scale_factor": 1,
             "has_touch": False,

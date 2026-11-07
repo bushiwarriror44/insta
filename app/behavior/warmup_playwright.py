@@ -86,7 +86,12 @@ _CHROME_MAJORS = [
 ]
 _CHROME_FALLBACK = _CHROME_MAJORS[0]
 
-def _ua_for_device(device_settings: dict | None, fallback_ua: str | None) -> str:
+def _ua_for_device(
+    device_settings: dict | None,
+    fallback_ua: str | None,
+    *,
+    chrome_major: str | None = None,
+) -> str:
     """Build a mobile Chrome UA aligned with the persistent Android device.
 
     Instagrapi's UA is the *Instagram app* UA — for Playwright we need the
@@ -96,11 +101,19 @@ def _ua_for_device(device_settings: dict | None, fallback_ua: str | None) -> str
     if device_settings:
         android_release = device_settings.get("android_release", "13")
         model = device_settings.get("model", "SM-S908B")
-        chrome_major = random.choice(_CHROME_MAJORS)
+        major = chrome_major
+        if not major:
+            stored = device_settings.get("playwright_chrome_major")
+            if stored:
+                major = str(stored).split(".", 1)[0]
+        if not major:
+            major = random.choice(_CHROME_MAJORS)
+        if "." in str(major):
+            major = str(major).split(".", 1)[0]
         return (
             f"Mozilla/5.0 (Linux; Android {android_release}; {model}) "
             f"AppleWebKit/537.36 (KHTML, like Gecko) "
-            f"Chrome/{chrome_major} Mobile Safari/537.36"
+            f"Chrome/{major} Mobile Safari/537.36"
         )
     if fallback_ua:
         return fallback_ua
@@ -985,6 +998,7 @@ async def _async_first_login(
     email: Optional[str] = None,
     email_password: Optional[str] = None,
     imap_host: Optional[str] = None,
+    proxy_country: Optional[str] = None,
 ) -> FirstLoginResult:
     login_id = (login_identifier or username).strip()
     if not (proxy_url or "").strip():
@@ -1022,6 +1036,22 @@ async def _async_first_login(
 
     proxy_arg = _parse_proxy(proxy_url) if proxy_url else None
 
+    from app.accounts.device_factory import ensure_playwright_chrome_major
+    from app.accounts.studio_desktop_profile import ensure_desktop_playwright_profile
+
+    country = proxy_country
+    if not country and fingerprint is not None:
+        country = getattr(fingerprint, "country", None)
+
+    desktop_profile = None
+    chrome_major: str | None = None
+    if surface == "desktop":
+        desktop_profile = ensure_desktop_playwright_profile(
+            username, "instagram", proxy_country=country
+        )
+    else:
+        chrome_major = ensure_playwright_chrome_major(username)
+
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
             headless=headless,
@@ -1037,6 +1067,8 @@ async def _async_first_login(
             storage_state_path=str(state_file)
             if state_file.exists() and storage_state_has_session(username)
             else None,
+            chrome_major=chrome_major,
+            desktop_profile=desktop_profile,
         )
         if state_file.exists() and not storage_state_has_session(username):
             logger.info("playwright.skip_guest_storage_state", username=username)
@@ -1288,6 +1320,7 @@ def first_login(
     email: Optional[str] = None,
     email_password: Optional[str] = None,
     imap_host: Optional[str] = None,
+    proxy_country: Optional[str] = None,
 ) -> FirstLoginResult:
     """Synchronous wrapper around the async stealth login.
 
@@ -1330,6 +1363,7 @@ def first_login(
                 email=email,
                 email_password=email_password,
                 imap_host=imap_host,
+                proxy_country=proxy_country,
             )
         )
     except Exception as exc:  # noqa: BLE001 - surface Playwright failures to caller

@@ -573,6 +573,7 @@ async def import_account_cookies(
         session_id_imported=bool(result.session_id),
         playwright_state_saved=result.playwright_state_saved,
         session_file_cleared=result.session_file_cleared,
+        warnings=list(result.warnings),
     )
 
 

@@ -433,12 +433,25 @@ export function InstagramBrowserPanel({
         prevPageUrlForSaveRef.current = merged.page_url ?? null;
         setSavedOk(true);
         onSessionSaved?.(data);
-        push(
-          stopAfterSave
-            ? "Сессия и куки сохранены, браузер остановлен"
-            : "Сессия и куки сохранены (в БД)",
-          "success"
-        );
+        const studioProbe = data.connection_test?.studio_liveness_ok;
+        const baseMsg =
+          platform === "youtube" || platform === "tiktok"
+            ? stopAfterSave
+              ? "Studio state сохранён, браузер остановлен"
+              : "Studio state сохранён"
+            : stopAfterSave
+              ? "Сессия и куки сохранены, браузер остановлен"
+              : "Сессия и куки сохранены (в БД)";
+        push(baseMsg, "success");
+        if (studioProbe === true) {
+          push("Studio probe после сохранения: OK", "success");
+        } else if (studioProbe === false) {
+          push(
+            data.connection_test?.studio_liveness_error?.trim() ||
+              "Studio probe после сохранения не прошёл",
+            "info"
+          );
+        }
       } else {
         setSavedOk(false);
         const err =
@@ -610,6 +623,9 @@ export function InstagramBrowserPanel({
         return;
       }
       push("Playwright state сохранён на сервере", "success");
+      for (const w of result.warnings ?? []) {
+        push(w, "info");
+      }
       const probe = await api.accounts.testConnection(username, { probeStudio: true });
       if (probe.overall_ok) {
         if (probe.studio_liveness_ok === false) {

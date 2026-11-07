@@ -245,3 +245,13 @@ def test_import_cookies_data_missing_sessionid(app_env):
 def test_import_cookies_data_unknown_format(app_env):
     with pytest.raises(CookieFormatError, match="Неподдерживаемый"):
         import_cookies_data("bad", {"not": "valid"})
+
+def test_playwright_state_import_warnings_youtube_missing_google(app_env):
+    from app.accounts.cookie_formats import import_cookies_data, playwright_state_import_warnings
+
+    data = {"cookies": [{"name": "SID", "value": "x", "domain": ".example.com"}], "origins": []}
+    warnings = playwright_state_import_warnings(data, platform="youtube")
+    assert any("Google" in w for w in warnings)
+
+    result = import_cookies_data("ytwarn", data, platform="youtube")
+    assert result.warnings

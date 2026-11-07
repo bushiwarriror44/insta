@@ -95,6 +95,16 @@ _GEO_PROFILES: dict[str, dict[str, Any]] = {
 }
 
 
+def primary_locale_for_country(country: str | None) -> str:
+    """BCP-47 locale for Playwright from proxy ISO country."""
+    from app.geo.country_codes import normalize_country_code
+
+    code = normalize_country_code(country) or "US"
+    profile = _GEO_PROFILES.get(code) or _GEO_PROFILES["US"]
+    locale = profile["locales"][0]
+    return str(locale).replace("_", "-")
+
+
 # Recent stable Instagram Android app versions. Override at runtime by
 # editing ``data/app_versions.json`` and calling
 # ``python -m app.cli refresh-app-versions`` (the CLI updates this list in
@@ -316,6 +326,31 @@ def save_fingerprint(username: str, fp: DeviceFingerprint) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(fp.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
     return path
+
+
+def ensure_playwright_chrome_major(username: str) -> str:
+    """Persist a stable Chrome major in device settings for Playwright mobile UA."""
+    from app.accounts.studio_desktop_profile import pick_playwright_chrome_major
+
+    fp = load_fingerprint(username)
+    if fp is None:
+        fp = get_or_create_fingerprint(username)
+
+    device_settings = fp.settings.get("device_settings")
+    if not isinstance(device_settings, dict):
+        device_settings = {}
+        fp.settings["device_settings"] = device_settings
+
+    existing = device_settings.get("playwright_chrome_major")
+    if existing:
+        major = str(existing).split(".", 1)[0]
+        if major.isdigit():
+            return major
+
+    major = pick_playwright_chrome_major()
+    device_settings["playwright_chrome_major"] = major
+    save_fingerprint(username, fp)
+    return major
 
 
 def get_or_create_fingerprint(

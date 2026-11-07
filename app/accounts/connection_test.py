@@ -301,6 +301,7 @@ def run_account_connection_test(
                     proxy_url=proxy.url,
                     platform=platform,  # type: ignore[arg-type]
                     timezone_id=account.timezone or "UTC",
+                    proxy_country=proxy.country,
                 )
                 studio_liveness_ok = live.ok
                 studio_liveness_error = live.error

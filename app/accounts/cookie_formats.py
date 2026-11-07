@@ -49,6 +49,61 @@ class CookiesImportResult:
     session_id: str
     playwright_state_saved: bool
     session_file_cleared: bool
+    warnings: tuple[str, ...] = ()
+
+
+
+
+def playwright_state_import_warnings(data: object, *, platform: str) -> list[str]:
+    if not isinstance(data, dict):
+        return ["Файл не похож на Playwright storage state"]
+    warnings: list[str] = []
+    cookies = data.get("cookies")
+    if not isinstance(cookies, list) or not cookies:
+        warnings.append("В state нет списка cookies")
+        return warnings
+    if platform == "youtube":
+        google = [
+            c
+            for c in cookies
+            if isinstance(c, dict) and "google.com" in str(c.get("domain") or "").lower()
+        ]
+        if not google:
+            warnings.append("Нет cookies домена Google — Studio может не принять сессию")
+    if platform == "tiktok":
+        tt = [
+            c
+            for c in cookies
+            if isinstance(c, dict) and "tiktok.com" in str(c.get("domain") or "").lower()
+        ]
+        if not tt:
+            warnings.append("Нет cookies домена tiktok.com")
+    origins = data.get("origins")
+    if not isinstance(origins, list) or not origins:
+        warnings.append("Нет localStorage (origins) — часть сессий Google нуждается в origins")
+    import time as _time
+
+    now = _time.time()
+    expired = 0
+    with_exp = 0
+    for cookie in cookies:
+        if not isinstance(cookie, dict):
+            continue
+        exp = cookie.get("expires")
+        if exp is None:
+            continue
+        try:
+            exp_f = float(exp)
+        except (TypeError, ValueError):
+            continue
+        if exp_f <= 0:
+            continue
+        with_exp += 1
+        if exp_f < now:
+            expired += 1
+    if with_exp and expired == with_exp:
+        warnings.append("Все cookies с expires уже просрочены")
+    return warnings
 
 
 def detect_import_format(data: object) -> ImportFormatDetect:
@@ -294,6 +349,8 @@ def import_cookies_data(
                 cookie["value"] = session_id
 
     save_playwright_state(username, state, platform)
+    warn_src = data if fmt == "playwright_state" else state
+    import_warnings = tuple(playwright_state_import_warnings(warn_src, platform=platform))
     # Keep mobile session_*.json if present — web cookies live in Playwright state;
     # clearing the dump would break publish/probe that still use the mobile file.
     return CookiesImportResult(
@@ -301,6 +358,7 @@ def import_cookies_data(
         session_id=session_id,
         playwright_state_saved=True,
         session_file_cleared=False,
+        warnings=import_warnings,
     )
 
 

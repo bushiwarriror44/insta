@@ -38,6 +38,8 @@ URL вида `http://user:pass@host:port`. Метка уникальна. Health
 
 **Fingerprint** — Android-устройство в `data/devices/device_*.json`. Один на аккаунт, навсегда. Чужой отпечаток не импортировать. Для YouTube/TikTok fingerprint **нет**.
 
+Стабильный браузерный Playwright-профиль Instagram (не путать с mobile dump instagrapi): **desktop** — UA/locale/viewport в `data/playwright/<username>/web_desktop_profile.json`; **mobile** — major Chrome в `device_settings.playwright_chrome_major` того же device-файла (задаётся при первом mobile VNC / `first_login`).
+
 Вход:
 
 - Пароль (+ TOTP / backup-коды / IMAP email + опционально `imap_host`) в карточке. Таб-строка продавца (`username`, пароль, email, пароль почты) — поле `vendor_line` при создании или вставка в `account_line` без `:`.
@@ -51,7 +53,7 @@ URL вида `http://user:pass@host:port`. Метка уникальна. Health
 
 Нет Data API и Content Posting API. Загрузка — Playwright, UI Studio на **английском**.
 
-Сессия: cookies Google/YouTube или `tiktok.com` в `data/playwright/<username>/state.json`. Проверка подключения: прокси жив **и** на диске есть cookies площадки. Это **не** доказательство, что Google/TikTok ещё считают сессию живой. Антибот и срок кук панель не лечит.
+Сессия: cookies Google/YouTube; стабильный desktop-профиль (UA/locale/viewport) в studio_desktop_profile.json рядом со state или `tiktok.com` в `data/playwright/<username>/state.json`. Проверка подключения: прокси жив **и** на диске есть cookies площадки. Это **не** доказательство, что Google/TikTok ещё считают сессию живой. Антибот и срок кук панель не лечит.
 
 Автовход: **`login_account`** / кнопка «Создать сессию» (`POST …/first-login`) — headless Studio, при challenge VNC. Пароль + email (Google) в карточке. Импорт cookies или `start_browser` + `save_browser_session` — по-прежнему валидны.
 

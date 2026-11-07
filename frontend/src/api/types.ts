@@ -294,6 +294,7 @@ export interface CookiesImportOut {
   session_id_imported: boolean;
   playwright_state_saved: boolean;
   session_file_cleared: boolean;
+  warnings?: string[];
 }
 
 export interface DeviceFingerprintImportOut {

@@ -290,6 +290,7 @@ def run_studio_login(
         platform=platform,
         login_identifier=login_id,
         timezone_id=account.timezone or "UTC",
+        proxy_country=proxy.country,
         on_status=on_status,
     )
 

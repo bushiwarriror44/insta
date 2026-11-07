@@ -459,6 +459,7 @@ def run_account_first_login(
         email=account.email,
         email_password=account.email_password,
         imap_host=account.imap_host,
+        proxy_country=proxy.country,
     )
 
     if result.challenge:

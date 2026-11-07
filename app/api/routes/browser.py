@@ -10,6 +10,9 @@ from sqlalchemy.orm import Session
 
 from app.accounts.login_identifier import resolve_login_identifier
 from app.api.deps import AuthDep, AuthPrincipal, get_db, resolve_principal, verify_ws_token
+from app.accounts.account_hints import enrich_connection_test_out
+from app.accounts.connection_test import run_account_connection_test
+from app.accounts.cookie_formats import STUDIO_PLATFORMS
 from app.api.schemas import BrowserCodeIn, BrowserPasteIn, BrowserSaveOut, BrowserSessionOut, DiagnosticLogLineOut
 from app.behavior.playwright_surface import resolve_playwright_surface
 from app.browser.session_manager import NavTarget, browser_session_manager
@@ -177,7 +180,19 @@ async def save_browser_session(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     db.refresh(account)
-    overall_ok = bool(result.get("session_imported")) and bool((account.session_id or "").strip())
+    platform = getattr(getattr(account, "platform", None), "value", None) or getattr(account, "platform", None) or "instagram"
+    platform = str(platform)
+    connection_test = None
+
+    if platform in STUDIO_PLATFORMS:
+        overall_ok = bool(result.get("playwright_state_saved"))
+        if overall_ok:
+            connection_test = enrich_connection_test_out(
+                run_account_connection_test(account, db, probe_studio=True),
+                account,
+            )
+    else:
+        overall_ok = bool(result.get("session_imported")) and bool((account.session_id or "").strip())
 
     if stop_after_save and overall_ok:
         await browser_session_manager.stop_session(username)
@@ -186,35 +201,54 @@ async def save_browser_session(
         db,
         account,
         status="ok" if overall_ok else "warn",
-        summary="browser save: web sessionid" if overall_ok else "browser save incomplete",
+        summary="browser save" if overall_ok else "browser save incomplete",
     )
 
     base = _browser_session_response(username, db, principal)
     now_ts = datetime.now(timezone.utc).isoformat()
-    extra = [
-        DiagnosticLogLineOut(
-            ts=now_ts,
-            level="info",
-            step="save",
-            message="Сессия сохранена (web cookies → БД)",
-        ),
-        DiagnosticLogLineOut(
-            ts=now_ts,
-            level="info",
-            step="verify",
-            message=(
-                "Mobile API-проверка пропущена. Для автопостинга: "
-                "«Подготовить к автопостингу» или пост в очередь по паролю."
+    if platform in STUDIO_PLATFORMS:
+        extra = [
+            DiagnosticLogLineOut(
+                ts=now_ts,
+                level="info",
+                step="save",
+                message="Playwright state Studio сохранён",
             ),
-        ),
-    ]
+        ]
+        if connection_test is not None:
+            probe_ok = connection_test.studio_liveness_ok
+            level = "info" if probe_ok else "warn"
+            msg = (
+                "Studio liveness OK"
+                if probe_ok
+                else (connection_test.studio_liveness_error or "Studio probe не прошёл")
+            )
+            extra.append(DiagnosticLogLineOut(ts=now_ts, level=level, step="studio_probe", message=msg))
+    else:
+        extra = [
+            DiagnosticLogLineOut(
+                ts=now_ts,
+                level="info",
+                step="save",
+                message="Сессия сохранена (web cookies → БД)",
+            ),
+            DiagnosticLogLineOut(
+                ts=now_ts,
+                level="info",
+                step="verify",
+                message=(
+                    "Mobile API-проверка пропущена. Для автопостинга: "
+                    "«Подготовить к автопостингу» или пост в очередь по паролю."
+                ),
+            ),
+        ]
     merged_logs = list(base.logs) + extra
 
     return BrowserSaveOut(
         **result,
         **base.model_dump(exclude={"logs"}),
         overall_ok=overall_ok,
-        connection_test=None,
+        connection_test=connection_test,
         logs=merged_logs,
     )
 

@@ -190,6 +190,7 @@ class CookiesImportOut(BaseModel):
     session_id_imported: bool
     playwright_state_saved: bool
     session_file_cleared: bool
+    warnings: list[str] = Field(default_factory=list)
 
 
 class DeviceFingerprintImportOut(BaseModel):

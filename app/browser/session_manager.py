@@ -24,6 +24,13 @@ from app.accounts.playwright_session import (
     sessionid_from_playwright_state_data,
     storage_state_has_session,
 )
+from app.accounts.device_factory import ensure_playwright_chrome_major
+from app.accounts.studio_desktop_profile import (
+    desktop_playwright_context_kwargs,
+    ensure_desktop_playwright_profile,
+    ensure_studio_desktop_profile,
+    studio_playwright_context_kwargs,
+)
 from app.accounts.session_cookie import sessionid_diag_label
 from app.behavior.warmup_playwright import (
     _INSTAGRAM_LOGIN_URL,
@@ -984,12 +991,25 @@ class BrowserSessionManager:
                 pass
 
         platform_value = _account_platform_value(account)
+        studio_profile = None
+        instagram_web_profile = None
+        ig_chrome_major: str | None = None
         if platform_value in ("youtube", "tiktok"):
             fingerprint = None
-            locale = "en-US"
+            studio_profile = ensure_studio_desktop_profile(
+                account.username, platform_value, proxy_country=proxy.country
+            )
+            locale = studio_profile.locale
         else:
             fingerprint = load_fingerprint(account.username)
-            locale = getattr(fingerprint, "locale", None) or "en-US"
+            if surface == "desktop":
+                instagram_web_profile = ensure_desktop_playwright_profile(
+                    account.username, "instagram", proxy_country=proxy.country
+                )
+                locale = instagram_web_profile.locale
+            else:
+                ig_chrome_major = ensure_playwright_chrome_major(account.username)
+                locale = getattr(fingerprint, "locale", None) or "en-US"
         tz_id = normalize_playwright_timezone(proxy.timezone, country=proxy.country)
 
         proxy_arg = _parse_proxy(proxy.url)
@@ -1030,15 +1050,29 @@ class BrowserSessionManager:
             launch_kwargs.update(chromium_launch_channel_kwargs(vnc_channel))
         session.browser = await session.pw.chromium.launch(**launch_kwargs)
 
-        context_kwargs = playwright_context_kwargs(
-            surface,
-            fingerprint=fingerprint,
-            locale=locale,
-            timezone_id=tz_id,
-            storage_state_path=str(state_file) if has_saved_session else None,
-            lightweight=ctx_lightweight,
-            desktop_geometry=desktop_geometry,
-        )
+        if studio_profile is not None:
+            context_kwargs = studio_playwright_context_kwargs(
+                studio_profile,
+                timezone_id=tz_id,
+                storage_state_path=str(state_file) if has_saved_session else None,
+            )
+        elif instagram_web_profile is not None:
+            context_kwargs = desktop_playwright_context_kwargs(
+                instagram_web_profile,
+                timezone_id=tz_id,
+                storage_state_path=str(state_file) if has_saved_session else None,
+            )
+        else:
+            context_kwargs = playwright_context_kwargs(
+                surface,
+                fingerprint=fingerprint,
+                locale=locale,
+                timezone_id=tz_id,
+                storage_state_path=str(state_file) if has_saved_session else None,
+                lightweight=ctx_lightweight,
+                desktop_geometry=desktop_geometry,
+                chrome_major=ig_chrome_major,
+            )
 
         session.context = await session.browser.new_context(**context_kwargs)
         await _apply_stealth_context(session.context, surface)

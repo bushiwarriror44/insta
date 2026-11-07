@@ -53,6 +53,19 @@ def test_ua_for_device_falls_back_when_no_fingerprint():
     assert ua == "custom-ua"
 
 
+def test_ua_for_device_stable_chrome_major():
+    fp_settings = {
+        "android_release": "13",
+        "manufacturer": "samsung",
+        "model": "SM-S908B",
+        "playwright_chrome_major": "131",
+    }
+    ua1 = wp._ua_for_device(fp_settings, fallback_ua=None, chrome_major="131")
+    ua2 = wp._ua_for_device(fp_settings, fallback_ua=None, chrome_major="131")
+    assert ua1 == ua2
+    assert "Chrome/131" in ua1
+
+
 def test_viewport_from_resolution_scales_down():
     vp = wp._viewport_from_resolution("1080x2400")
     assert vp["width"] < 500
