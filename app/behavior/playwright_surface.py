@@ -91,11 +91,9 @@ def studio_vnc_launch_args(desktop_geometry: tuple[int, int] | None = None) -> l
         "--disable-blink-features=AutomationControlled",
         "--no-sandbox",
         "--disable-dev-shm-usage",
-        "--disable-infobars",
         "--disable-quic",
         f"--window-size={w},{h}",
         "--window-position=0,0",
-        "--disable-features=IsolateOrigins,site-per-process",
     ]
 
 

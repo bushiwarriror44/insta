@@ -413,7 +413,8 @@ async def _probe_https_via_proxy(proxy_url: str, target_url: str, *, timeout_sec
     return await asyncio.to_thread(_run)
 
 
-_STUDIO_NAV_TIMEOUT_MS = 90_000
+_STUDIO_NAV_TIMEOUT_MS = 120_000
+_STUDIO_POST_COMMIT_MS = 45_000
 
 
 async def _try_goto_studio_url(
@@ -423,7 +424,7 @@ async def _try_goto_studio_url(
     username: str,
     nav_status: dict[str, Any],
 ) -> bool:
-    """Studio/Google navigation — match headless studio_playwright (domcontentloaded, 90s)."""
+    """Studio/Google navigation — domcontentloaded first, then commit fallback (slow mobile proxy)."""
     configured = settings.browser_goto_timeout_sec * 1000
     timeout_ms = max(configured, _STUDIO_NAV_TIMEOUT_MS)
 
@@ -439,36 +440,47 @@ async def _try_goto_studio_url(
     page.on("response", on_response)
     last_exc: Exception | None = None
     try:
-        wait_until = "domcontentloaded"
-        nav_status["wait_until"] = wait_until
-        try:
-            await page.goto(url, wait_until=wait_until, timeout=timeout_ms)
-            logger.info(
-                "browser_session.studio_goto_ok",
-                username=username,
-                url=url,
-                wait_until=wait_until,
-                page_url=page.url,
-                http_status=nav_status.get("http_status"),
-            )
-            if page.url and not _is_suspicious_browser_url(page.url):
-                return True
-            if _is_rate_limited(nav_status.get("http_status"), page.url):
-                return False
-            return True
-        except Exception as exc:
-            last_exc = exc
-            nav_status["error"] = str(exc)[:300]
-            logger.warning(
-                "browser_session.studio_goto_attempt_failed",
-                username=username,
-                url=url,
-                wait_until=wait_until,
-                page_url=page.url,
-                error=str(exc),
-            )
-            if page.url and not _is_suspicious_browser_url(page.url):
-                return True
+        for wait_until in ("domcontentloaded", "commit"):
+            nav_status["wait_until"] = wait_until
+            try:
+                await page.goto(url, wait_until=wait_until, timeout=timeout_ms)
+                if wait_until == "commit":
+                    try:
+                        await page.wait_for_load_state(
+                            "domcontentloaded", timeout=_STUDIO_POST_COMMIT_MS
+                        )
+                    except Exception as post_exc:
+                        nav_status["post_commit"] = str(post_exc)[:200]
+                logger.info(
+                    "browser_session.studio_goto_ok",
+                    username=username,
+                    url=url,
+                    wait_until=wait_until,
+                    page_url=page.url,
+                    http_status=nav_status.get("http_status"),
+                )
+                if page.url and not _is_suspicious_browser_url(page.url):
+                    return True
+                if _is_rate_limited(nav_status.get("http_status"), page.url):
+                    return False
+                if wait_until == "commit":
+                    return True
+            except Exception as exc:
+                last_exc = exc
+                nav_status["error"] = str(exc)[:300]
+                logger.warning(
+                    "browser_session.studio_goto_attempt_failed",
+                    username=username,
+                    url=url,
+                    wait_until=wait_until,
+                    page_url=page.url,
+                    error=str(exc),
+                )
+                if page.url and not _is_suspicious_browser_url(page.url):
+                    return True
+                if _is_suspicious_browser_url(page.url) and wait_until == "domcontentloaded":
+                    continue
+                break
         if last_exc is not None:
             nav_status["error"] = str(last_exc)[:300]
         return bool(page.url and not _is_suspicious_browser_url(page.url))
