@@ -17,6 +17,7 @@ from app.accounts.studio_desktop_profile import (
 )
 from app.behavior.playwright_channel import chromium_launch_channel_kwargs, normalize_playwright_channel
 from app.behavior.playwright_surface import studio_vnc_launch_args
+from app.browser.chrome_profile_lock import release_chrome_profile_lock
 from app.browser.chrome_proxy import chrome_proxy_server_flag
 from app.behavior.warmup_playwright import _parse_proxy
 from app.config import settings
@@ -68,6 +69,7 @@ def build_native_chrome_argv(
             raise RuntimeError(f"unexpected debug flag in studio args: {arg}")
 
     argv.append(f"--user-data-dir={user_data_dir}")
+    argv.extend(("--no-first-run", "--no-default-browser-check"))
     proxy_flag = chrome_proxy_server_flag(proxy_server_value)
     if proxy_flag:
         argv.append(proxy_flag)
@@ -79,6 +81,44 @@ def build_native_chrome_argv(
     ]
     argv.append(initial_url)
     return argv
+
+
+def native_chrome_stderr_path(profile_dir: Path) -> Path:
+    return profile_dir / "native_chrome.stderr"
+
+
+def tail_native_chrome_stderr(profile_dir: Path, *, max_bytes: int = 4096) -> str | None:
+    path = native_chrome_stderr_path(profile_dir)
+    if not path.exists():
+        return None
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if len(data) > max_bytes:
+        data = data[-max_bytes:]
+    text = data.decode("utf-8", errors="replace").strip()
+    return text or None
+
+
+async def wait_native_chrome_ready(
+    proc: subprocess.Popen[Any],
+    profile_dir: Path,
+    *,
+    timeout_sec: float = 8.0,
+) -> tuple[bool, str | None]:
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        code = proc.poll()
+        if code is not None:
+            detail = tail_native_chrome_stderr(profile_dir)
+            suffix = detail or f"exit code {code}"
+            return False, f"Chrome завершился сразу после старта: {suffix}"
+        await asyncio.sleep(0.35)
+    if proc.poll() is not None:
+        detail = tail_native_chrome_stderr(profile_dir)
+        return False, detail or "Chrome завершился"
+    return True, None
 
 
 def launch_native_chrome(
@@ -98,13 +138,22 @@ def launch_native_chrome(
     env = os.environ.copy()
     env["DISPLAY"] = display
     env.pop("CHROME_DESKTOP", None)
-    proc = subprocess.Popen(
-        argv,
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    stderr_path = native_chrome_stderr_path(user_data_dir)
+    stderr_path.parent.mkdir(parents=True, exist_ok=True)
+    stderr_file = open(stderr_path, "wb")  # noqa: SIM115
+    try:
+        proc = subprocess.Popen(
+            argv,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr_file,
+            start_new_session=True,
+        )
+    except Exception:
+        stderr_file.close()
+        raise
+    else:
+        stderr_file.close()
     logger.info(
         "studio_native_chrome.started",
         pid=proc.pid,
@@ -122,11 +171,16 @@ def native_chrome_running(proc: subprocess.Popen[Any] | None) -> bool:
 async def stop_native_chrome(
     proc: subprocess.Popen[Any] | None,
     *,
+    profile_dir: Path | None = None,
     term_timeout_sec: float = 12.0,
 ) -> None:
     if proc is None:
+        if profile_dir is not None:
+            await asyncio.to_thread(release_chrome_profile_lock, profile_dir)
         return
     if proc.poll() is not None:
+        if profile_dir is not None:
+            await asyncio.to_thread(release_chrome_profile_lock, profile_dir)
         return
     if sys.platform != "win32":
         try:
@@ -135,16 +189,22 @@ async def stop_native_chrome(
             try:
                 proc.terminate()
             except OSError:
+                if profile_dir is not None:
+                    await asyncio.to_thread(release_chrome_profile_lock, profile_dir)
                 return
     else:
         try:
             proc.terminate()
         except OSError:
+            if profile_dir is not None:
+                await asyncio.to_thread(release_chrome_profile_lock, profile_dir)
             return
     deadline = time.monotonic() + term_timeout_sec
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             logger.info("studio_native_chrome.stopped", pid=proc.pid, graceful=True)
+            if profile_dir is not None:
+                await asyncio.to_thread(release_chrome_profile_lock, profile_dir)
             return
         await asyncio.sleep(0.25)
     if sys.platform != "win32":
@@ -161,6 +221,8 @@ async def stop_native_chrome(
         except OSError:
             pass
     logger.warning("studio_native_chrome.killed", pid=proc.pid)
+    if profile_dir is not None:
+        await asyncio.to_thread(release_chrome_profile_lock, profile_dir)
 
 
 async def export_storage_state_from_native_profile(
@@ -171,12 +233,14 @@ async def export_storage_state_from_native_profile(
     proxy_country: str | None,
     proxy_timezone: str | None,
     state_out: Path,
+    playwright_proxy: dict[str, str] | None = None,
 ) -> None:
     """Open the on-disk Chrome profile headlessly via Playwright only to dump storage_state."""
     from playwright.async_api import async_playwright
 
     profile_dir = native_chrome_profile_dir(username, platform)
-    proxy_arg = _parse_proxy(proxy_url)
+    await asyncio.to_thread(release_chrome_profile_lock, profile_dir)
+    proxy_arg = playwright_proxy or _parse_proxy(proxy_url)
     if not proxy_arg:
         raise RuntimeError("нужен прокси для экспорта cookies")
 
@@ -211,3 +275,4 @@ async def export_storage_state_from_native_profile(
             await context.storage_state(path=str(state_out))
         finally:
             await context.close()
+            await asyncio.to_thread(release_chrome_profile_lock, profile_dir)

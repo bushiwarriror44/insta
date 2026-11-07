@@ -14,6 +14,7 @@ from typing import Any, Literal
 import httpx
 from sqlalchemy.orm import Session
 
+from app.accounts.platform_slug import normalize_platform_slug
 from app.accounts.backup_codes import consume_next_backup_code
 from app.accounts.device_factory import load_fingerprint
 from app.accounts.login_identifier import resolve_login_identifier
@@ -67,6 +68,7 @@ from app.browser.chrome_proxy import (
     parse_chrome_upstream,
 )
 from app.browser.local_proxy_forwarder import LocalProxyForwarder
+from app.browser.chrome_profile_lock import release_chrome_profile_lock
 from app.browser.studio_native_chrome import (
     export_storage_state_from_native_profile,
     launch_native_chrome,
@@ -74,6 +76,8 @@ from app.browser.studio_native_chrome import (
     native_chrome_running,
     resolve_google_chrome_binary,
     stop_native_chrome,
+    tail_native_chrome_stderr,
+    wait_native_chrome_ready,
 )
 from app.browser.vnc_stack import VncStack, allocate_ports, vnc_stack_available
 from app.diagnostics.collector import DiagnosticCollector
@@ -103,13 +107,7 @@ _INSTAGRAM_BASE = "https://www.instagram.com"
 
 
 def _account_platform_value(account) -> str:
-    platform = getattr(account, "platform", None)
-    if isinstance(platform, str) and platform.strip():
-        return platform
-    value = getattr(platform, "value", None) if platform is not None else None
-    if isinstance(value, str) and value.strip():
-        return value
-    return "instagram"
+    return normalize_platform_slug(getattr(account, "platform", None))
 
 
 def _studio_desktop_geometry(platform_value: str) -> tuple[int, int] | None:
@@ -683,6 +681,7 @@ class BrowserSessionState:
     login_orchestration: bool = False
     native_chrome_mode: bool = False
     native_chrome_proc: subprocess.Popen[Any] | None = None
+    native_studio_platform: str | None = None
     proxy_forwarder: LocalProxyForwarder | None = None
 
     def log(self, level: LogLevel, step: str, message: str) -> None:
@@ -1061,6 +1060,10 @@ class BrowserSessionManager:
                 f"native_chrome proxy={proxy_server_value} (auth={auth_label})",
             )
 
+        released = await asyncio.to_thread(release_chrome_profile_lock, profile_dir)
+        if released:
+            session.log("info", "native_chrome", f"Снят устаревший lock профиля: {', '.join(released)}")
+
         session.native_chrome_proc = await asyncio.to_thread(
             launch_native_chrome,
             user_data_dir=profile_dir,
@@ -1069,7 +1072,23 @@ class BrowserSessionManager:
             initial_url=initial_url,
             desktop_geometry=desktop_geometry,
         )
+        ok, ready_err = await wait_native_chrome_ready(
+            session.native_chrome_proc,
+            profile_dir,
+        )
+        if not ok:
+            await stop_native_chrome(session.native_chrome_proc, profile_dir=profile_dir)
+            session.native_chrome_proc = None
+            session.status = BrowserSessionStatus.error
+            session.error = ready_err or "Chrome не запустился"
+            session.launch_warning = (
+                f"{session.error} См. native_chrome.stderr в каталоге chrome_profile."
+            )
+            session.log("error", "native_chrome", session.error)
+            raise RuntimeError(session.error)
+
         session.native_chrome_mode = True
+        session.native_studio_platform = platform_value
         session.page_url = initial_url
         session.last_logged_url = initial_url
         pid = session.native_chrome_proc.pid if session.native_chrome_proc else "—"
@@ -1490,11 +1509,19 @@ class BrowserSessionManager:
             try:
                 if session.native_chrome_mode:
                     if not native_chrome_running(session.native_chrome_proc):
-                        session.log(
-                            "warn",
-                            "poll",
-                            "Native Chrome завершился — войдите и нажмите «Сохранить сессию» или перезапустите браузер",
+                        profile_dir = native_chrome_profile_dir(
+                            account.username, _account_platform_value(account)
                         )
+                        detail = tail_native_chrome_stderr(profile_dir)
+                        msg = detail or "Native Chrome завершился неожиданно"
+                        if session.status in (
+                            BrowserSessionStatus.running,
+                            BrowserSessionStatus.awaiting_code,
+                        ):
+                            session.log("error", "poll", msg)
+                            session.status = BrowserSessionStatus.error
+                            session.error = msg
+                        break
                     await asyncio.sleep(2.0)
                     continue
                 if session.page is None or session.context is None:
@@ -1610,9 +1637,12 @@ class BrowserSessionManager:
         if session.native_chrome_mode:
             platform = _account_platform_value(account)
             label = {"youtube": "YouTube", "tiktok": "TikTok"}.get(platform, "Studio")
+            profile_dir = native_chrome_profile_dir(account.username, platform)
             if native_chrome_running(session.native_chrome_proc):
                 session.log("info", "save", "Остановка native Chrome перед экспортом cookies…")
-                await stop_native_chrome(session.native_chrome_proc)
+                await stop_native_chrome(session.native_chrome_proc, profile_dir=profile_dir)
+            else:
+                await asyncio.to_thread(release_chrome_profile_lock, profile_dir)
             session.native_chrome_proc = None
             state_file = playwright_state_write_path(account.username, platform)
             proxy_url = (session.proxy_url or "").strip()
@@ -1622,6 +1652,24 @@ class BrowserSessionManager:
                 raise RuntimeError("для экспорта cookies нужен прокси аккаунта")
             proxy_country = session.proxy_country or getattr(account.proxy, "country", None) if getattr(account, "proxy", None) else session.proxy_country
             proxy_timezone = session.proxy_timezone
+
+            playwright_proxy: dict[str, str] | None = None
+            export_forwarder: LocalProxyForwarder | None = None
+            try:
+                upstream = parse_chrome_upstream(proxy_url)
+                if upstream.needs_auth and upstream.is_http_family:
+                    export_forwarder = LocalProxyForwarder()
+                    await asyncio.to_thread(
+                        export_forwarder.start,
+                        upstream_host=upstream.host,
+                        upstream_port=upstream.port,
+                        username=upstream.username or "",
+                        password=upstream.password or "",
+                    )
+                    playwright_proxy = {"server": export_forwarder.local_proxy_server}
+            except ValueError:
+                playwright_proxy = None
+
             try:
                 await export_storage_state_from_native_profile(
                     username=account.username,
@@ -1630,10 +1678,14 @@ class BrowserSessionManager:
                     proxy_country=proxy_country,
                     proxy_timezone=proxy_timezone,
                     state_out=state_file,
+                    playwright_proxy=playwright_proxy,
                 )
             except Exception as exc:  # noqa: BLE001
                 session.log("error", "save", f"Экспорт state.json: {exc}")
                 raise RuntimeError(f"не удалось экспортировать cookies из профиля Chrome: {exc}") from exc
+            finally:
+                if export_forwarder is not None:
+                    await asyncio.to_thread(export_forwarder.stop)
             try:
                 data = json.loads(state_file.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
@@ -1751,7 +1803,12 @@ class BrowserSessionManager:
             except Exception:
                 pass
         if session.native_chrome_proc is not None:
-            await stop_native_chrome(session.native_chrome_proc)
+            profile_dir = None
+            if session.native_studio_platform:
+                profile_dir = native_chrome_profile_dir(
+                    session.username, session.native_studio_platform
+                )
+            await stop_native_chrome(session.native_chrome_proc, profile_dir=profile_dir)
         if session.proxy_forwarder is not None:
             await asyncio.to_thread(session.proxy_forwarder.stop)
         if session.vnc_stack is not None:
@@ -1763,6 +1820,7 @@ class BrowserSessionManager:
         session.pw = None
         session.native_chrome_proc = None
         session.native_chrome_mode = False
+        session.native_studio_platform = None
         session.proxy_forwarder = None
         session.vnc_stack = None
         session.ws_port = 0

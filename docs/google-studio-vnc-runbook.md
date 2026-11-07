@@ -21,6 +21,23 @@ Chrome **не принимает** логин/пароль в `--proxy-server` (
 
 Если ошибка остаётся: проверьте, что прокси аккаунта — **HTTP** с логином (не SOCKS5 с паролем; для SOCKS+auth — `STUDIO_VNC_NATIVE_CHROME=false` или смените прокси). В логах сессии ищите `native_chrome proxy=… (auth=forwarder)`.
 
+## Чёрный экран noVNC / «Native Chrome завершился»
+
+Обычно Chrome **вышел сразу** (часто `SingletonLock` после прошлого краша). API снимает **устаревший** lock перед стартом и пишет stderr в  
+`data/playwright/youtube/<username>/chrome_profile/native_chrome.stderr`.
+
+1. В логе сессии (админка) — шаг `native_chrome` / `poll` / текст про Singleton.
+2. Закройте браузер в UI, при необходимости на VPS (только если Chrome не запущен):
+
+```bash
+docker compose exec reels-api rm -f \
+  data/playwright/youtube/<username>/chrome_profile/SingletonLock \
+  data/playwright/youtube/<username>/chrome_profile/SingletonSocket \
+  data/playwright/youtube/<username>/chrome_profile/SingletonCookie
+```
+
+3. Перезапустите VNC. Путь профиля — `youtube/`, не `Platform.youtube/`.
+
 Подробнее о сессиях: [accounts-sessions.md](accounts-sessions.md).
 
 ## Запасной путь: импорт `state.json` с домашнего Chrome
