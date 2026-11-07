@@ -269,6 +269,8 @@ class AccountConnectionTestOut(BaseModel):
     user_hint: Optional[AccountUserHintOut] = None
     studio_liveness_ok: Optional[bool] = None
     studio_liveness_error: Optional[str] = None
+    web_liveness_ok: Optional[bool] = None
+    web_liveness_error: Optional[str] = None
 
 
 class FirstLoginOut(BaseModel):

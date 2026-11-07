@@ -341,10 +341,20 @@ def ensure_playwright_chrome_major(username: str) -> str:
         device_settings = {}
         fp.settings["device_settings"] = device_settings
 
+    from app.behavior.playwright_channel import normalize_playwright_channel
+
     existing = device_settings.get("playwright_chrome_major")
     if existing:
         major = str(existing).split(".", 1)[0]
         if major.isdigit():
+            if normalize_playwright_channel(settings.playwright_instagram_channel) == "chrome":
+                from app.accounts.studio_desktop_profile import system_chrome_major
+
+                detected = system_chrome_major()
+                if detected and detected != major:
+                    device_settings["playwright_chrome_major"] = detected
+                    save_fingerprint(username, fp)
+                    return detected
             return major
 
     major = pick_playwright_chrome_major()

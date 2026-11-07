@@ -6,7 +6,7 @@
 
 - Python 3.11+ (локально), ffmpeg в PATH для uniquify.
 - Playwright Chromium: `python -m app.cli install-playwright` или `playwright install chromium`.
-- Docker-образ: **google-chrome-stable** встроен; compose задаёт `BROWSER_VNC_CHANNEL=chrome` и `PLAYWRIGHT_STUDIO_CHANNEL=chrome`. Chromium — в volume после `install-playwright`.
+- Docker-образ: **google-chrome-stable** встроен; compose задаёт `BROWSER_VNC_CHANNEL=chrome` и `PLAYWRIGHT_STUDIO_CHANNEL=chrome`. Instagram: опционально `PLAYWRIGHT_INSTAGRAM_CHANNEL=chrome`. Chromium — в volume после `install-playwright`.
 - Для живого браузера в Docker: `BROWSER_VNC_ENABLED=true`, в образе Xvfb / x11vnc / websockify. Локально Windows VNC-стек как в Linux-контейнере не предполагается — Instagram-автовход идёт через `first_login` / Playwright без noVNC.
 - Ollama **не** на маленьком админ-VPS. GPU-хост задаётся через `AGENT_BASE_URL`. Локальный `reels-ollama` только с профилем compose `ollama` (нужно ≥16 GB RAM).
 

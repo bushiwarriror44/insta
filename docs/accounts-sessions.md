@@ -6,6 +6,16 @@
 
 Площадки в одной БД различаются парой `(platform, username)`.
 
+## Чеклист стабильности (операции)
+
+**Общее:** один аккаунт — один прокси; после смены прокси — `test_connection`; timezone аккаунта согласовать с прокси (смотрите `geo_mismatch`); Docker: volume `playwright-browsers` + `install-playwright`, не терять каталог `./data`.
+
+**Instagram:** единый `login_surface` в карточке, в `first-login` и в `browser/start`; не включать `probe_mobile` без нужды (может сжечь web-cookie); не смешивать web (`state.json` / sessionid) и mobile dump; IMAP/TOTP в карточке до автовхода; стабильные профили на диске (`web_desktop_profile.json`, `playwright_chrome_major`) не сбрасывать без причины.
+
+**YouTube / TikTok:** `proxy-studio-check` до VNC; при Google `signin/rejected` — импорт `state.json` из домашнего Chrome ([runbook](google-studio-vnc-runbook.md)); `BROWSER_VNC_CHANNEL=chrome`, `PLAYWRIGHT_STUDIO_CHANNEL=chrome`, при медленном прокси — `BROWSER_GOTO_TIMEOUT_SEC=90`; перед публикацией — `test_connection?probe_studio=true`.
+
+**Браузер Instagram (опционально):** `PLAYWRIGHT_INSTAGRAM_CHANNEL=chrome` в `.env`, если в образе установлен `google-chrome-stable` (как для Studio).
+
 ## Лимиты и флаги аккаунта
 
 | Поле | Смысл |
@@ -71,6 +81,8 @@ Instagram-app User-Agent в Chromium Studio **не** подставляется.
 `publish_now` сначала делает ту же проверку; если не ok — задачу не ставит, ошибку цитирует.
 
 Для YouTube/TikTok опционально **`probe_studio=true`**: headless открытие Studio с cookies на диске; поле `studio_liveness_ok` (при `false` — warn hint, `overall_ok` может остаться true).
+
+Для Instagram опционально **`probe_web=true`**: headless открытие instagram.com с Playwright `state.json`; поле `web_liveness_ok` (при `false` — warn, `overall_ok` обычно остаётся true в режиме cookies-only).
 
 ## Playwright / Docker (§0.7)
 

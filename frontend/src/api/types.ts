@@ -371,6 +371,8 @@ export interface AccountConnectionTestOut {
   user_hint?: AccountUserHintOut | null;
   studio_liveness_ok?: boolean | null;
   studio_liveness_error?: string | null;
+  web_liveness_ok?: boolean | null;
+  web_liveness_error?: string | null;
 }
 
 export interface FirstLoginOut {

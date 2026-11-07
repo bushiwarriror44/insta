@@ -390,12 +390,13 @@ export const api = {
       ),
     testConnection: (
       username: string,
-      opts?: { probeMobile?: boolean; probeStudio?: boolean }
+      opts?: { probeMobile?: boolean; probeStudio?: boolean; probeWeb?: boolean }
     ) => {
       const query: Record<string, string> = {};
       if (opts?.probeMobile === true) query.probe_mobile = "true";
       else if (opts?.probeMobile === false) query.probe_mobile = "false";
       if (opts?.probeStudio === true) query.probe_studio = "true";
+      if (opts?.probeWeb === true) query.probe_web = "true";
       return request<AccountConnectionTestOut>(
         `/api/accounts/${encodeURIComponent(username)}/test-connection`,
         {

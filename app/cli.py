@@ -909,6 +909,7 @@ def cmd_browser_vnc_diag(
     console.print(f"  BROWSER_VNC_ENABLED={settings.browser_vnc_enabled}")
     console.print(f"  BROWSER_VNC_CHANNEL={settings.browser_vnc_channel}")
     console.print(f"  PLAYWRIGHT_STUDIO_CHANNEL={settings.playwright_studio_channel}")
+    console.print(f"  PLAYWRIGHT_INSTAGRAM_CHANNEL={settings.playwright_instagram_channel}")
     console.print(f"  DISPLAY={os.environ.get('DISPLAY', ':99')}")
     chrome_bin = shutil_which("google-chrome-stable") or shutil_which("google-chrome")
     chrome_status = f"[green]{chrome_bin}[/green]" if chrome_bin else "[red]нет[/red]"
@@ -1091,6 +1092,11 @@ def _chrome_channel_warnings() -> list[str]:
         hints.append(
             "PLAYWRIGHT_STUDIO_CHANNEL=chrome, но google-chrome-stable не найден — "
             "пересоберите образ или установите скрипт install_google_chrome_bookworm.sh"
+        )
+    if settings.playwright_instagram_channel == "chrome":
+        hints.append(
+            "PLAYWRIGHT_INSTAGRAM_CHANNEL=chrome, но google-chrome-stable не найден — "
+            "пересоберите образ (INSTALL_GOOGLE_CHROME=1) или переключите канал на chromium"
         )
     return hints
 

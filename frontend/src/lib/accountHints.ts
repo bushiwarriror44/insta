@@ -155,6 +155,19 @@ export function fallbackConnectionHint(
       steps: ["Смените прокси или обновите country в записи прокси."],
     };
   }
+  if (data.web_liveness_ok === false) {
+    return {
+      severity: "warn",
+      title: "Instagram web",
+      message:
+        data.web_liveness_error?.trim() ||
+        "Web-cookies устарели — проверка probe_web не прошла.",
+      steps: [
+        "Повторите автовход или VNC → Сохранить сессию.",
+        "Держите один login_surface (mobile или desktop).",
+      ],
+    };
+  }
   if (data.overall_ok) return null;
   const auth = data.instagram_auth;
   if (auth?.error_code === "session_missing") {

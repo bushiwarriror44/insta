@@ -178,7 +178,8 @@ Notes:
 - Runtime state lives in `./data` (bind-mounted); `.env` is mounted read-only.
 - `docker compose exec reels-api python -m app.cli …` sees the same db/volumes as the worker.
 - `reels-worker` has a Docker healthcheck (`python -m app.cli status`).
-- Google **Chrome stable** is baked into the API/worker image for YouTube/TikTok Studio (`BROWSER_VNC_CHANNEL=chrome` in compose). Playwright **Chromium** still goes to volume `playwright-browsers` via `install-playwright` (Instagram, preflight).
+- Google **Chrome stable** is baked into the API/worker image for YouTube/TikTok Studio (`BROWSER_VNC_CHANNEL=chrome` in compose). Playwright **Chromium** still goes to volume `playwright-browsers` via `install-playwright` (Instagram, preflight). Instagram can use Chrome too: set `PLAYWRIGHT_INSTAGRAM_CHANNEL=chrome` in `.env` after image rebuild.
+- Session stability checklist (proxy, `login_surface`, probes): [docs/accounts-sessions.md](docs/accounts-sessions.md#чеклист-стабильности-операции).
 
 **If `docker compose build` fails with `Unable to connect to deb.debian.org`:**
 

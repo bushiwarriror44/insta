@@ -1792,7 +1792,14 @@ def test_proxy(db: Session, proxy_label: str) -> dict[str, Any]:
     }
 
 
-def test_connection(db: Session, account_id: int, *, probe_mobile: bool = False, probe_studio: bool = False) -> dict[str, Any]:
+def test_connection(
+    db: Session,
+    account_id: int,
+    *,
+    probe_mobile: bool = False,
+    probe_studio: bool = False,
+    probe_web: bool = False,
+) -> dict[str, Any]:
     from app.accounts.account_hints import enrich_connection_test_out
     from app.accounts.connection_test import run_account_connection_test
 
@@ -1802,12 +1809,15 @@ def test_connection(db: Session, account_id: int, *, probe_mobile: bool = False,
         raise ToolError("probe_mobile только для Instagram")
     if probe_studio and platform not in ("youtube", "tiktok"):
         raise ToolError("probe_studio только для YouTube и TikTok")
+    if probe_web and platform != "instagram":
+        raise ToolError("probe_web только для Instagram")
     out = enrich_connection_test_out(
         run_account_connection_test(
             account,
             db,
             probe_mobile=bool(probe_mobile),
             probe_studio=bool(probe_studio),
+            probe_web=bool(probe_web),
         ),
         account,
     )
@@ -1827,6 +1837,10 @@ def test_connection(db: Session, account_id: int, *, probe_mobile: bool = False,
     }
     if platform == "instagram":
         payload["instagram_ok"] = out.instagram_auth.ok if out.instagram_auth else False
+        if out.web_liveness_ok is not None:
+            payload["web_liveness_ok"] = out.web_liveness_ok
+            if out.web_liveness_error:
+                payload["web_liveness_error"] = out.web_liveness_error
     else:
         payload["session_ok"] = out.instagram_auth.ok if out.instagram_auth else False
         if out.studio_liveness_ok is not None:

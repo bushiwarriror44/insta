@@ -1052,13 +1052,23 @@ async def _async_first_login(
     else:
         chrome_major = ensure_playwright_chrome_major(username)
 
+    from app.behavior.playwright_channel import (
+        chromium_launch_channel_kwargs,
+        normalize_playwright_channel,
+    )
+    from app.config import settings as app_settings
+
+    launch_kwargs: dict = {
+        "headless": headless,
+        "ignore_default_args": ["--enable-automation"],
+        "args": browser_launch_args(surface),
+        "proxy": proxy_arg,
+    }
+    ig_channel = normalize_playwright_channel(app_settings.playwright_instagram_channel)
+    launch_kwargs.update(chromium_launch_channel_kwargs(ig_channel))
+
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(
-            headless=headless,
-            ignore_default_args=["--enable-automation"],
-            args=browser_launch_args(surface),
-            proxy=proxy_arg,
-        )
+        browser = await pw.chromium.launch(**launch_kwargs)
         context_kwargs = playwright_context_kwargs(
             surface,
             fingerprint=fingerprint,

@@ -73,6 +73,8 @@ def _finish(
     now: datetime,
     studio_liveness_ok: bool | None = None,
     studio_liveness_error: str | None = None,
+    web_liveness_ok: bool | None = None,
+    web_liveness_error: str | None = None,
 ) -> AccountConnectionTestOut:
     status: Literal["ok", "warn", "fail"] = "ok" if overall_ok else "fail"
     if not overall_ok and proxy_health.ok and proxy_health.geo_mismatch:
@@ -91,6 +93,8 @@ def _finish(
         logs=[DiagnosticLogLineOut(**line.__dict__) for line in collector.lines],
         studio_liveness_ok=studio_liveness_ok,
         studio_liveness_error=studio_liveness_error,
+        web_liveness_ok=web_liveness_ok,
+        web_liveness_error=web_liveness_error,
     )
 
 
@@ -101,6 +105,7 @@ def run_account_connection_test(
     *,
     probe_mobile: bool = False,
     probe_studio: bool = False,
+    probe_web: bool = False,
 ) -> AccountConnectionTestOut:
     """Run proxy + session diagnostics.
 
@@ -109,6 +114,33 @@ def run_account_connection_test(
     """
     now = datetime.now(timezone.utc)
     username = account.username
+    platform = _platform_value(account)
+    if probe_web and platform in STUDIO_PLATFORMS:
+        collector_early = DiagnosticCollector(
+            db,
+            kind=DiagnosticRunKind.connection_test,
+            account_id=account.id,
+        )
+        err = "probe_web только для Instagram"
+        collector_early.error("session_probe", err)
+        return _finish(
+            collector_early,
+            overall_ok=False,
+            summary=err,
+            username=username,
+            proxy_assigned=account.proxy_id is not None,
+            proxy_label=None,
+            proxy_health=ProxyHealthStepOut(ok=False, error=err),
+            session_storage=SessionStorageStepOut(
+                has_session_id=False,
+                session_file_exists=False,
+                device_file_exists=False,
+                session_source="none",
+            ),
+            instagram_auth=InstagramAuthStepOut(ok=False, method="none", error=err),
+            now=now,
+        )
+
     collector = DiagnosticCollector(
         db,
         kind=DiagnosticRunKind.connection_test,
@@ -120,7 +152,6 @@ def run_account_connection_test(
 
     file_exists = session_path(username).exists()
     device_exists = device_path(username).exists()
-    platform = _platform_value(account)
     if platform in STUDIO_PLATFORMS:
         pw_exists = playwright_state_path(username, platform).exists()
         ready = studio_session_ready(username, platform)
@@ -378,6 +409,8 @@ def run_account_connection_test(
     )
 
     if not probe_mobile:
+        web_liveness_ok: bool | None = None
+        web_liveness_error: str | None = None
         if has_cookies:
             method: Literal["sessionid", "session_file", "none"] = (
                 "sessionid" if sid_norm else "session_file"
@@ -389,6 +422,37 @@ def run_account_connection_test(
             instagram_auth = InstagramAuthStepOut(ok=True, method=method)
             overall_ok = True
             summary = "Cookies установлены (mobile не проверялась)"
+            if probe_web:
+                from app.accounts.playwright_session import storage_state_has_session
+                from app.behavior.instagram_web_probe import probe_instagram_web_liveness
+
+                if storage_state_has_session(username):
+                    collector.info("web_liveness", "Проверяю web-сессию Instagram (headless)")
+                    tz_probe = account.timezone or timezone_from_proxy(
+                        proxy.timezone, proxy.country
+                    )
+                    live = probe_instagram_web_liveness(
+                        username=username,
+                        proxy_url=proxy.url,
+                        login_surface=account.login_surface,
+                        timezone_id=tz_probe,
+                        proxy_country=proxy.country,
+                    )
+                    web_liveness_ok = live.ok
+                    web_liveness_error = live.error
+                    if live.ok:
+                        collector.info("web_liveness", "Instagram web принял cookies")
+                    else:
+                        collector.warn(
+                            "web_liveness",
+                            live.error or "Web-сессия Instagram устарела",
+                        )
+                else:
+                    web_liveness_ok = False
+                    web_liveness_error = (
+                        "Нет Playwright state.json с sessionid — web liveness пропущен"
+                    )
+                    collector.warn("web_liveness", web_liveness_error)
         else:
             collector.error(
                 "session_probe",
@@ -405,6 +469,8 @@ def run_account_connection_test(
             )
             overall_ok = False
             summary = instagram_auth.error or "Сессия не найдена"
+            web_liveness_ok = None
+            web_liveness_error = None
         return _finish(
             collector,
             overall_ok=overall_ok,
@@ -416,6 +482,8 @@ def run_account_connection_test(
             session_storage=session_storage,
             instagram_auth=instagram_auth,
             now=now,
+            web_liveness_ok=web_liveness_ok if not probe_mobile else None,
+            web_liveness_error=web_liveness_error if not probe_mobile else None,
         )
 
     collector.info("fingerprint", "Загрузка отпечатка устройства")

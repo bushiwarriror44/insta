@@ -613,6 +613,7 @@ def test_account_connection(
     username: str,
     probe_mobile: bool = Query(default=False),
     probe_studio: bool = Query(default=False),
+    probe_web: bool = Query(default=False),
     db: Session = Depends(get_db),
 ) -> AccountConnectionTestOut:
     account = db.scalar(select(Account).where(Account.username == username))
@@ -621,7 +622,11 @@ def test_account_connection(
     from app.accounts.account_hints import enrich_connection_test_out
 
     out = run_account_connection_test(
-        account, db, probe_mobile=probe_mobile, probe_studio=probe_studio
+        account,
+        db,
+        probe_mobile=probe_mobile,
+        probe_studio=probe_studio,
+        probe_web=probe_web,
     )
     return enrich_connection_test_out(out, account)
 

@@ -50,6 +50,23 @@ def test_ensure_instagram_desktop_profile_stable_ua(app_env, monkeypatch):
     assert desktop_profile_path("ig1", "instagram").name == "web_desktop_profile.json"
 
 
+def test_desktop_profile_syncs_chrome_major_when_channel_chrome(app_env, monkeypatch):
+    monkeypatch.setattr("app.config.settings.playwright_instagram_channel", "chrome")
+    monkeypatch.setattr(
+        "app.accounts.studio_desktop_profile._system_chrome_major",
+        lambda: "142",
+    )
+    p1 = ensure_desktop_playwright_profile("ig_chrome", "instagram", proxy_country="US")
+    assert p1.chrome_major == "142"
+    assert "Chrome/142.0.0.0" in p1.user_agent
+    monkeypatch.setattr(
+        "app.accounts.studio_desktop_profile._system_chrome_major",
+        lambda: "143",
+    )
+    p2 = ensure_desktop_playwright_profile("ig_chrome", "instagram", proxy_country="US")
+    assert p2.chrome_major == "143"
+
+
 def test_ensure_playwright_chrome_major_persists(app_env, monkeypatch):
     from app.accounts.device_factory import ensure_playwright_chrome_major, load_fingerprint
 

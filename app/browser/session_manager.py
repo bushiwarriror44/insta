@@ -51,6 +51,7 @@ from app.behavior.warmup_playwright import (
     playwright_browsers_available,
     submit_verification_code,
 )
+from app.accounts.playwright_surface_hints import login_surface_profile_warnings
 from app.behavior.playwright_channel import chromium_launch_channel_kwargs, normalize_playwright_channel
 from app.behavior.playwright_surface import (
     LoginSurface,
@@ -879,6 +880,15 @@ class BrowserSessionManager:
                 "start",
                 f"Запуск браузера (surface={resolved_surface}, display=:{display}, lightweight={lightweight})",
             )
+            surface_warnings = login_surface_profile_warnings(
+                username,
+                resolved_surface=resolved_surface,
+                account_login_surface=getattr(account, "login_surface", None),
+            )
+            if surface_warnings:
+                session.launch_warning = " ".join(surface_warnings)
+                for note in surface_warnings:
+                    session.log("warn", "surface", note)
             self._sessions[username] = session
 
         try:
@@ -1048,6 +1058,9 @@ class BrowserSessionManager:
         if platform_value in ("youtube", "tiktok"):
             vnc_channel = normalize_playwright_channel(settings.browser_vnc_channel)
             launch_kwargs.update(chromium_launch_channel_kwargs(vnc_channel))
+        elif platform_value == "instagram":
+            ig_channel = normalize_playwright_channel(settings.playwright_instagram_channel)
+            launch_kwargs.update(chromium_launch_channel_kwargs(ig_channel))
         session.browser = await session.pw.chromium.launch(**launch_kwargs)
 
         if studio_profile is not None:
