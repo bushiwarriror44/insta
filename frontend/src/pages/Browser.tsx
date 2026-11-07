@@ -189,12 +189,13 @@ export function Browser() {
 
         <div className="min-w-0 flex-1">
           {!selected ? (
-            <EmptyState title="Выберите аккаунт" description="Список слева — запуск VNC привязан к аккаунту и его прокси." />
+            <EmptyState title="Выберите аккаунт">
+              Список слева — запуск VNC привязан к аккаунту и его прокси.
+            </EmptyState>
           ) : !selected.proxy_label ? (
-            <EmptyState
-              title="Нужен прокси"
-              description="Назначьте прокси в карточке аккаунта на странице «Аккаунты», затем вернитесь сюда."
-            />
+            <EmptyState title="Нужен прокси">
+              Назначьте прокси в карточке аккаунта на странице «Аккаунты», затем вернитесь сюда.
+            </EmptyState>
           ) : (
             <LazyInstagramBrowserPanel
               key={`${selected.platform}:${selected.username}`}

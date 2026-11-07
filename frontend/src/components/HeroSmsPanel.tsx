@@ -584,7 +584,11 @@ export function HeroSmsPanel() {
               type="button"
               className="btn-ghost text-xs"
               disabled={statusBusy}
-              onClick={() => void refreshStatus().then((n) => n?.configured && loadMeta())}
+              onClick={() =>
+                void refreshStatus().then((n) => {
+                  if (n?.configured) void loadMeta();
+                })
+              }
             >
               <RefreshCw className={`mr-1 inline h-3.5 w-3.5 ${statusBusy ? "animate-spin" : ""}`} />
               Обновить
@@ -843,7 +847,9 @@ export function HeroSmsPanel() {
                 />
                 <div className="max-h-36 overflow-y-auto rounded border border-slate-800">
                   {filteredServices.length === 0 ? (
-                    <EmptyState compact title="Нет сервисов" />
+                    <EmptyState compact title="Нет сервисов">
+                      Попробуйте другой запрос
+                    </EmptyState>
                   ) : (
                     <ul className="divide-y divide-slate-800 text-xs">
                       {filteredServices.map((s) => (
