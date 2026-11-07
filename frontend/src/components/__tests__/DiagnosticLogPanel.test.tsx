@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, act } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -35,6 +35,47 @@ describe("DiagnosticLogPanel", () => {
   it("shows empty state", () => {
     render(<DiagnosticLogPanel lines={[]} emptyLabel="No logs" />);
     expect(screen.getByText("No logs")).toBeInTheDocument();
+  });
+
+  it("auto-scrolls inside the log panel without scrollIntoView on ancestors", async () => {
+    const scrollIntoView = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrollIntoView;
+
+    const manyLines = Array.from({ length: 40 }, (_, i) => ({
+      ts: `2026-08-07T00:${String(i).padStart(2, "0")}:00Z`,
+      level: "info" as const,
+      step: "poll",
+      message: `event ${i}`,
+    }));
+
+    const { rerender } = render(
+      <div style={{ height: 120, overflow: "auto" }} data-testid="outer-scroll">
+        <DiagnosticLogPanel lines={manyLines.slice(0, 20)} maxHeightClass="max-h-24" />
+      </div>
+    );
+
+    await waitFor(() => expect(scrollIntoView).not.toHaveBeenCalled());
+
+    const logScroller = screen.getByText("event 0").closest(".overflow-y-auto") as HTMLElement;
+
+    const outer = screen.getByTestId("outer-scroll");
+    const outerTopBefore = outer.scrollTop;
+    act(() => {
+      logScroller.scrollTop = 0;
+    });
+
+    rerender(
+      <div style={{ height: 120, overflow: "auto" }} data-testid="outer-scroll">
+        <DiagnosticLogPanel lines={manyLines} maxHeightClass="max-h-24" />
+      </div>
+    );
+
+    await waitFor(() => expect(scrollIntoView).not.toHaveBeenCalled());
+    expect(outer.scrollTop).toBe(outerTopBefore);
+    expect(logScroller.scrollTop).toBe(0);
+
+    Element.prototype.scrollIntoView = original;
   });
 
   it("hides inner copy toolbar when showHeaderCopy is false", () => {

@@ -90,6 +90,7 @@ function mergeLogs(prev: DiagnosticLogLine[], next: DiagnosticLogLine[] | undefi
     seen.add(k);
     out.push(line);
   }
+  if (out.length === prev.length) return prev;
   return out.slice(-300);
 }
 

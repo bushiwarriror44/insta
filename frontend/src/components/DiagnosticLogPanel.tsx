@@ -139,6 +139,8 @@ interface Props {
   showHeaderCopy?: boolean;
 }
 
+const AUTO_SCROLL_NEAR_BOTTOM_PX = 48;
+
 export function DiagnosticLogPanel({
   lines,
   emptyLabel = "Записей в логе пока нет.",
@@ -147,12 +149,21 @@ export function DiagnosticLogPanel({
   headerTitle = "Лог",
   showHeaderCopy = true,
 }: Props) {
-  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const prevLineCountRef = useRef(0);
   const [copyStatus, setCopyStatus] = useState<"idle" | "ok" | "fail">("idle");
 
   useEffect(() => {
     if (!autoScroll) return;
-    bottomRef.current?.scrollIntoView?.({ behavior: "smooth" });
+    const el = scrollRef.current;
+    if (!el) return;
+    const prevCount = prevLineCountRef.current;
+    prevLineCountRef.current = lines.length;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const nearBottom = distanceFromBottom < AUTO_SCROLL_NEAR_BOTTOM_PX;
+    const firstPopulate = prevCount === 0 && lines.length > 0;
+    if (!nearBottom && !firstPopulate) return;
+    el.scrollTop = el.scrollHeight;
   }, [lines, autoScroll]);
 
   useEffect(() => {
@@ -201,7 +212,10 @@ export function DiagnosticLogPanel({
           </button>
         </div>
       ) : null}
-      <div className={`overflow-y-auto font-mono text-xs ${maxHeightClass}`}>
+      <div
+        ref={scrollRef}
+        className={`overflow-y-auto font-mono text-xs ${maxHeightClass}`}
+      >
         <ul className="divide-y divide-slate-800/80">
           {lines.map((line, idx) => (
             <li key={`${line.ts}-${idx}`} className="px-3 py-2 flex gap-2 items-start">
@@ -218,7 +232,6 @@ export function DiagnosticLogPanel({
             </li>
           ))}
         </ul>
-        <div ref={bottomRef} />
       </div>
     </div>
   );
