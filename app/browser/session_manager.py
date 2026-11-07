@@ -76,6 +76,7 @@ from app.browser.studio_native_chrome import (
     native_chrome_running,
     resolve_google_chrome_binary,
     stop_native_chrome,
+    summarize_native_chrome_stderr,
     tail_native_chrome_stderr,
     wait_native_chrome_ready,
 )
@@ -682,6 +683,7 @@ class BrowserSessionState:
     native_chrome_mode: bool = False
     native_chrome_proc: subprocess.Popen[Any] | None = None
     native_studio_platform: str | None = None
+    native_save_in_progress: bool = False
     proxy_forwarder: LocalProxyForwarder | None = None
 
     def log(self, level: LogLevel, step: str, message: str) -> None:
@@ -1509,11 +1511,15 @@ class BrowserSessionManager:
             try:
                 if session.native_chrome_mode:
                     if not native_chrome_running(session.native_chrome_proc):
+                        if session.native_save_in_progress:
+                            await asyncio.sleep(2.0)
+                            continue
                         profile_dir = native_chrome_profile_dir(
                             account.username, _account_platform_value(account)
                         )
-                        detail = tail_native_chrome_stderr(profile_dir)
-                        msg = detail or "Native Chrome завершился неожиданно"
+                        msg = summarize_native_chrome_stderr(profile_dir) or (
+                            "Native Chrome завершился неожиданно"
+                        )
                         if session.status in (
                             BrowserSessionStatus.running,
                             BrowserSessionStatus.awaiting_code,
@@ -1638,67 +1644,17 @@ class BrowserSessionManager:
             platform = _account_platform_value(account)
             label = {"youtube": "YouTube", "tiktok": "TikTok"}.get(platform, "Studio")
             profile_dir = native_chrome_profile_dir(account.username, platform)
-            if native_chrome_running(session.native_chrome_proc):
-                session.log("info", "save", "Остановка native Chrome перед экспортом cookies…")
-                await stop_native_chrome(session.native_chrome_proc, profile_dir=profile_dir)
-            else:
-                await asyncio.to_thread(release_chrome_profile_lock, profile_dir)
-            session.native_chrome_proc = None
-            state_file = playwright_state_write_path(account.username, platform)
-            proxy_url = (session.proxy_url or "").strip()
-            if not proxy_url and getattr(account, "proxy", None) is not None:
-                proxy_url = (account.proxy.url or "").strip()
-            if not proxy_url:
-                raise RuntimeError("для экспорта cookies нужен прокси аккаунта")
-            proxy_country = session.proxy_country or getattr(account.proxy, "country", None) if getattr(account, "proxy", None) else session.proxy_country
-            proxy_timezone = session.proxy_timezone
-
-            playwright_proxy: dict[str, str] | None = None
-            export_forwarder: LocalProxyForwarder | None = None
+            session.native_save_in_progress = True
             try:
-                upstream = parse_chrome_upstream(proxy_url)
-                if upstream.needs_auth and upstream.is_http_family:
-                    export_forwarder = LocalProxyForwarder()
-                    await asyncio.to_thread(
-                        export_forwarder.start,
-                        upstream_host=upstream.host,
-                        upstream_port=upstream.port,
-                        username=upstream.username or "",
-                        password=upstream.password or "",
-                    )
-                    playwright_proxy = {"server": export_forwarder.local_proxy_server}
-            except ValueError:
-                playwright_proxy = None
-
-            try:
-                await export_storage_state_from_native_profile(
-                    username=account.username,
+                await self._save_native_studio_session(
+                    session,
+                    account,
                     platform=platform,
-                    proxy_url=proxy_url,
-                    proxy_country=proxy_country,
-                    proxy_timezone=proxy_timezone,
-                    state_out=state_file,
-                    playwright_proxy=playwright_proxy,
+                    label=label,
+                    profile_dir=profile_dir,
                 )
-            except Exception as exc:  # noqa: BLE001
-                session.log("error", "save", f"Экспорт state.json: {exc}")
-                raise RuntimeError(f"не удалось экспортировать cookies из профиля Chrome: {exc}") from exc
             finally:
-                if export_forwarder is not None:
-                    await asyncio.to_thread(export_forwarder.stop)
-            try:
-                data = json.loads(state_file.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
-                raise RuntimeError("не удалось прочитать export state.json") from exc
-            cookies = data.get("cookies") if isinstance(data, dict) else None
-            if not isinstance(cookies, list) or not cookies_match_platform(cookies, platform):
-                session.log("error", "save", f"Нет cookies {label} — сначала войдите в браузере")
-                raise RuntimeError(
-                    f"Сначала войдите в {label} в браузере — cookies площадки не найдены"
-                )
-            session.status = BrowserSessionStatus.saved
-            session.awaiting_code = False
-            session.log("info", "save", f"Playwright cookies {platform} сохранены в state.json (native profile)")
+                session.native_save_in_progress = False
             return {
                 "session_imported": False,
                 "session_id_saved": False,
@@ -1753,6 +1709,79 @@ class BrowserSessionManager:
             "session_imported": True,
             "session_id_saved": bool(session_id),
         }
+
+    async def _save_native_studio_session(
+        self,
+        session: BrowserSessionState,
+        account,
+        *,
+        platform: str,
+        label: str,
+        profile_dir,
+    ) -> None:
+        if native_chrome_running(session.native_chrome_proc):
+            session.log("info", "save", "Остановка native Chrome перед экспортом cookies…")
+            await stop_native_chrome(session.native_chrome_proc, profile_dir=profile_dir)
+        else:
+            await asyncio.to_thread(release_chrome_profile_lock, profile_dir)
+        session.native_chrome_proc = None
+        state_file = playwright_state_write_path(account.username, platform)
+        proxy_url = (session.proxy_url or "").strip()
+        if not proxy_url and getattr(account, "proxy", None) is not None:
+            proxy_url = (account.proxy.url or "").strip()
+        if not proxy_url:
+            raise RuntimeError("для экспорта cookies нужен прокси аккаунта")
+        proxy_country = session.proxy_country or (
+            getattr(account.proxy, "country", None) if getattr(account, "proxy", None) else session.proxy_country
+        )
+        proxy_timezone = session.proxy_timezone
+
+        playwright_proxy: dict[str, str] | None = None
+        export_forwarder: LocalProxyForwarder | None = None
+        try:
+            upstream = parse_chrome_upstream(proxy_url)
+            if upstream.needs_auth and upstream.is_http_family:
+                export_forwarder = LocalProxyForwarder()
+                await asyncio.to_thread(
+                    export_forwarder.start,
+                    upstream_host=upstream.host,
+                    upstream_port=upstream.port,
+                    username=upstream.username or "",
+                    password=upstream.password or "",
+                )
+                playwright_proxy = {"server": export_forwarder.local_proxy_server}
+        except ValueError:
+            playwright_proxy = None
+
+        try:
+            await export_storage_state_from_native_profile(
+                username=account.username,
+                platform=platform,
+                proxy_url=proxy_url,
+                proxy_country=proxy_country,
+                proxy_timezone=proxy_timezone,
+                state_out=state_file,
+                playwright_proxy=playwright_proxy,
+            )
+        except Exception as exc:  # noqa: BLE001
+            session.log("error", "save", f"Экспорт state.json: {exc}")
+            raise RuntimeError(f"не удалось экспортировать cookies из профиля Chrome: {exc}") from exc
+        finally:
+            if export_forwarder is not None:
+                await asyncio.to_thread(export_forwarder.stop)
+        try:
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError("не удалось прочитать export state.json") from exc
+        cookies = data.get("cookies") if isinstance(data, dict) else None
+        if not isinstance(cookies, list) or not cookies_match_platform(cookies, platform):
+            session.log("error", "save", f"Нет cookies {label} — сначала войдите в браузере")
+            raise RuntimeError(
+                f"Сначала войдите в {label} в браузере — cookies площадки не найдены"
+            )
+        session.status = BrowserSessionStatus.saved
+        session.awaiting_code = False
+        session.log("info", "save", f"Playwright cookies {platform} сохранены в state.json (native profile)")
 
     async def stop_session(self, username: str) -> None:
         async with self._lock:

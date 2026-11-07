@@ -87,6 +87,40 @@ def native_chrome_stderr_path(profile_dir: Path) -> Path:
     return profile_dir / "native_chrome.stderr"
 
 
+_DBUS_NOISE = (
+    "dbus",
+    "object_proxy",
+    "tensorflow lite",
+    "webgl",
+    "xnnpack",
+    "mojom.widge",
+)
+
+
+def summarize_native_chrome_stderr(profile_dir: Path, *, max_bytes: int = 2048) -> str | None:
+    """Short operator-facing message; not full Chrome stderr."""
+    raw = tail_native_chrome_stderr(profile_dir, max_bytes=max_bytes)
+    if not raw:
+        return None
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    interesting = [
+        line
+        for line in lines
+        if not any(noise in line.lower() for noise in _DBUS_NOISE)
+        and (
+            "singleton" in line.lower()
+            or "profile" in line.lower()
+            or "fatal" in line.lower()
+            or "signin" in line.lower()
+        )
+    ]
+    if interesting:
+        return interesting[-1][:400]
+    if lines:
+        return "Native Chrome завершился (подробности: native_chrome.stderr)"
+    return None
+
+
 def tail_native_chrome_stderr(profile_dir: Path, *, max_bytes: int = 4096) -> str | None:
     path = native_chrome_stderr_path(profile_dir)
     if not path.exists():
@@ -138,6 +172,7 @@ def launch_native_chrome(
     env = os.environ.copy()
     env["DISPLAY"] = display
     env.pop("CHROME_DESKTOP", None)
+    env.setdefault("DBUS_SESSION_BUS_ADDRESS", "disabled")
     stderr_path = native_chrome_stderr_path(user_data_dir)
     stderr_path.parent.mkdir(parents=True, exist_ok=True)
     stderr_file = open(stderr_path, "wb")  # noqa: SIM115

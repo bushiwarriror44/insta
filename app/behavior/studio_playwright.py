@@ -422,6 +422,17 @@ async def _async_probe_studio_session_liveness(
             await browser.close()
 
 
+def _run_probe_coroutine(coro):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+
 def probe_studio_session_liveness(
     *,
     username: str,
@@ -435,7 +446,7 @@ def probe_studio_session_liveness(
     """Open Studio with stored Playwright state and detect login/challenge redirects."""
     headless = settings.playwright_headless if headless is None else headless
     try:
-        return asyncio.run(
+        return _run_probe_coroutine(
             _async_probe_studio_session_liveness(
                 username=username,
                 proxy_url=proxy_url,
