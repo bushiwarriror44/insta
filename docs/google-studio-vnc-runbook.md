@@ -43,16 +43,22 @@ docker compose exec reels-api python -m app.cli browser-vnc-diag <username>
 - Ввод email с клавиатуры noVNC (не обязательно «Вставить в VNC») — отказ может повториться на том же IP.
 - «Вставить в VNC» **не** обходит rejected: Google решает по браузеру и IP, не по способу ввода.
 
-## Опция: branded Google Chrome в VNC (`BROWSER_VNC_CHANNEL=chrome`)
+## Branded Google Chrome в VNC и на воркере (по умолчанию в Docker)
 
-Снижает часть эвристик против bundled Chromium, **не** заменяет плохой IP прокси.
+Образ `reels-api` / `reels-worker` собирается с **google-chrome-stable**; `docker-compose.yml` задаёт `BROWSER_VNC_CHANNEL=chrome` и `PLAYWRIGHT_STUDIO_CHANNEL=chrome`. Снижает часть эвристик против bundled Chromium, **не** заменяет плохой IP прокси.
 
-1. В контейнере один раз:
-   ```bash
-   docker compose exec reels-api bash /app/scripts/install_google_chrome_bookworm.sh
-   docker compose exec reels-api python -m app.cli install-playwright --browser chrome
-   ```
-2. В `.env` или `docker-compose.yml` для `reels-api`: `BROWSER_VNC_CHANNEL=chrome`
-3. Перезапуск: `docker compose up -d reels-api`
+Проверка после `docker compose build`:
 
-Headless Studio login (воркер): опционально `PLAYWRIGHT_STUDIO_CHANNEL=chrome` — только если Chrome установлен в **том же** образе.
+```bash
+docker compose exec reels-api python -m app.cli browser-vnc-diag
+```
+
+**Старый образ без Chrome** или локально без пересборки:
+
+```bash
+docker compose exec reels-api bash /app/scripts/install_google_chrome_bookworm.sh
+```
+
+Затем `BROWSER_VNC_CHANNEL=chrome` в `.env` / compose. На **ARM** или сборке с `INSTALL_GOOGLE_CHROME=0` оставьте `chromium`.
+
+Chromium в volume: по-прежнему `docker compose exec reels-api python -m app.cli install-playwright` (Instagram и fallback).

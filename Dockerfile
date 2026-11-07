@@ -63,6 +63,9 @@ RUN python -m venv "${VENV_PATH}" && \
 
 FROM python:3.11-slim-bookworm AS runtime
 
+# Set INSTALL_GOOGLE_CHROME=0 on non-amd64 or slim CI images (no Google .deb).
+ARG INSTALL_GOOGLE_CHROME=1
+
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
@@ -86,6 +89,7 @@ RUN apt-get update && \
         ffmpeg \
         ca-certificates \
         curl \
+        gnupg \
         libnss3 \
         libnspr4 \
         libatk1.0-0 \
@@ -115,8 +119,10 @@ RUN apt-get update && \
 COPY --from=builder /opt/venv /opt/venv
 COPY . .
 
-# Browser binaries are installed on-demand at runtime (see CLI command
-# `install-playwright`) to keep docker build lighter and more stable on WSL.
+# Chromium on demand via `install-playwright` (volume /ms-playwright). Google Chrome
+# stable is baked in for Studio VNC / headless when BROWSER_VNC_CHANNEL=chrome.
+RUN if [ "$INSTALL_GOOGLE_CHROME" = "1" ]; then bash /app/scripts/install_google_chrome_bookworm.sh; fi
+
 RUN mkdir -p /ms-playwright
 
 RUN chmod +x /app/docker/entrypoint.sh

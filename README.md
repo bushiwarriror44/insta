@@ -178,7 +178,7 @@ Notes:
 - Runtime state lives in `./data` (bind-mounted); `.env` is mounted read-only.
 - `docker compose exec reels-api python -m app.cli …` sees the same db/volumes as the worker.
 - `reels-worker` has a Docker healthcheck (`python -m app.cli status`).
-- Playwright browsers are installed on demand via `install-playwright` above (keeps `docker compose build` lighter).
+- Google **Chrome stable** is baked into the API/worker image for YouTube/TikTok Studio (`BROWSER_VNC_CHANNEL=chrome` in compose). Playwright **Chromium** still goes to volume `playwright-browsers` via `install-playwright` (Instagram, preflight).
 
 **If `docker compose build` fails with `Unable to connect to deb.debian.org`:**
 

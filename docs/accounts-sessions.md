@@ -92,7 +92,7 @@ YouTube/TikTok в VNC: при старте открывается Studio (ladder
 2. Импорт `state.json`: в панели браузера YouTube — **«Загрузить Playwright state»** (импорт + автоматический probe Studio); файл попадает в `data/playwright/youtube/<username>/state.json`. Альтернатива: `scp` — см. [google-studio-vnc-runbook.md](google-studio-vnc-runbook.md).
 3. При загрузке через UI probe Studio уже выполняется; иначе — **Подключение** / `test_connection` в админке.
 4. Смена прокси при повторном отказе; VNC — для 2FA, не для первого login.
-5. Опционально `BROWSER_VNC_CHANNEL=chrome` (runbook) — не заменяет плохой IP.
+5. В Docker по умолчанию `BROWSER_VNC_CHANNEL=chrome` и Chrome в образе (runbook) — не заменяет плохой IP.
 
 **Буфер и VNC:** кнопки на панели копируют в локальный буфер ОС; `POST /api/accounts/{username}/browser/paste` вставляет текст в сфокусированное поле Chromium (Playwright). Для обмена с noVNC используйте иконку буфера в панели noVNC или сочетание из подсказки в UI (зависит от сборки noVNC).
 

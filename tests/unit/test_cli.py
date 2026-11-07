@@ -482,6 +482,21 @@ def test_preflight_fails_without_playwright(cli_app, make_proxy, monkeypatch):
     assert "install-playwright" in result.stdout
 
 
+def test_preflight_warns_when_chrome_channel_but_no_binary(cli_app, make_proxy, monkeypatch):
+    make_proxy(label="pf-chrome", url="http://h:4")
+    monkeypatch.setattr(
+        "app.behavior.warmup_playwright.playwright_browsers_available",
+        lambda: True,
+    )
+    monkeypatch.setattr("app.config.settings.browser_vnc_channel", "chrome")
+    monkeypatch.setattr("app.config.settings.playwright_studio_channel", "chrome")
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/ffmpeg" if name == "ffmpeg" else None)
+    result = runner.invoke(cli_app, ["preflight"])
+    assert result.exit_code == 0, result.stdout
+    assert "google-chrome-stable" in result.stdout
+    assert "предупреждение" in result.stdout
+
+
 def test_status_hides_entry_path_by_default(cli_app, db_session):
     from app.panel.settings_store import get_or_create_panel_settings
 

@@ -865,6 +865,9 @@ def cmd_preflight() -> None:
         if unhealthy:
             issues.append(f"нездоровые прокси: {', '.join(unhealthy[:5])}")
 
+    for note in _chrome_channel_warnings():
+        console.print(f"[yellow]предупреждение:[/yellow] {note}")
+
     if issues:
         for item in issues:
             console.print(f"[yellow]проверка:[/yellow] {item}")
@@ -910,6 +913,8 @@ def cmd_browser_vnc_diag(
     chrome_bin = shutil_which("google-chrome-stable") or shutil_which("google-chrome")
     chrome_status = f"[green]{chrome_bin}[/green]" if chrome_bin else "[red]нет[/red]"
     console.print(f"  google-chrome-stable: {chrome_status}")
+    for note in _chrome_channel_warnings():
+        console.print(f"  [yellow]предупреждение:[/yellow] {note}")
 
     tools = {
         "Xvfb": shutil_which("Xvfb"),
@@ -1040,6 +1045,25 @@ def cmd_proxy_studio_check(
         return 0
 
     raise typer.Exit(asyncio.run(_run()))
+
+
+def _chrome_channel_warnings() -> list[str]:
+    """Non-fatal hints when channel=chrome but system Chrome is missing."""
+    chrome_bin = shutil_which("google-chrome-stable") or shutil_which("google-chrome")
+    if chrome_bin:
+        return []
+    hints: list[str] = []
+    if settings.browser_vnc_channel == "chrome":
+        hints.append(
+            "BROWSER_VNC_CHANNEL=chrome, но google-chrome-stable не найден — "
+            "пересоберите образ (INSTALL_GOOGLE_CHROME=1) или переключите канал на chromium"
+        )
+    if settings.playwright_studio_channel == "chrome":
+        hints.append(
+            "PLAYWRIGHT_STUDIO_CHANNEL=chrome, но google-chrome-stable не найден — "
+            "пересоберите образ или установите скрипт install_google_chrome_bookworm.sh"
+        )
+    return hints
 
 
 def shutil_which(cmd: str) -> str | None:
