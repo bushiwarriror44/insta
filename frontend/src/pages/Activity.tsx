@@ -393,7 +393,24 @@ export function Activity() {
         }
       >
         {jobs.length === 0 ? (
-          <EmptyState>Нет задач по выбранному фильтру.</EmptyState>
+          <EmptyState
+            title={jobStatus ? "Нет задач с этим статусом" : "Задач пока нет"}
+            action={
+              jobStatus ? (
+                <button type="button" className="btn-ghost text-sm" onClick={() => selectJobStatus("")}>
+                  Показать все статусы
+                </button>
+              ) : (
+                <Link to="/publishing" className="btn-primary text-sm">
+                  В библиотеку
+                </Link>
+              )
+            }
+          >
+            {jobStatus
+              ? "Сбросьте фильтр или выберите другой статус."
+              : "Добавьте публикацию из библиотеки или с главной — задачи появятся здесь."}
+          </EmptyState>
         ) : (
           <div className="table-scroll">
           <table className="table-base">
@@ -524,7 +541,16 @@ export function Activity() {
       ) : lane === "renders" ? (
         <Card title="Рендеры">
           {renders.length === 0 ? (
-            <EmptyState>Нет рендеров.</EmptyState>
+            <EmptyState
+              title="Нет рендеров"
+              action={
+                <Link to="/renders#renders-new-form" className="btn-primary text-sm">
+                  Новый рендер
+                </Link>
+              }
+            >
+              Поставьте рендер на странице «Рендеры» — прогресс смотрите там и здесь.
+            </EmptyState>
           ) : (
             <ul className="text-sm space-y-2">
               {renders.map((g) => (
@@ -539,7 +565,16 @@ export function Activity() {
       ) : (
         <Card title="Склейки">
           {joins.length === 0 ? (
-            <EmptyState>Нет склеек.</EmptyState>
+            <EmptyState
+              title="Нет склеек"
+              action={
+                <Link to="/renders#renders-join-block" className="btn-primary text-sm">
+                  Новая склейка
+                </Link>
+              }
+            >
+              Соберите ролик из клипов на странице «Рендеры».
+            </EmptyState>
           ) : (
             <ul className="text-sm space-y-2">
               {joins.map((g) => (
@@ -572,7 +607,20 @@ export function Activity() {
         }
       >
         {events.length === 0 ? (
-          <EmptyState>Событий нет.</EmptyState>
+          <EmptyState
+            title="Событий нет"
+            action={
+              eventLevel ? (
+                <button type="button" className="btn-ghost text-sm" onClick={() => setEventLevel("")}>
+                  Все уровни
+                </button>
+              ) : undefined
+            }
+          >
+            {eventLevel
+              ? "Нет событий с выбранным уровнем — расширьте фильтр."
+              : "Журнал пуст — события появятся при работе воркера и публикациях."}
+          </EmptyState>
         ) : (
           <ul className="divide-y divide-slate-800">
             {events.map((ev) => {

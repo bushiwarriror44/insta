@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEve
 import { fetchMediaObjectUrl, formatBytes, formatDuration, revokeMediaObjectUrl } from "../api/media";
 import type { VideoOut } from "../api/types";
 import { useHotkeys } from "../hooks/useHotkeys";
+import { EmptyState } from "./EmptyState";
 
 function MediaThumb({ item }: { item: VideoOut }) {
   const [url, setUrl] = useState<string | null>(null);
@@ -119,6 +120,8 @@ interface Props {
   onDownloadArchive: () => void;
   onQuickPublish: (item: VideoOut) => void;
   quickPublishDisabled?: boolean;
+  /** Anchor id on the page (e.g. upload card) for “scroll to upload” CTA when the grid is empty */
+  emptyUploadAnchorId?: string;
 }
 
 export function MediaLibraryGrid({
@@ -136,6 +139,7 @@ export function MediaLibraryGrid({
   onDownloadArchive,
   onQuickPublish,
   quickPublishDisabled,
+  emptyUploadAnchorId,
 }: Props) {
   const filtered = items.filter((item) => {
     if (item.media_type !== tab) return false;
@@ -224,10 +228,33 @@ export function MediaLibraryGrid({
       ) : null}
 
       {filtered.length === 0 ? (
-        <div className="text-sm text-slate-500 py-8 text-center rounded-xl border border-dashed border-slate-800">
-          {tab === "video"
-            ? "Видео пока нет — перетащите готовые Reels (.mp4) выше."
-            : "Фото пока нет — загрузите .jpg / .png / .webp."}
+        <div className="rounded-xl border border-dashed border-slate-800">
+          <EmptyState
+            title={tab === "video" ? "Видео ещё нет" : "Фото ещё нет"}
+            compact
+            action={
+              search.trim() || emptyUploadAnchorId ? (
+                <>
+                  {search.trim() ? (
+                    <button type="button" className="btn-ghost text-xs py-1" onClick={() => onSearchChange("")}>
+                      Сбросить поиск
+                    </button>
+                  ) : null}
+                  {emptyUploadAnchorId ? (
+                    <a href={`#${emptyUploadAnchorId}`} className="btn-primary text-xs py-1">
+                      К загрузке
+                    </a>
+                  ) : null}
+                </>
+              ) : undefined
+            }
+          >
+            {search.trim()
+              ? "Нет файлов по этому запросу — поправьте поиск или сбросьте его."
+              : tab === "video"
+                ? "Перетащите готовые Reels (.mp4) в область загрузки выше."
+                : "Загрузите изображения .jpg, .png или .webp."}
+          </EmptyState>
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 gap-3 max-h-[32rem] overflow-y-auto pr-1">

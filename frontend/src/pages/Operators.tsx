@@ -133,7 +133,9 @@ export function Operators() {
             ) : rows.length === 0 ? (
               <tr>
                 <td colSpan={5}>
-                  <EmptyState>Операторов пока нет</EmptyState>
+                  <EmptyState title="Операторов пока нет">
+                    Создайте пароль оператора формой выше — он появится в таблице.
+                  </EmptyState>
                 </td>
               </tr>
             ) : (

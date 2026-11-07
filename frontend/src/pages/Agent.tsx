@@ -192,7 +192,7 @@ export function Agent() {
         <h2 className="font-medium mb-3">Процесс агента</h2>
         <AgentToggle />
       </Card>
-      <Card>
+      <Card id="agent-account-brief" className="scroll-mt-6">
         <label className="text-sm">
           Аккаунт
           <select
@@ -322,10 +322,16 @@ export function Agent() {
           </button>
         </div>
       </Card>
-      <Card>
+      <Card id="agent-sources" className="scroll-mt-6">
         <h2 className="font-medium">Источники</h2>
         <div className="flex gap-2">
-          <input className="input" placeholder="https://…" value={sourceValue} onChange={(e) => setSourceValue(e.target.value)} />
+          <input
+            id="agent-source-url"
+            className="input"
+            placeholder="https://…"
+            value={sourceValue}
+            onChange={(e) => setSourceValue(e.target.value)}
+          />
           <button
             className="btn-ghost shrink-0"
             disabled={!selectedId || !sourceValue.trim()}
@@ -344,7 +350,24 @@ export function Agent() {
             Добавить
           </button>
         </div>
-        {sources.length === 0 ? <EmptyState>пока пусто</EmptyState> : null}
+        {sources.length === 0 ? (
+          <EmptyState
+            title="Источников пока нет"
+            action={
+              <button
+                type="button"
+                className="btn-ghost text-xs py-1.5"
+                onClick={() =>
+                  document.getElementById("agent-source-url")?.scrollIntoView({ behavior: "smooth", block: "center" })
+                }
+              >
+                К полю URL
+              </button>
+            }
+          >
+            Добавьте URL в поле выше — источники появятся в списке.
+          </EmptyState>
+        ) : null}
         <ul className="text-sm space-y-2">
           {sources.map((s) => (
             <li key={s.id} className="flex items-center gap-2 text-slate-400">
@@ -455,7 +478,7 @@ export function Agent() {
           ))}
         </Card>
       ) : null}
-      <Card>
+      <Card id="agent-runs" className="scroll-mt-6">
         <h2 className="font-medium mb-3">Прогоны</h2>
         {busy ? <Loader label="Загрузка..." /> : null}
         <div className="table-scroll">
@@ -474,7 +497,23 @@ export function Agent() {
             {runs.length === 0 ? (
               <tr>
                 <td colSpan={6}>
-                  <EmptyState>пока пусто</EmptyState>
+                  <EmptyState
+                    title="Прогонов пока нет"
+                    compact
+                    action={
+                      <button
+                        type="button"
+                        className="btn-primary text-xs py-1.5"
+                        onClick={() =>
+                          document.getElementById("agent-account-brief")?.scrollIntoView({ behavior: "smooth", block: "start" })
+                        }
+                      >
+                        К брифу и плану
+                      </button>
+                    }
+                  >
+                    Запланируйте идеи для выбранного аккаунта — история прогонов появится здесь.
+                  </EmptyState>
                 </td>
               </tr>
             ) : null}

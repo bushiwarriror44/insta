@@ -198,7 +198,16 @@ export function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card title="Сегодня по аккаунтам" className="lg:col-span-1">
           {data.daily_stats.length === 0 ? (
-            <EmptyState>Сегодня активности пока нет.</EmptyState>
+            <EmptyState
+              title="Сегодня активности нет"
+              action={
+                <Link to="/publishing" className="btn-primary text-sm">
+                  В библиотеку
+                </Link>
+              }
+            >
+              Когда ролики уйдут в публикацию, здесь появятся посты и сбои по аккаунтам.
+            </EmptyState>
           ) : (
             <ul className="divide-y divide-slate-800">
               {data.daily_stats.map((row) => (
@@ -231,7 +240,16 @@ export function Dashboard() {
 
         <Card title="Последние события" className="lg:col-span-2">
           {data.recent_events.length === 0 ? (
-            <EmptyState>Событий пока нет.</EmptyState>
+            <EmptyState
+              title="Событий пока нет"
+              action={
+                <Link to="/activity" className="btn-primary text-sm">
+                  Открыть активность
+                </Link>
+              }
+            >
+              Полный журнал — на странице «Активность».
+            </EmptyState>
           ) : (
             <ul className="divide-y divide-slate-800">
               {data.recent_events.map((ev) => {

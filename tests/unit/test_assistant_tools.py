@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.assistant.chat import run_tool
+from app.assistant.chat import _browser_target_from_start, _cards_block_from_list, _upsert_card_block
 from app.assistant.tools import ToolError, list_accounts, open_page, pause_account, plan_account
 from app.db.models import (
     AccountStatus,
@@ -318,6 +319,48 @@ def test_list_accounts_includes_passwords(db_session, make_account):
     assert rows
     assert rows[0]["password"] == "hunter2"
     assert "session_id" in rows[0]
+
+
+def test_cards_block_from_list_tools():
+    accounts = [
+        {
+            "id": 3,
+            "username": "alice",
+            "platform": "instagram",
+            "status": "active",
+            "proxy_label": "de-1",
+            "proxy_country": "DE",
+            "proxy_geo_country": "DE",
+            "password": "secret",
+        }
+    ]
+    block = _cards_block_from_list("list_accounts", accounts)
+    assert block is not None
+    assert block["kind"] == "accounts"
+    assert block["items"][0]["username"] == "alice"
+    assert block["items"][0]["proxy_country"] == "DE"
+    assert "password" not in block["items"][0]
+
+    renders = [{"id": 9, "prompt": "fog", "status": "queued", "backend": "fal"}]
+    merged = _upsert_card_block(
+        [block],
+        _cards_block_from_list("list_renders", renders) or {},
+    )
+    kinds = {b["kind"] for b in merged}
+    assert kinds == {"accounts", "renders"}
+
+
+def test_browser_target_from_start_tool_result():
+    out = _browser_target_from_start(
+        {"username": "alice", "platform": "instagram", "proxy_label": "res-1", "login_surface": "mobile"}
+    )
+    assert out == {
+        "username": "alice",
+        "platform": "instagram",
+        "proxy_label": "res-1",
+        "login_surface": "mobile",
+    }
+    assert _browser_target_from_start({"ошибка": "нет"}) is None
 
 
 def test_account_details_includes_secrets(db_session, make_account):

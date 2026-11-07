@@ -184,10 +184,13 @@ export function Renders() {
 
   useEffect(() => {
     if (backendDefaultApplied.current || backends.length === 0) return;
+    // Only pick fal while the user has not chosen an engine yet. If they picked local
+    // before backends loaded, do not override when the list arrives.
+    if (backend !== "auto") return;
     backendDefaultApplied.current = true;
     const fal = backends.find((item) => item.name === "fal" && item.healthy);
     if (fal) setBackend("fal");
-  }, [backends]);
+  }, [backends, backend]);
 
   useEffect(() => {
     if (backend !== "local") return;
@@ -437,7 +440,7 @@ export function Renders() {
   return (
     <div className="space-y-6">
       <PageHeader icon={Clapperboard} title="Рендеры и склейки" />
-      <Card className="!overflow-visible">
+      <Card id="renders-new-form" className="!overflow-visible scroll-mt-6">
         <div className="space-y-1">
           <h2 className="font-medium">Новый рендер</h2>
           <p className="text-sm text-slate-400">
@@ -788,7 +791,23 @@ export function Renders() {
             {gens.length === 0 ? (
               <tr>
                 <td colSpan={8}>
-                  <EmptyState>пока пусто</EmptyState>
+                  <EmptyState
+                    title="Рендеров пока нет"
+                    compact
+                    action={
+                      <button
+                        type="button"
+                        className="btn-primary text-xs py-1.5"
+                        onClick={() =>
+                          document.getElementById("renders-new-form")?.scrollIntoView({ behavior: "smooth", block: "start" })
+                        }
+                      >
+                        К форме нового рендера
+                      </button>
+                    }
+                  >
+                    Поставьте первый рендер в форме выше.
+                  </EmptyState>
                 </td>
               </tr>
             ) : null}
@@ -851,7 +870,7 @@ export function Renders() {
         </table>
         </div>
       </Card>
-      <Card>
+      <Card id="renders-join-block" className="scroll-mt-6">
         <h2 className="font-medium">Склейки</h2>
         <div className="space-y-3">
           {joinRows.map((row, index) => {
@@ -969,7 +988,23 @@ export function Renders() {
             {joins.length === 0 ? (
               <tr>
                 <td colSpan={5}>
-                  <EmptyState>пока пусто</EmptyState>
+                  <EmptyState
+                    title="Склеек пока нет"
+                    compact
+                    action={
+                      <button
+                        type="button"
+                        className="btn-ghost text-xs py-1.5"
+                        onClick={() =>
+                          document.getElementById("renders-join-block")?.scrollIntoView({ behavior: "smooth", block: "start" })
+                        }
+                      >
+                        К блоку склейки
+                      </button>
+                    }
+                  >
+                    Выберите ролики и нажмите «Склеить».
+                  </EmptyState>
                 </td>
               </tr>
             ) : null}

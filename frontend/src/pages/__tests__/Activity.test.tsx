@@ -358,7 +358,7 @@ describe("Activity page", () => {
     apiMock.jobs.list.mockResolvedValue([]);
     apiMock.events.list.mockResolvedValue([]);
     renderActivity();
-    await screen.findByText(/нет задач по выбранному фильтру/i);
+    await screen.findByText(/задач пока нет/i);
     expect(screen.getByText(/событий нет/i)).toBeInTheDocument();
   });
 

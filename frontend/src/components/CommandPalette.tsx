@@ -22,6 +22,7 @@ import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { showAssistant } from "../lib/uiEvents";
 import type { AccountOut, JobOut, VideoOut } from "../api/types";
+import { EmptyState } from "./EmptyState";
 
 interface Command {
   label: string;
@@ -192,7 +193,9 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
         />
         <ul className="max-h-80 overflow-y-auto py-1">
           {commands.length === 0 ? (
-            <li className="px-4 py-3 text-sm text-slate-500">Ничего с таким названием.</li>
+            <li className="list-none">
+              <EmptyState compact>Ничего с таким названием.</EmptyState>
+            </li>
           ) : (
             commands.map((command, i) => {
               const Icon = command.icon;

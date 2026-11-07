@@ -122,7 +122,7 @@ describe("Dashboard page", () => {
       summary({ daily_stats: [], recent_events: [] })
     );
     renderDashboard();
-    await screen.findByText(/сегодня активности пока нет/i);
+    await screen.findByText(/сегодня активности нет/i);
     expect(screen.getByText(/событий пока нет/i)).toBeInTheDocument();
   });
 

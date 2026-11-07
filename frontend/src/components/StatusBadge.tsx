@@ -18,6 +18,9 @@ import type { LucideIcon } from "lucide-react";
 const STYLES: Record<string, string> = {
   active: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30",
   paused: "bg-slate-500/15 text-slate-300 ring-slate-500/30",
+  starting: "bg-sky-500/15 text-sky-300 ring-sky-500/30",
+  saved: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30",
+  stopped: "bg-slate-600/20 text-slate-400 ring-slate-500/25",
   challenge: "bg-amber-500/15 text-amber-300 ring-amber-500/30",
   blocked: "bg-rose-500/15 text-rose-300 ring-rose-500/30",
   cooldown: "bg-orange-500/15 text-orange-300 ring-orange-500/30",
@@ -40,6 +43,9 @@ const STYLES: Record<string, string> = {
 const LABELS: Record<string, string> = {
   active: "Активен",
   paused: "Пауза",
+  starting: "Запуск…",
+  saved: "Сохранено",
+  stopped: "Остановлен",
   challenge: "Челлендж",
   blocked: "Заблокирован",
   cooldown: "Пауза IG",
@@ -62,6 +68,9 @@ const LABELS: Record<string, string> = {
 const ICONS: Record<string, LucideIcon> = {
   active: CheckCircle2,
   paused: Pause,
+  starting: Loader2,
+  saved: CheckCircle2,
+  stopped: Pause,
   challenge: Shield,
   blocked: Ban,
   cooldown: Thermometer,
@@ -84,6 +93,7 @@ const ICONS: Record<string, LucideIcon> = {
 export function StatusBadge({ value }: { value: string }) {
   const key = value.toLowerCase();
   const Icon = ICONS[key];
+  const spin = key === "running" || key === "starting";
   return (
     <span
       className={clsx(
@@ -93,7 +103,7 @@ export function StatusBadge({ value }: { value: string }) {
     >
       {Icon ? (
         <Icon
-          className={clsx("h-3 w-3 shrink-0", key === "running" && "animate-spin")}
+          className={clsx("h-3 w-3 shrink-0", spin && "animate-spin")}
           aria-hidden
         />
       ) : null}

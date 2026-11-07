@@ -288,6 +288,14 @@ export function Accounts() {
     },
     [setSearchParams]
   );
+
+  const openAddProxyFlow = useCallback(() => {
+    selectMainTab("proxies");
+    window.setTimeout(() => {
+      setOpenProxy(true);
+      document.getElementById("proxies-card")?.scrollIntoView({ block: "start", behavior: "smooth" });
+    }, 0);
+  }, [selectMainTab]);
   const runProxyCheckBatch = useCallback(
     async (labels?: string[]) => {
       const target = labels?.length ? labels : proxies.map((p) => p.label);
@@ -619,9 +627,17 @@ export function Accounts() {
         }
       >
         {proxies.length === 0 ? (
-          <EmptyState>Прокси пока нет.</EmptyState>
+          <EmptyState title="Прокси пока нет">
+            Создайте прокси, затем назначьте его аккаунту. Кнопка «Добавить прокси» — вверху страницы.
+          </EmptyState>
         ) : shownProxies.length === 0 ? (
-          <EmptyState>
+          <EmptyState
+            action={
+              <button type="button" className="btn-ghost text-sm" onClick={() => setProxyFilter("")}>
+                Сбросить фильтр
+              </button>
+            }
+          >
             {proxyFilter === "bad" ? "Недоступных прокси нет." : "Нет прокси с этим фильтром."}
           </EmptyState>
         ) : (
@@ -830,9 +846,26 @@ export function Accounts() {
           }
         >
           {proxies.length === 0 ? (
-            <EmptyState>Прокси пока нет.</EmptyState>
+            <EmptyState
+              title="Нет прокси для проверки"
+              action={
+                <button type="button" className="btn-primary text-sm" onClick={() => openAddProxyFlow()}>
+                  Добавить прокси
+                </button>
+              }
+            >
+              Сначала добавьте прокси во вкладке «Прокси».
+            </EmptyState>
           ) : shownCheckProxies.length === 0 ? (
-            <EmptyState>Нет прокси с этим фильтром.</EmptyState>
+            <EmptyState
+              action={
+                <button type="button" className="btn-ghost text-sm" onClick={() => setProxyCheckFilter("")}>
+                  Сбросить фильтр
+                </button>
+              }
+            >
+              Нет прокси с этим фильтром.
+            </EmptyState>
           ) : (
             <div className="table-scroll">
               <table className="table-base" data-testid="proxy-check-table">
@@ -1080,9 +1113,24 @@ export function Accounts() {
         }
       >
         {accounts.length === 0 ? (
-          <EmptyState>Аккаунтов пока нет.</EmptyState>
+          <EmptyState title="Аккаунтов пока нет">
+            Создайте аккаунт и привяжите к нему прокси. Кнопка «Добавить аккаунт» — вверху страницы.
+          </EmptyState>
         ) : shownAccounts.length === 0 ? (
-          <EmptyState>
+          <EmptyState
+            action={
+              <button
+                type="button"
+                className="btn-ghost text-sm"
+                onClick={() => {
+                  if (statusFilter) setStatusFilter("");
+                  else setAccountQuery("");
+                }}
+              >
+                {statusFilter ? "Сбросить фильтр статуса" : "Сбросить поиск"}
+              </button>
+            }
+          >
             {statusFilter ? "Нет аккаунтов с этим статусом." : "Никого не нашлось."}
           </EmptyState>
         ) : (
@@ -1818,10 +1866,12 @@ function AddAccountModal({
             <div>
               <label className="label">Прокси</label>
               {proxies.length === 0 ? (
-                <div className="flex items-center gap-2 text-sm text-amber-300">
-                  <ShieldOff size={16} />
-                  <span>Нет прокси. Сначала добавьте.</span>
-                </div>
+                <EmptyState title="Прокси нет" compact>
+                  <span className="inline-flex items-center justify-center gap-2 text-amber-300">
+                    <ShieldOff size={16} className="shrink-0" aria-hidden />
+                    Нет прокси. Сначала добавьте прокси на вкладке «Прокси».
+                  </span>
+                </EmptyState>
               ) : (
                 <select
                   className="input"
@@ -3169,10 +3219,12 @@ function AssignProxyModal({
         <div>
           <label className="label">Прокси</label>
           {proxies.length === 0 ? (
-            <div className="flex items-center gap-2 text-sm text-amber-300">
-              <ShieldOff size={16} />
-              <span>Нет прокси. Сначала добавьте.</span>
-            </div>
+            <EmptyState title="Прокси нет" compact>
+              <span className="inline-flex items-center justify-center gap-2 text-amber-300">
+                <ShieldOff size={16} className="shrink-0" aria-hidden />
+                Нет прокси. Сначала добавьте прокси на вкладке «Прокси».
+              </span>
+            </EmptyState>
           ) : (
             <div className="space-y-2">
               <div className="flex gap-2">

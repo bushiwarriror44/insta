@@ -14,7 +14,12 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { api, formatApiError } from "../api/client";
 import type { GpuLogsOut, GpuOut, LlmGatewayCredentialsOut } from "../api/types";
 import { GpuConnectBar } from "./GpuConnectBar";
-import { ask, type AskField, type AssistantMessageAttachment } from "../api/assistant";
+import {
+  ask,
+  type AskField,
+  type AssistantCardKind,
+  type AssistantMessageAttachment,
+} from "../api/assistant";
 import { mediaApiPath } from "../api/media";
 import {
   generationFromStep,
@@ -46,8 +51,20 @@ import { SHOW_ASSISTANT } from "../lib/uiEvents";
 import { retryGenerationOnLocal } from "../lib/pollGeneration";
 import { usePollWhenVisible } from "../hooks/usePollWhenVisible";
 import { RenderLocalSwitchModal, type LocalSwitchOffer } from "./RenderLocalSwitchModal";
+import { AssistantDockWelcome } from "./AssistantDockWelcome";
+import { AssistantMessageBody } from "./AssistantMessageBody";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { Modal } from "./Modal";
 import { copyTextToClipboard } from "./DiagnosticLogPanel";
+import {
+  AssistantCards,
+  LIST_CARD_TOOL_NAMES,
+  mergeCardBlocks,
+  type ChatBrowserTarget,
+} from "./AssistantCards";
+import { AssistantCardsSkeleton } from "./AssistantCardsSkeleton";
+import type { AssistantCardBlock } from "../api/assistant";
+import { InstagramBrowserPanel } from "./InstagramBrowserPanel";
 
 type DockTab = "agent" | "api" | "mcp";
 
@@ -191,6 +208,7 @@ interface Said {
   steps?: string[];
   cut?: string;
   wires?: string[];
+  cards?: AssistantCardBlock[];
 }
 
 function Reason({ text, live }: { text: string; live: boolean }) {
@@ -277,7 +295,29 @@ interface Live {
   progressDetail: string | null;
   activeGeneration: ActiveGeneration | null;
   wires: string[];
+  cards: AssistantCardBlock[];
+  cardsSkeleton: AssistantCardKind | null;
+  streamError: { detail: string; retryable: boolean } | null;
 }
+
+function listToolCardKind(name: string | null | undefined): AssistantCardKind | null {
+  if (name === "list_accounts") return "accounts";
+  if (name === "list_renders") return "renders";
+  if (name === "list_clips") return "clips";
+  return null;
+}
+
+const CARD_ANNOUNCE: Record<AssistantCardKind, string> = {
+  accounts: "аккаунты",
+  renders: "рендеры",
+  clips: "библиотека",
+};
+
+const CARD_LOADING_LABEL: Record<AssistantCardKind, string> = {
+  accounts: "аккаунты",
+  renders: "рендеры",
+  clips: "медиа в библиотеке",
+};
 
 function emptyLive(): Live {
   return {
@@ -299,6 +339,9 @@ function emptyLive(): Live {
     progressDetail: null,
     activeGeneration: null,
     wires: [],
+    cards: [],
+    cardsSkeleton: null,
+    streamError: null,
   };
 }
 
@@ -518,6 +561,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const thinkRef = useRef<Record<string, string>>({});
   const doingRef = useRef<Record<string, string[]>>({});
   const wireRef = useRef<Record<string, string[]>>({});
+  const cardsRef = useRef<Record<string, AssistantCardBlock[]>>({});
   const stops = useRef<Record<string, AbortController>>({});
   const busyIds = useRef(new Set<string>());
   const chatsRef = useRef(chats);
@@ -525,7 +569,8 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   chatsRef.current = chats;
   activeRef.current = activeId;
   const [groups, setGroups] = useState<PromptGroup[]>(() => library([]));
-  const { role, authRequired } = useAuth();
+  const { role, authRequired, state: authState } = useAuth();
+  const adminToken = authState.state === "authed" ? authState.token : null;
   const { push: toast } = useToast();
   const owner = role === "owner";
   const canGateway = !authRequired || owner;
@@ -543,6 +588,12 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const [hidden, setHidden] = useState(readHidden);
   const [localSwitchOffer, setLocalSwitchOffer] = useState<LocalSwitchOffer | null>(null);
   const [localSwitchBusy, setLocalSwitchBusy] = useState(false);
+  const [chatBrowserAccount, setChatBrowserAccount] = useState<ChatBrowserTarget | null>(null);
+  const [chatBrowserRunning, setChatBrowserRunning] = useState(false);
+  const [browserCloseConfirmOpen, setBrowserCloseConfirmOpen] = useState(false);
+  const [gatewayRotateConfirmOpen, setGatewayRotateConfirmOpen] = useState(false);
+  const [cardsAnnouncement, setCardsAnnouncement] = useState("");
+  const lastBrowserButtonRef = useRef<HTMLButtonElement | null>(null);
   const [draftAttachments, setDraftAttachments] = useState<UserAttachment[]>([]);
   const [logsOpen, setLogsOpen] = useState(false);
   const [logs, setLogs] = useState<GpuLogsOut | null>(null);
@@ -672,7 +723,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   }, []);
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, opts?: { retry?: boolean }) => {
       const question = text.trim();
       const id = activeRef.current;
       const chat = chatsRef.current.find((item) => item.id === id);
@@ -682,29 +733,38 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         role: role ?? "start_image",
         previewUrl,
       }));
-      if ((!question && attachments.length === 0) || !chat || busyIds.current.has(id)) return;
-      const userLine = question || "Сделай ролик по вложенному изображению (image_to_video).";
-      const asked: Said[] = [
-        ...chat.messages,
-        {
-          role: "user",
-          content: userLine,
-          attachments: attachments.length ? attachments : undefined,
-        },
-      ];
+      const isRetry = Boolean(opts?.retry);
+      if ((!isRetry && !question && attachments.length === 0) || !chat || busyIds.current.has(id)) return;
+      const userLine =
+        question ||
+        (isRetry
+          ? (chat.messages.filter((m) => m.role === "user").pop()?.content ?? "")
+          : "") ||
+        "Сделай ролик по вложенному изображению (image_to_video).";
+      const asked: Said[] = isRetry
+        ? [...chat.messages]
+        : [
+            ...chat.messages,
+            {
+              role: "user",
+              content: userLine,
+              attachments: attachments.length ? attachments : undefined,
+            },
+          ];
       const notes: Said[] = [];
       const pushStatus = (line: string) => {
         if (notes.some((item) => item.content === line)) return;
         notes.push({ role: "assistant", content: line });
         replaceMessages(id, [...asked, ...notes]);
       };
-      replaceMessages(id, asked);
+      if (!isRetry) replaceMessages(id, asked);
       setDraft("");
       setDraftAttachments([]);
       writingRef.current[id] = "";
       thinkRef.current[id] = "";
       doingRef.current[id] = [];
       wireRef.current[id] = [];
+      cardsRef.current[id] = [];
       patchLive(id, {
         note: null,
         asks: [],
@@ -723,6 +783,9 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         progressText: null,
         progressDetail: null,
         activeGeneration: null,
+        cards: [],
+        cardsSkeleton: null,
+        streamError: null,
       });
       setBrowsing(false);
       setReadingManual(false);
@@ -795,11 +858,29 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
               }
             } else if (step.type === "tool") {
               doingRef.current[id] = [...(doingRef.current[id] ?? []), step.text];
+              const skeletonKind = listToolCardKind(step.name);
               patchLive(id, {
                 doing: doingRef.current[id],
                 doingName: step.name ?? null,
                 progressText: null,
                 progressDetail: null,
+                ...(step.name && LIST_CARD_TOOL_NAMES.has(step.name) && skeletonKind
+                  ? { cardsSkeleton: skeletonKind }
+                  : {}),
+              });
+            } else if (step.type === "cards") {
+              const merged = mergeCardBlocks(cardsRef.current[id] ?? [], step.cards ?? []);
+              cardsRef.current[id] = merged;
+              setLive((prev) => {
+                const current = prev[id] ?? emptyLive();
+                return {
+                  ...prev,
+                  [id]: {
+                    ...current,
+                    cards: merged,
+                    cardsSkeleton: null,
+                  },
+                };
               });
             } else if (step.type === "think") {
               thinkRef.current[id] = (thinkRef.current[id] ?? "") + step.text;
@@ -852,10 +933,19 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                   },
                 ]);
               }
+              patchLive(id, {
+                streamError: step.retryable ? { detail: "", retryable: true } : null,
+                cardsSkeleton: null,
+              });
             } else if (step.type === "done") {
               answered = true;
               const thinking = (step.thinking || thinkRef.current[id] || "").trim();
               const reply = onlyMediaPhrase(step.reply) ? FORMAT_LINE : step.reply;
+              const finalCards = mergeCardBlocks(cardsRef.current[id] ?? [], step.cards ?? []);
+              if (finalCards.length) {
+                const names = finalCards.map((b) => CARD_ANNOUNCE[b.kind] ?? b.kind).join(", ");
+                setCardsAnnouncement(`Списки в ответе: ${names}`);
+              }
               replaceMessages(id, [
                 ...asked,
                 ...notes,
@@ -867,6 +957,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                   thinking: thinking || undefined,
                   wires: (wireRef.current[id] ?? []).length ? wireRef.current[id] : undefined,
                   cut: step.cut || undefined,
+                  cards: finalCards.length ? finalCards : undefined,
                 },
               ]);
               if (step.asks?.length || step.fields?.length) {
@@ -902,6 +993,22 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
               if (step.offer_local_switch) {
                 setLocalSwitchOffer(step.offer_local_switch);
               }
+              const target = step.browser_target;
+              if (
+                owner &&
+                allowBrowserRun &&
+                target?.username &&
+                target.proxy_label &&
+                step.used?.includes("start_browser")
+              ) {
+                setChatBrowserAccount({
+                  username: target.username,
+                  platform: target.platform ?? "instagram",
+                  proxy_label: target.proxy_label,
+                  login_surface: target.login_surface ?? null,
+                });
+              }
+              patchLive(id, { streamError: null, cardsSkeleton: null });
             }
           },
           controller.signal,
@@ -932,6 +1039,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         thinkRef.current[id] = "";
         doingRef.current[id] = [];
         wireRef.current[id] = [];
+        cardsRef.current[id] = [];
         patchLive(id, {
           busy: false,
           writing: "",
@@ -940,6 +1048,8 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
           doingName: null,
           pending: [],
           wires: [],
+          cards: [],
+          cardsSkeleton: null,
           ...(keepProgress ? {} : { progressText: null, progressDetail: null }),
         });
         if (activeRef.current === id) box.current?.focus();
@@ -996,9 +1106,36 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const note = view.note;
   const progressText = view.progressText;
   const liveWires = view.wires ?? [];
+  const liveCards = view.cards ?? [];
+  const cardsSkeleton = view.cardsSkeleton;
+  const streamError = view.streamError;
+  const lastThreadMsg = thread[thread.length - 1];
+  const lastSavedCards =
+    lastThreadMsg?.role === "assistant" ? Boolean(lastThreadMsg.cards?.length) : false;
+  const showLiveCards = busy && liveCards.length > 0 && !lastSavedCards;
+  const showCardsSkeleton = busy && Boolean(cardsSkeleton) && liveCards.length === 0;
   const progressDetail = view.progressDetail;
   const activeGeneration = view.activeGeneration;
   const anyBusy = Object.values(live).some((item) => item.busy);
+
+  const navigateFromChat = useCallback(
+    (path: string) => openInPlace(navigate, path),
+    [navigate]
+  );
+
+  const openChatBrowser = useCallback(
+    (target: ChatBrowserTarget, trigger?: HTMLElement | null) => {
+      if (!target.proxy_label) {
+        toast("Сначала назначьте прокси аккаунту", "error");
+        return;
+      }
+      if (trigger instanceof HTMLButtonElement) {
+        lastBrowserButtonRef.current = trigger;
+      }
+      setChatBrowserAccount(target);
+    },
+    [toast]
+  );
 
   useEffect(() => {
     if (!chat?.id || !activeGeneration) return;
@@ -1319,15 +1456,34 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   };
 
   const regenerateGatewayKey = () => {
-    if (
-      !window.confirm(
-        "Перегенерировать ключ? Старые клиенты (Cursor и др.) сразу перестанут подключаться."
-      )
-    ) {
-      return;
-    }
+    setGatewayRotateConfirmOpen(true);
+  };
+
+  const confirmGatewayRotate = () => {
+    setGatewayRotateConfirmOpen(false);
     void loadGateway({ rotate: true });
   };
+
+  const closeBrowserSession = useCallback(() => {
+    setChatBrowserAccount(null);
+    setChatBrowserRunning(false);
+    setBrowserCloseConfirmOpen(false);
+    window.setTimeout(() => lastBrowserButtonRef.current?.focus(), 0);
+  }, []);
+
+  const requestBrowserClose = useCallback(() => {
+    if (chatBrowserRunning) {
+      setBrowserCloseConfirmOpen(true);
+      return;
+    }
+    closeBrowserSession();
+  }, [chatBrowserRunning, closeBrowserSession]);
+
+  useEffect(() => {
+    if (!cardsAnnouncement) return;
+    const t = window.setTimeout(() => setCardsAnnouncement(""), 4000);
+    return () => window.clearTimeout(t);
+  }, [cardsAnnouncement]);
 
   const formatActivityAt = (iso: string) => {
     const d = new Date(iso);
@@ -1409,6 +1565,11 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
           >
             {anyBusy ? <ThinkingSparkle quiet /> : <Sparkle size={16} className="text-sky-300" />}
             <span>Агент</span>
+            {anyBusy ? (
+              <span className="sr-only" aria-live="polite">
+                печатает
+              </span>
+            ) : null}
           </button>
         </div>
       </div>
@@ -1417,8 +1578,8 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
 
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 md:left-60">
-      <div className="pointer-events-auto mx-auto w-full max-w-3xl px-3 pb-3 sm:px-4 sm:pb-4">
-        <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950/95 shadow-xl backdrop-blur">
+      <div className="pointer-events-auto mx-auto w-full max-w-none px-3 pb-3 sm:max-w-3xl sm:px-4 sm:pb-4">
+        <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/95 shadow-xl backdrop-blur sm:rounded-xl">
         {canGateway ? (
           <div
             className="flex items-center gap-1 border-b border-slate-800/80 px-2 pt-2"
@@ -1592,10 +1753,13 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
           <>
         {open && (
           <div
-            className="max-h-[55vh] space-y-3 overflow-y-auto p-4"
+            className="max-h-[min(70vh,28rem)] space-y-3 overflow-y-auto overscroll-contain p-4"
             role="log"
             aria-label="Разговор"
           >
+            <p className="sr-only" aria-live="polite" aria-atomic="true">
+              {cardsAnnouncement}
+            </p>
             {thread.map((message, n) => (
               <div
                 key={n}
@@ -1619,18 +1783,17 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                   <Reason text={message.thinking} live={false} />
                 ) : null}
                 {message.content ? (
-                  <p
-                    className={
-                      message.role === "user"
-                        ? "text-sm text-slate-300"
-                        : "whitespace-pre-wrap text-sm text-slate-100"
-                    }
-                  >
-                    {message.role === "user" && (
+                  message.role === "user" ? (
+                    <p className="text-sm text-slate-300">
                       <span className="mr-2 text-[10px] uppercase tracking-wide text-slate-500">вы</span>
-                    )}
-                    {message.content}
-                  </p>
+                      {message.content}
+                    </p>
+                  ) : (
+                    <AssistantMessageBody
+                      content={message.content}
+                      onCopyToast={(ok) => toast(ok ? "Скопировано" : "Не удалось скопировать", ok ? "success" : "error")}
+                    />
+                  )
                 ) : null}
                 {message.role === "user" && message.attachments?.length ? (
                   <div className="mt-2 flex flex-wrap gap-2">
@@ -1673,6 +1836,14 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
                     ))}
                   </div>
                 )}
+                {message.role === "assistant" && message.cards?.length ? (
+                  <AssistantCards
+                    blocks={message.cards}
+                    onNavigate={navigateFromChat}
+                    onOpenAccount={(accountId) => navigateFromChat(`/accounts?id=${accountId}`)}
+                    onOpenBrowser={openChatBrowser}
+                  />
+                ) : null}
                 </div>
               </div>
             ))}
@@ -1680,6 +1851,22 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
               <div className="mb-2">
                 <RenderProgressCard job={activeGeneration} />
               </div>
+            ) : null}
+            {showCardsSkeleton ? (
+              <>
+                <p className="text-xs text-slate-500" role="status">
+                  Загружаю {cardsSkeleton ? CARD_LOADING_LABEL[cardsSkeleton] : "списки"}…
+                </p>
+                <AssistantCardsSkeleton kind={cardsSkeleton} />
+              </>
+            ) : null}
+            {showLiveCards ? (
+              <AssistantCards
+                blocks={liveCards}
+                onNavigate={navigateFromChat}
+                onOpenAccount={(accountId) => navigateFromChat(`/accounts?id=${accountId}`)}
+                onOpenBrowser={openChatBrowser}
+              />
             ) : null}
             {busy && liveWires.length ? <WireList lines={liveWires} /> : null}
             {busy ? (
@@ -1823,6 +2010,15 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         )}
 
         <div className={clsx("p-3", open && "border-t border-slate-800/80")}>
+          {!open && !busy && dockTab === "agent" ? (
+            <div className="mb-3">
+              <AssistantDockWelcome
+                allowBrowserRun={owner && allowBrowserRun}
+                onPick={(message) => void send(message)}
+                onOpenManual={() => setReadingManual(true)}
+              />
+            </div>
+          ) : null}
           <div className="mb-2 flex items-center gap-1 overflow-x-auto" role="tablist" aria-label="Чаты">
             <button
               type="button"
@@ -1895,6 +2091,35 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
           <div className="mb-2">
             <GpuConnectBar gpu={gpuPull} includeReady />
           </div>
+          {streamError?.retryable && !busy ? (
+            <div
+              className="mb-2 flex justify-end gap-2 rounded-lg border border-rose-900/40 bg-rose-950/20 px-3 py-2"
+              data-testid="assistant-stream-retry"
+            >
+              <button
+                type="button"
+                className="btn-primary min-h-9 text-xs"
+                aria-label="Повторить последний запрос без нового сообщения в чате"
+                title="Повторит тот же запрос; новое сообщение «вы» не добавится"
+                onClick={() => {
+                  if (!chat?.id) return;
+                  setChats((prev) =>
+                    prev.map((item) => {
+                      if (item.id !== chat.id) return item;
+                      const msgs = [...item.messages];
+                      const last = msgs[msgs.length - 1];
+                      if (last?.role === "assistant") msgs.pop();
+                      return { ...item, messages: msgs };
+                    })
+                  );
+                  patchLive(chat.id, { streamError: null });
+                  void send("", { retry: true });
+                }}
+              >
+                Повторить запрос
+              </button>
+            </div>
+          ) : null}
           {!busy ? (
             <p data-testid="assistant-page-hint" className="mb-2 px-1 text-xs text-slate-500">
               {pageHint(page)}
@@ -2224,6 +2449,57 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
         onCancel={cancelLocalSwitch}
         onConfirm={() => void confirmLocalSwitch()}
       />
+      <ConfirmDialog
+        open={browserCloseConfirmOpen}
+        title="Закрыть браузер?"
+        body="Активная VNC-сессия может прерваться."
+        confirmLabel="Закрыть браузер"
+        cancelLabel="Остаться"
+        danger
+        onConfirm={closeBrowserSession}
+        onCancel={() => setBrowserCloseConfirmOpen(false)}
+      />
+      <ConfirmDialog
+        open={gatewayRotateConfirmOpen}
+        title="Перегенерировать ключ?"
+        body="Старые клиенты (Cursor и др.) сразу перестанут подключаться."
+        confirmLabel="Перегенерировать"
+        cancelLabel="Отмена"
+        danger
+        onConfirm={confirmGatewayRotate}
+        onCancel={() => setGatewayRotateConfirmOpen(false)}
+      />
+      <Modal
+        open={chatBrowserAccount !== null}
+        onClose={requestBrowserClose}
+        onBeforeClose={() => {
+          if (chatBrowserRunning) {
+            setBrowserCloseConfirmOpen(true);
+            return false;
+          }
+          return true;
+        }}
+        closeOnBackdrop={!chatBrowserRunning}
+        trapFocus
+        title={`Браузер · @${chatBrowserAccount?.username ?? ""}`}
+        widthClass="max-w-5xl"
+      >
+        {chatBrowserAccount ? (
+          <InstagramBrowserPanel
+            username={chatBrowserAccount.username}
+            adminToken={adminToken}
+            platform={
+              chatBrowserAccount.platform === "youtube" || chatBrowserAccount.platform === "tiktok"
+                ? chatBrowserAccount.platform
+                : "instagram"
+            }
+            hasProxy={Boolean(chatBrowserAccount.proxy_label)}
+            loginSurface={chatBrowserAccount.login_surface === "desktop" ? "desktop" : "mobile"}
+            onSessionSaved={() => emitAssistantMutate()}
+            onRunningChange={setChatBrowserRunning}
+          />
+        ) : null}
+      </Modal>
       {logsOpen ? (
         <div className="pointer-events-auto">
           <Modal

@@ -139,7 +139,9 @@ export function Maintenance() {
             Снять копию
           </button>
         </div>
-        {backups.length === 0 ? <EmptyState>пока пусто</EmptyState> : null}
+        {backups.length === 0 ? (
+          <EmptyState title="Бэкапов пока нет">Создайте копию через кнопку выше.</EmptyState>
+        ) : null}
         <ul className="text-sm space-y-2">
           {backups.map((b) => (
             <li

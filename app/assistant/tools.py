@@ -2968,6 +2968,8 @@ def start_browser(
     return {
         "username": account.username,
         "platform": _account_platform(account),
+        "proxy_label": proxy.label if proxy else None,
+        "login_surface": resolved,
         "status": status.get("status"),
         "awaiting_code": status.get("awaiting_code"),
         "page_url": status.get("page_url"),
@@ -3775,6 +3777,8 @@ def _account_public(account: Account) -> dict[str, Any]:
         "session_id": account.session_id,
         "proxy_label": proxy.label if proxy is not None else None,
         "proxy_url": proxy.url if proxy is not None else None,
+        "proxy_country": proxy.country if proxy is not None else None,
+        "proxy_geo_country": proxy.last_geo_country if proxy is not None else None,
     }
 
 

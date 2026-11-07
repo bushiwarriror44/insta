@@ -1,6 +1,8 @@
 import { X } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useId, useRef } from "react";
 import type { ReactNode } from "react";
+
+import { useFocusTrap } from "../hooks/useFocusTrap";
 
 interface Props {
   open: boolean;
@@ -9,6 +11,14 @@ interface Props {
   children: ReactNode;
   footer?: ReactNode;
   widthClass?: string;
+  /** When false, backdrop click does nothing (default true). */
+  closeOnBackdrop?: boolean;
+  /** When false, Escape does not close (default true). */
+  closeOnEscape?: boolean;
+  /** Return false to block close (e.g. confirm). */
+  onBeforeClose?: () => boolean;
+  trapFocus?: boolean;
+  role?: "dialog";
 }
 
 export function Modal({
@@ -18,31 +28,53 @@ export function Modal({
   children,
   footer,
   widthClass = "max-w-lg",
+  closeOnBackdrop = true,
+  closeOnEscape = true,
+  onBeforeClose,
+  trapFocus = false,
+  role = "dialog",
 }: Props) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  useFocusTrap(panelRef, open && trapFocus);
+
+  const requestClose = () => {
+    if (onBeforeClose && onBeforeClose() === false) return;
+    onClose();
+  };
+
   useEffect(() => {
-    if (!open) return;
+    if (!open || !closeOnEscape) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") requestClose();
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [open, onClose]);
+  }, [open, closeOnEscape]);
 
   if (!open) return null;
 
   return (
     <div
       className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-      onMouseDown={onClose}
+      onMouseDown={closeOnBackdrop ? requestClose : undefined}
+      aria-hidden={false}
     >
       <div
+        ref={panelRef}
+        role={role}
+        aria-modal="true"
+        aria-labelledby={titleId}
         className={`card w-full ${widthClass} max-h-[90vh] overflow-y-auto`}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <header className="flex items-center justify-between gap-2 px-5 py-4 border-b border-slate-800">
-          <h3 className="text-base font-semibold">{title}</h3>
+          <h3 id={titleId} className="text-base font-semibold">
+            {title}
+          </h3>
           <button
-            onClick={onClose}
+            type="button"
+            onClick={requestClose}
             className="text-slate-400 hover:text-white"
             aria-label="Закрыть"
           >

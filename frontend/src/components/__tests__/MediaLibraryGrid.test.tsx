@@ -40,6 +40,7 @@ const baseProps = {
   onClearChecked: () => {},
   onDownloadArchive: () => {},
   onQuickPublish: () => {},
+  archiveBusy: false,
 };
 
 describe("MediaLibraryGrid", () => {
@@ -102,6 +103,34 @@ describe("MediaLibraryGrid", () => {
     expect(screen.getByText(/выбрано: 1/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /скачать zip/i }));
     expect(onDownloadArchive).toHaveBeenCalled();
+  });
+
+  it("shows upload CTA when filtered list is empty and anchor is set", () => {
+    render(
+      <MediaLibraryGrid
+        {...baseProps}
+        items={[]}
+        selectedFilename={null}
+        emptyUploadAnchorId="publishing-upload"
+      />
+    );
+    expect(screen.getByText("Видео ещё нет")).toBeInTheDocument();
+    const link = screen.getByRole("link", { name: /к загрузке/i });
+    expect(link).toHaveAttribute("href", "#publishing-upload");
+  });
+
+  it("offers reset search when filter matches nothing", () => {
+    const onSearchChange = vi.fn();
+    render(
+      <MediaLibraryGrid
+        {...baseProps}
+        search="nope"
+        onSearchChange={onSearchChange}
+        emptyUploadAnchorId="upload"
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: /сбросить поиск/i }));
+    expect(onSearchChange).toHaveBeenCalledWith("");
   });
 
   it("moves selection to the next video on j", () => {

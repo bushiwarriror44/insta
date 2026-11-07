@@ -73,6 +73,6 @@ describe("toolHint", () => {
   it("explains create_render fal vs Salad hours", () => {
     expect(toolHint("create_render")).toMatch(/0\.05/i);
     expect(toolHint("create_render")).toMatch(/salad/i);
-    expect(toolHint("diagnose")).toMatch(/stop/i);
+    expect(toolHint("diagnose")).toMatch(/остановк/i);
   });
 });

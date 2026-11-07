@@ -33,8 +33,23 @@ export type AssistantChatMessage = {
   attachments?: AssistantMessageAttachment[];
 };
 
+export type AssistantCardKind = "accounts" | "renders" | "clips";
+
+export type AssistantCardBlock = {
+  kind: AssistantCardKind;
+  items: Array<Record<string, unknown>>;
+};
+
+export type AssistantBrowserTarget = {
+  username: string;
+  platform?: string;
+  proxy_label?: string | null;
+  login_surface?: string | null;
+};
+
 export type AssistantStep =
   | { type: "tool"; text: string; name?: string }
+  | { type: "cards"; cards: AssistantCardBlock[] }
   | { type: "token"; text: string }
   | { type: "think"; text: string }
   | { type: "image"; text: string }
@@ -59,6 +74,8 @@ export type AssistantStep =
       thinking?: string;
       cut?: string;
       offer_local_switch?: { job_id: number; message: string } | null;
+      cards?: AssistantCardBlock[];
+      browser_target?: AssistantBrowserTarget | null;
     }
     | { type: "status"; text: string }
     | { type: "progress"; text: string; detail?: string; ratio?: number; name?: string }

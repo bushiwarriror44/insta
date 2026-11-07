@@ -48,7 +48,7 @@ describe("ToastContext", () => {
       result.current.push("kill me", "error");
     });
     expect(screen.getByText("kill me")).toBeInTheDocument();
-    const closeBtn = screen.getByRole("button", { name: /close/i });
+    const closeBtn = screen.getByRole("button", { name: /закрыть/i });
     act(() => {
       fireEvent.click(closeBtn);
     });

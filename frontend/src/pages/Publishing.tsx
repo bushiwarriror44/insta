@@ -1,6 +1,6 @@
 import { BarChart3, Clapperboard, Layers, Library, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { api, formatApiError } from "../api/client";
 import { Card } from "../components/Card";
@@ -597,7 +597,7 @@ export function Publishing() {
         </div>
       </Card>
 
-      <Card title="Загрузка в библиотеку">
+      <Card id="publishing-upload" title="Загрузка в библиотеку">
         <DropZone
           accept="video/mp4,video/quicktime,video/x-m4v,image/jpeg,image/png,image/webp"
           disabled={uploading}
@@ -688,6 +688,7 @@ export function Publishing() {
             onDownloadArchive={downloadSelectedArchive}
             onQuickPublish={quickPublish}
             quickPublishDisabled={saving || accounts.length === 0}
+            emptyUploadAnchorId="publishing-upload"
           />
         </Card>
 
@@ -714,7 +715,16 @@ export function Publishing() {
 
       <Card title="Статистика опубликованных медиа" description={`${publications.length} записей`}>
         {publications.length === 0 ? (
-          <EmptyState>Публикаций пока нет.</EmptyState>
+          <EmptyState
+            title="Публикаций пока нет"
+            action={
+              <Link to="/publishing#publishing-upload" className="btn-primary text-sm">
+                Загрузить медиа
+              </Link>
+            }
+          >
+            После публикации запись появится здесь с просмотрами и лайками.
+          </EmptyState>
         ) : (
           <div className="table-scroll">
           <table className="table-base">

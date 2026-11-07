@@ -24,6 +24,9 @@ describe("StatusBadge", () => {
 
     rerender(<StatusBadge value="challenge" />);
     expect(screen.getByText("Челлендж").className).toMatch(/amber/);
+
+    rerender(<StatusBadge value="starting" />);
+    expect(screen.getByText("Запуск…").className).toMatch(/sky/);
   });
 
   it("uses neutral fallback for unknown values", () => {

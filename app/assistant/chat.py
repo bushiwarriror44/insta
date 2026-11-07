@@ -59,6 +59,13 @@ URL прокси, токен владельца, содержимое файло
 
 Просят показать страницу, клип, публикацию, аккаунт или прокси — открывай \
 инструментом `open_*` / `open_page` и коротко скажи, что открыл. \
+На русском: «покажи аккаунты» / «какие аккаунты» — `list_accounts` и упомяни, \
+что интерактивный список появится под ответом в чате. «Покажи рендеры» / \
+«страницу рендеров» — `list_renders` и при необходимости `open_page` «Рендеры». \
+«Покажи список видео/роликов» без уточнения — вызови **и** `list_renders`, \
+**и** `list_clips` (kind video): в ответе разведи «очередь рендеров» и \
+«файлы в библиотеке». Если просят именно библиотеку или загруженные файлы — \
+`list_clips`; если очередь генерации — `list_renders`. \
 `screenshot_page` и `page_guide` не вызывай, пока оператор не попросил снимок \
 или другую страницу.
 
@@ -1066,6 +1073,62 @@ def _prepare_runtime(settings: Settings) -> None:
         )
 
 
+_ACCOUNT_CARD_KEYS = (
+    "id",
+    "username",
+    "platform",
+    "status",
+    "proxy_label",
+    "proxy_country",
+    "proxy_geo_country",
+)
+_RENDER_CARD_KEYS = ("id", "prompt", "status", "backend", "asset_id", "last_error")
+_CLIP_CARD_KEYS = ("id", "filename", "label", "prompt", "seconds", "source", "on_disk")
+
+_CARD_TOOL_KINDS: dict[str, str] = {
+    "list_accounts": "accounts",
+    "list_renders": "renders",
+    "list_clips": "clips",
+}
+
+
+def _pick_card_fields(row: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
+    return {key: row[key] for key in keys if key in row}
+
+
+def _cards_block_from_list(
+    name: str, result: Any, tool_args: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
+    kind = _CARD_TOOL_KINDS.get(name)
+    if kind is None:
+        return None
+    if not isinstance(result, list):
+        return None
+    key_tuple = {
+        "accounts": _ACCOUNT_CARD_KEYS,
+        "renders": _RENDER_CARD_KEYS,
+        "clips": _CLIP_CARD_KEYS,
+    }[kind]
+    items: list[dict[str, Any]] = []
+    for row in result:
+        if not isinstance(row, dict):
+            continue
+        item = _pick_card_fields(row, key_tuple)
+        if kind == "clips" and item:
+            clip_kind = str((tool_args or {}).get("kind") or "video").strip().lower()
+            item["media_type"] = "image" if clip_kind == "image" else "video"
+        if item:
+            items.append(item)
+    return {"kind": kind, "items": items}
+
+
+def _upsert_card_block(cards: list[dict[str, Any]], block: dict[str, Any]) -> list[dict[str, Any]]:
+    kind = block.get("kind")
+    rest = [c for c in cards if c.get("kind") != kind]
+    rest.append(block)
+    return rest
+
+
 @dataclass
 class Answer:
     reply: str
@@ -1079,6 +1142,24 @@ class Answer:
     thinking: str = ""
     cut: str = ""
     offer_local_switch: dict[str, Any] | None = None
+    cards: list[dict[str, Any]] = field(default_factory=list)
+    browser_target: dict[str, Any] | None = None
+
+
+def _browser_target_from_start(result: Any) -> dict[str, Any] | None:
+    if not isinstance(result, dict) or result.get("ошибка"):
+        return None
+    username = str(result.get("username") or "").strip()
+    if not username:
+        return None
+    proxy_label = result.get("proxy_label")
+    login_surface = result.get("login_surface")
+    return {
+        "username": username,
+        "platform": str(result.get("platform") or "instagram"),
+        "proxy_label": str(proxy_label) if proxy_label else None,
+        "login_surface": str(login_surface) if login_surface else None,
+    }
 
 
 def run_tool(
@@ -1708,6 +1789,7 @@ class Step:
     name: str = ""
     ratio: float | None = None
     detail: str = ""
+    cards: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _generation_step_detail(job: Any) -> str:
@@ -2115,6 +2197,8 @@ def stream(
     created = _empty_created()
     asked: set[tuple[str, str]] = set()
     last_operator_message: str | None = None
+    cards: list[dict[str, Any]] = []
+    browser_target: dict[str, Any] | None = None
 
     with http_client(
         settings,
@@ -2181,6 +2265,8 @@ def stream(
                     created=created,
                     thinking="\n".join(thoughts),
                     cut=cut,
+                    cards=list(cards),
+                    browser_target=browser_target,
                 )
                 return
 
@@ -2263,6 +2349,14 @@ def stream(
                             "content": _render(result),
                         }
                     )
+                    card_block = _cards_block_from_list(work_name, result, work_args)
+                    if card_block is not None:
+                        cards = _upsert_card_block(cards, card_block)
+                        yield Step(kind="cards", text="", cards=list(cards))
+                    if work_name == "start_browser":
+                        bt = _browser_target_from_start(result)
+                        if bt is not None:
+                            browser_target = bt
                     if work_name in ("create_render", "generate_wan") and isinstance(
                         result, dict
                     ):
@@ -2311,6 +2405,8 @@ def stream(
                             fields=fields,
                             form_kind=form_kind,
                             created=created,
+                            cards=list(cards),
+                            browser_target=browser_target,
                         )
                         return
                     if isinstance(result, dict) and result.get("offer_local_switch"):
@@ -2326,6 +2422,8 @@ def stream(
                             images=images,
                             created=created,
                             offer_local_switch={"job_id": job_id, "message": msg},
+                            cards=list(cards),
+                            browser_target=browser_target,
                         )
                         return
 
@@ -2335,6 +2433,8 @@ def stream(
         used=used,
         images=images,
         created=created,
+        cards=list(cards),
+        browser_target=browser_target,
     )
 
 

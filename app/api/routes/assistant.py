@@ -64,6 +64,8 @@ class AssistantOut(BaseModel):
     images: list[str] = []
     asks: list[str] = []
     created: dict[str, list[int]] = Field(default_factory=lambda: {"accounts": [], "proxies": []})
+    cards: list[dict] = Field(default_factory=list)
+    browser_target: Optional[dict] = None
 
 
 def _ensure_user_turn(messages: list[AssistantMessage]) -> None:
@@ -115,6 +117,8 @@ def _answer_out(answer: Answer) -> AssistantOut:
         images=answer.images,
         asks=answer.asks,
         created=answer.created,
+        cards=answer.cards,
+        browser_target=answer.browser_target,
     )
 
 
@@ -183,12 +187,16 @@ def talk_streaming(
                         "thinking": step.thinking,
                         "cut": step.cut,
                         "offer_local_switch": step.offer_local_switch,
+                        "cards": step.cards,
+                        "browser_target": step.browser_target,
                     }
                     if step.form_kind:
                         done_payload["form_kind"] = step.form_kind
                     yield _event(done_payload)
                 elif isinstance(step, Step):
                     payload_step: dict = {"type": step.kind, "text": step.text}
+                    if step.cards:
+                        payload_step["cards"] = step.cards
                     if step.questions:
                         payload_step["questions"] = step.questions
                     if step.fields:

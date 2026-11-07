@@ -37,6 +37,12 @@ describe("DiagnosticLogPanel", () => {
     expect(screen.getByText("No logs")).toBeInTheDocument();
   });
 
+  it("hides inner copy toolbar when showHeaderCopy is false", () => {
+    render(<DiagnosticLogPanel lines={sampleLines} showHeaderCopy={false} />);
+    expect(screen.queryByRole("button", { name: /копировать/i })).not.toBeInTheDocument();
+    expect(screen.getByText("Проверка сессии Instagram")).toBeInTheDocument();
+  });
+
   it("renders log lines with level badge", () => {
     render(
       <DiagnosticLogPanel

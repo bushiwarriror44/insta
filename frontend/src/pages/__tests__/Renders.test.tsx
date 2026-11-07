@@ -88,6 +88,11 @@ function renderRenders(initialEntry = "/renders") {
   );
 }
 
+/** Page defaults to fal when healthy; tests that expect local must select the local chip first. */
+function selectLocalBackend() {
+  fireEvent.click(screen.getByRole("button", { name: /^local/i }));
+}
+
 describe("Renders page", () => {
   beforeEach(() => {
     Object.values(apiMock.accounts).forEach((fn) => fn.mockReset());
@@ -105,6 +110,7 @@ describe("Renders page", () => {
   it("queues a render without an account and links the toast to /renders?gen=", async () => {
     renderRenders();
     await screen.findByText("Ridge");
+    selectLocalBackend();
     fireEvent.change(screen.getByPlaceholderText("Промпт"), { target: { value: "fog over ridge" } });
     fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
     await waitFor(() =>
@@ -127,6 +133,7 @@ describe("Renders page", () => {
   it("queues a render with Ctrl+Enter", async () => {
     renderRenders();
     await screen.findByText("Ridge");
+    selectLocalBackend();
     const prompt = screen.getByPlaceholderText("Промпт");
     fireEvent.change(prompt, { target: { value: "fog over ridge" } });
     fireEvent.keyDown(prompt, { key: "Enter", ctrlKey: true });
@@ -153,6 +160,7 @@ describe("Renders page", () => {
     });
     renderRenders();
     await screen.findByText("Ridge");
+    selectLocalBackend();
     const file = new File([new Uint8Array([1, 2, 3])], "bed.mp3", { type: "audio/mpeg" });
     fireEvent.change(screen.getByLabelText("Своя дорожка"), { target: { files: [file] } });
     expect(await screen.findByRole("button", { name: /^убрать$/i })).toBeInTheDocument();
@@ -174,6 +182,7 @@ describe("Renders page", () => {
   it("sends no soundtrack when sound is turned off", async () => {
     renderRenders();
     await screen.findByText("Ridge");
+    selectLocalBackend();
     fireEvent.click(screen.getByRole("checkbox", { name: /добавить звук/i }));
     fireEvent.change(screen.getByPlaceholderText("Промпт"), { target: { value: "silent ridge" } });
     fireEvent.click(screen.getByRole("button", { name: /поставить рендер/i }));
@@ -198,6 +207,7 @@ describe("Renders page", () => {
   it("sends the chosen frame size and duration", async () => {
     renderRenders();
     await screen.findByText("Ridge");
+    selectLocalBackend();
     fireEvent.change(screen.getByRole("combobox", { name: "Размер кадра" }), {
       target: { value: "16:9" },
     });
@@ -231,7 +241,8 @@ describe("Renders page", () => {
     const duration = screen.getByRole("combobox", { name: "Длительность" });
     expect(within(duration).queryByRole("option", { name: "15 с" })).toBeNull();
     expect(within(duration).getByRole("option", { name: "60 с" })).toBeInTheDocument();
-    expect(screen.getByText(/собирает из сегментов wan/i)).toBeInTheDocument();
+    fireEvent.change(duration, { target: { value: "60" } });
+    expect(screen.getByText(/несколько проходов Wan \+ склейка/i)).toBeInTheDocument();
   });
 
   it("sends 30 seconds for fal and notes the snap", async () => {
@@ -262,6 +273,7 @@ describe("Renders page", () => {
   it("applies a Reels preset and optional seed", async () => {
     renderRenders();
     await screen.findByText("Ridge");
+    selectLocalBackend();
     fireEvent.change(screen.getByRole("combobox", { name: "Платформа" }), {
       target: { value: "reels" },
     });
@@ -279,8 +291,8 @@ describe("Renders page", () => {
         audio_mode: "generate",
         backend: "local",
         account_id: undefined,
-        width: 1080,
-        height: 1920,
+        width: 720,
+        height: 1280,
         duration_s: 20,
         negative_prompt: "текст, логотип",
         seed: 42,
@@ -292,6 +304,7 @@ describe("Renders page", () => {
     apiMock.accounts.list.mockResolvedValue([account]);
     renderRenders();
     await screen.findByText("Ridge");
+    selectLocalBackend();
     fireEvent.click(screen.getByText("Дополнительно"));
     fireEvent.change(screen.getByRole("combobox", { name: /аккаунт/i }), { target: { value: "1" } });
     fireEvent.change(screen.getByPlaceholderText("Промпт"), { target: { value: "city night" } });
@@ -339,6 +352,7 @@ describe("Renders page", () => {
     ]);
     renderRenders();
     await screen.findByText("Ridge");
+    selectLocalBackend();
     fireEvent.change(screen.getByRole("combobox", { name: /или из библиотеки/i }), {
       target: { value: "still.jpg" },
     });
@@ -371,6 +385,7 @@ describe("Renders page", () => {
     });
     renderRenders();
     await screen.findByText("Ridge");
+    selectLocalBackend();
     const file = new File([new Uint8Array([1, 2, 3])], "paste.png", { type: "image/png" });
     fireEvent.change(screen.getByLabelText(/выбрать файл референса/i), {
       target: { files: [file] },
@@ -405,6 +420,7 @@ describe("Renders page", () => {
     }));
     renderRenders();
     await screen.findByText("Ridge");
+    selectLocalBackend();
     const first = new File([new Uint8Array([1])], "one.jpg", { type: "image/jpeg" });
     const second = new File([new Uint8Array([2])], "two.png", { type: "image/png" });
     fireEvent.change(screen.getByLabelText(/выбрать файл референса/i), {
@@ -434,6 +450,7 @@ describe("Renders page", () => {
     }));
     renderRenders();
     await screen.findByText("Ridge");
+    selectLocalBackend();
     const first = new File([new Uint8Array([1])], "clip-a.png", { type: "image/png" });
     const second = new File([new Uint8Array([2])], "clip-b.png", { type: "image/png" });
     fireEvent.paste(screen.getByLabelText("Описание видео"), {

@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useEffect } from "react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -60,6 +61,22 @@ vi.mock("../../api/client", () => ({
 
 vi.mock("../../api/assistant", () => ({
   ask: vi.fn(),
+}));
+
+vi.mock("../InstagramBrowserPanel", () => ({
+  InstagramBrowserPanel: ({
+    username,
+    onRunningChange,
+  }: {
+    username: string;
+    onRunningChange?: (running: boolean) => void;
+  }) => {
+    useEffect(() => {
+      onRunningChange?.(true);
+      return () => onRunningChange?.(false);
+    }, [onRunningChange]);
+    return <div data-testid="chat-browser-panel">VNC {username}</div>;
+  },
 }));
 
 const askMock = vi.mocked(ask);
@@ -229,6 +246,131 @@ describe("Assistant", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("sends a welcome chip prompt", async () => {
+    const user = userEvent.setup();
+    renderDock();
+    await user.click(await screen.findByRole("button", { name: /^покажи аккаунты$/i }));
+    await waitFor(() => expect(askMock).toHaveBeenCalled());
+    const lastCall = askMock.mock.calls[askMock.mock.calls.length - 1];
+    const messages = lastCall[0] as Array<{ role: string; content: string }>;
+    expect(messages.some((m) => m.role === "user" && m.content.includes("Покажи аккаунты"))).toBe(true);
+  });
+
+  it("confirms before closing a running browser session", async () => {
+    const cardBlocks = [
+      {
+        kind: "accounts" as const,
+        items: [{ id: 3, username: "alice", platform: "instagram", status: "active", proxy_label: "res-1" }],
+      },
+    ];
+    askMock.mockImplementationOnce(async (_messages, onStep) => {
+      onStep({
+        type: "done",
+        reply: "ок",
+        open_url: null,
+        opened: null,
+        used: [],
+        images: [],
+        cards: cardBlocks,
+      });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "привет");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    await user.click(await screen.findByRole("button", { name: /^браузер$/i }));
+    expect(screen.getByTestId("chat-browser-panel")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^закрыть$/i }));
+    expect(screen.getByRole("button", { name: /закрыть браузер/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /остаться/i }));
+    expect(screen.getByTestId("chat-browser-panel")).toBeInTheDocument();
+  });
+
+  it("shows cards skeleton while list_accounts tool runs", async () => {
+    askMock.mockImplementationOnce(async (_messages, onStep) => {
+      onStep({ type: "tool", text: "Смотрю аккаунты", name: "list_accounts" });
+      await new Promise((r) => setTimeout(r, 50));
+      onStep({
+        type: "cards",
+        cards: [{ kind: "accounts", items: [{ id: 1, username: "a", status: "active", proxy_label: "p" }] }],
+      });
+      onStep({
+        type: "done",
+        reply: "Готово",
+        open_url: null,
+        opened: null,
+        used: ["list_accounts"],
+        images: [],
+        cards: [{ kind: "accounts", items: [{ id: 1, username: "a", status: "active", proxy_label: "p" }] }],
+      });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "аккаунты");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect(await screen.findByTestId("assistant-cards-skeleton")).toBeInTheDocument();
+    expect(await screen.findByText("Готово")).toBeInTheDocument();
+    expect(screen.queryByTestId("assistant-cards-skeleton")).not.toBeInTheDocument();
+  });
+
+  it("renders account cards and opens the browser modal", async () => {
+    const cardBlocks = [
+      {
+        kind: "accounts" as const,
+        items: [{ id: 3, username: "alice", platform: "instagram", status: "active", proxy_label: "res-1" }],
+      },
+    ];
+    askMock.mockImplementationOnce(async (_messages, onStep) => {
+      onStep({ type: "cards", cards: cardBlocks });
+      onStep({
+        type: "done",
+        reply: "Список ниже.",
+        open_url: null,
+        opened: null,
+        used: ["list_accounts"],
+        images: [],
+        cards: cardBlocks,
+      });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "покажи аккаунты");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect(await screen.findByText("Список ниже.")).toBeInTheDocument();
+    expect(screen.getByTestId("assistant-cards")).toBeInTheDocument();
+    expect(screen.getByText("@alice")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^браузер$/i }));
+    expect(await screen.findByText(/Браузер · @alice/i)).toBeInTheDocument();
+    expect(screen.getByTestId("chat-browser-panel")).toBeInTheDocument();
+  });
+
+  it("shows renders and clips card sections together", async () => {
+    const cardBlocks = [
+      { kind: "renders" as const, items: [{ id: 1, status: "queued", prompt: "test", backend: "wan" }] },
+      { kind: "clips" as const, items: [{ filename: "a.mp4", media_type: "video" }] },
+    ];
+    askMock.mockImplementationOnce(async (_messages, onStep) => {
+      onStep({
+        type: "done",
+        reply: "Оба списка.",
+        open_url: null,
+        opened: null,
+        used: ["list_renders", "list_clips"],
+        images: [],
+        cards: cardBlocks,
+      });
+    });
+    const user = userEvent.setup();
+    renderDock();
+    await user.type(await screen.findByLabelText(/спросить агента/i), "покажи видео");
+    await user.click(screen.getByRole("button", { name: /^спросить$/i }));
+    expect(await screen.findByText("Оба списка.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Рендеры в очереди")).toBeInTheDocument();
+    expect(screen.getByLabelText("Библиотека")).toBeInTheDocument();
+    expect(screen.getByText("#1")).toBeInTheDocument();
+    expect(screen.getByText("a.mp4")).toBeInTheDocument();
   });
 
   it("shows Salad requests in a connection block", async () => {
@@ -1024,7 +1166,6 @@ describe("Assistant", () => {
         },
       ],
     });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     renderDock();
     await user.click(await screen.findByTestId("assistant-dock-tab-api"));
     expect(await screen.findByTestId("assistant-gateway-recent")).toBeInTheDocument();
@@ -1036,10 +1177,10 @@ describe("Assistant", () => {
     expect(await screen.findByText(/выключен/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /перегенерировать ключ/i }));
-    expect(confirmSpy).toHaveBeenCalled();
+    expect(await screen.findByText(/старые клиенты/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^перегенерировать$/i }));
     await waitFor(() => expect(apiMock.llmGateway.rotate).toHaveBeenCalled());
     expect(screen.getByLabelText("API Key")).toHaveValue("gw-rotated");
-    confirmSpy.mockRestore();
   });
 
   it("hides gateway tabs for operators", async () => {

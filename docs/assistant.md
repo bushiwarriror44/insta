@@ -10,7 +10,7 @@
 | Автономный HTTP | `POST /api/assistant/run` | 12 (`RUN_ROUNDS`) | да |
 | CLI | `python -m app.cli ask "…"` | 12 | да |
 
-Чат UI шлёт `messages` (история), плюс по желанию `page`, `account_id`, `job_id`. Stream — тот же контракт, события SSE. В доке кнопка «Мануал» и подсказка текущего экрана; во время tool-стрима — одно предложение про шаг. SSE `type=tool` несёт `name`.
+Чат UI шлёт `messages` (история), плюс по желанию `page`, `account_id`, `job_id`. Stream — тот же контракт, события SSE. В доке кнопка «Мануал» и подсказка текущего экрана; во время tool-стрима — одно предложение про шаг. SSE `type=tool` несёт `name`. После `list_accounts` / `list_renders` / `list_clips` — `type=cards` (снимок блоков) и поле `cards` в `type=done` (массив `{ kind, items }`). После успешного `start_browser` в `done` может быть `browser_target` (`username`, `platform`, `proxy_label`) — док открывает VNC в run-режиме.
 
 Run шлёт **один** `prompt`, без истории. Страницы панели `open_page` не обязан открывать. Живой Playwright можно стартовать.
 
@@ -90,6 +90,6 @@ Instagram: `first_login` / `mint_mobile_session` работают с парол�
 
 ## Ответ модели
 
-В JSON: `reply`, `used` (какие tools), `asks` (вопросы оператору), `open_url` / `opened`, `images`, `created.accounts` / `created.proxies`. Частичный успех `create_accounts` / `create_proxies`: поля `created` и `failed` — не все строки обязаны пройти.
+В JSON: `reply`, `used` (какие tools), `asks` (вопросы оператору), `open_url` / `opened`, `images`, `created.accounts` / `created.proxies`, `cards` (интерактивные списки в доке). Частичный успех `create_accounts` / `create_proxies`: поля `created` и `failed` — не все строки обязаны пройти.
 
 Дальше: [cli.md](cli.md), [api.md](api.md).

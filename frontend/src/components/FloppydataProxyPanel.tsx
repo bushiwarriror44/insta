@@ -640,9 +640,9 @@ export function FloppydataProxyPanel({
               </button>
             </div>
             {items.length === 0 ? (
-              <p className="text-xs text-slate-500">
-                Пока пусто — «Сгенерировать» создаст строки и сохранит их в пул.
-              </p>
+              <EmptyState title="Строк пока нет" compact>
+                Нажмите «Сгенерировать» — строки появятся здесь и сохранятся в пул.
+              </EmptyState>
             ) : (
               <ul className="max-h-64 space-y-1 overflow-y-auto" data-testid="floppy-proxy-list">
                 {items.map((row, i) => (

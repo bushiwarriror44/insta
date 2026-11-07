@@ -48,6 +48,13 @@ vi.mock("../DiagnosticLogPanel", async () => {
   };
 });
 
+/** Vitest/JSDOM does not apply Tailwind responsive `hidden sm:inline-flex`, so duplicate overflow buttons exist. */
+function primaryToolbarButton(name: RegExp | string) {
+  const matches = screen.getAllByRole("button", { name });
+  const desktop = matches.find((el) => (el as HTMLElement).className.includes("hidden sm:inline-flex"));
+  return (desktop ?? matches[0]) as HTMLElement;
+}
+
 describe("InstagramBrowserPanel", () => {
   beforeEach(() => {
     apiMock.browserSave.mockReset();
@@ -100,6 +107,7 @@ describe("InstagramBrowserPanel", () => {
     expect(await screen.findByText(/Автопереход на Instagram/i)).toBeInTheDocument();
     expect(screen.getByText(/instagram.com\/accounts\/login/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Копировать лог/i })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: /диагностика/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Рилс$/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Лента$/i })).toBeInTheDocument();
     expect(screen.getByText(/Быстрый переход в Instagram/i)).toBeInTheDocument();
@@ -112,7 +120,7 @@ describe("InstagramBrowserPanel", () => {
       </ToastProvider>
     );
 
-    const iframe = await screen.findByTitle(/Браузер Instagram alice/i);
+    const iframe = await screen.findByTitle(/Браузер VNC Instagram · @alice/i);
     const src = iframe.getAttribute("src") ?? "";
     expect(src).toContain("quality=3");
     expect(src).toContain("compression=8");
@@ -187,14 +195,69 @@ describe("InstagramBrowserPanel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /Сохранить сессию/i })).not.toBeDisabled();
+      expect(screen.getByRole("button", { name: /Сохранить сессию и куки/i })).not.toBeDisabled();
     });
-    fireEvent.click(screen.getByRole("button", { name: /Сохранить сессию/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Сохранить сессию и куки/i }));
 
     await waitFor(() => {
       expect(apiMock.browserSave).toHaveBeenCalledWith("alice", { stopAfterSave: false });
       expect(onSessionSaved).toHaveBeenCalled();
     });
+  });
+
+  it("calls browserSave with stopAfterSave when using save and stop", async () => {
+    apiMock.browserSave.mockResolvedValueOnce({
+      username: "alice",
+      status: "stopped",
+      awaiting_code: false,
+      vnc_path: null,
+      session_imported: true,
+      session_id_saved: true,
+      overall_ok: true,
+      connection_test: { overall_ok: true, logs: [] },
+    });
+
+    render(
+      <ToastProvider>
+        <InstagramBrowserPanel username="alice" adminToken="tok" />
+      </ToastProvider>
+    );
+
+    await waitFor(() => {
+      expect(primaryToolbarButton(/Сохранить и остановить/i)).not.toBeDisabled();
+    });
+    fireEvent.click(primaryToolbarButton(/Сохранить и остановить/i));
+
+    await waitFor(() => {
+      expect(apiMock.browserSave).toHaveBeenCalledWith("alice", { stopAfterSave: true });
+    });
+  });
+
+  it("shows Instagram 429 hint when login page returns 429 on about:blank", async () => {
+    apiMock.browserStatus.mockResolvedValue({
+      username: "alice",
+      status: "running",
+      awaiting_code: false,
+      vnc_path: "api/accounts/alice/browser/vnc/ws",
+      page_url: "about:blank",
+      proxy_ip: "1.2.3.4",
+      proxy_instagram_login_http_status: 429,
+      account_username: "alice",
+      account_login: "alice@mail.com",
+      account_password: "secret123",
+      account_notes: null,
+    });
+
+    render(
+      <ToastProvider>
+        <InstagramBrowserPanel username="alice" adminToken="tok" />
+      </ToastProvider>
+    );
+
+    expect(
+      await screen.findByText(/Временное ограничение запросов с IP прокси/i)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/HTTP 429/i)).toBeInTheDocument();
   });
 
   it("shows blank-page warning when running on about:blank without session.warning", async () => {
@@ -260,15 +323,156 @@ describe("InstagramBrowserPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows Studio actions for YouTube, not Instagram quick nav", () => {
+  it("shows Studio actions for YouTube, not Instagram quick nav", async () => {
     render(
       <ToastProvider>
         <InstagramBrowserPanel username="ytuser" adminToken="tok" platform="youtube" />
       </ToastProvider>
     );
 
-    expect(screen.getByRole("button", { name: /Открыть Studio/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Google автозаполнение/i })).toBeInTheDocument();
+    expect(primaryToolbarButton(/Открыть Studio/i)).toBeInTheDocument();
+    expect(primaryToolbarButton(/Google автозаполнение/i)).toBeInTheDocument();
     expect(screen.queryByText(/Быстрый переход в Instagram/i)).not.toBeInTheDocument();
+    expect(
+      await screen.findByTitle(/Браузер VNC YouTube · @ytuser/i)
+    ).toBeInTheDocument();
+  });
+
+  it("hides Instagram proxy reachability lines for YouTube and shows neutral note", async () => {
+    apiMock.browserStatus.mockResolvedValue({
+      username: "ytuser",
+      status: "running",
+      awaiting_code: false,
+      vnc_path: "api/accounts/ytuser/browser/vnc/ws",
+      page_url: "https://studio.youtube.com/",
+      proxy_label: "p1",
+      proxy_ip: "1.1.1.1",
+      proxy_instagram_reachable: true,
+      proxy_instagram_login_reachable: false,
+      proxy_instagram_login_http_status: 403,
+      account_username: "ytuser",
+      account_login: "yt@mail.com",
+      account_password: "x",
+      account_notes: null,
+    });
+
+    render(
+      <ToastProvider>
+        <InstagramBrowserPanel username="ytuser" adminToken="tok" platform="youtube" />
+      </ToastProvider>
+    );
+
+    expect(
+      await screen.findByText(/Проверки Instagram API \/ страницы входа относятся только/i)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Instagram API:/i)).not.toBeInTheDocument();
+  });
+
+  it("shows TikTok autofill label without Google in button text", async () => {
+    render(
+      <ToastProvider>
+        <InstagramBrowserPanel username="ttuser" adminToken="tok" platform="tiktok" />
+      </ToastProvider>
+    );
+
+    await waitFor(() => {
+      expect(primaryToolbarButton(/Открыть Studio/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: /Google автозаполнение/i })).not.toBeInTheDocument();
+    expect(primaryToolbarButton(/Автозаполнение логина/i)).toBeInTheDocument();
+  });
+
+  it("calls browserStatus again when clicking refresh", async () => {
+    const startCalls = apiMock.browserStatus.mock.calls.length;
+    render(
+      <ToastProvider>
+        <InstagramBrowserPanel username="alice" adminToken="tok" />
+      </ToastProvider>
+    );
+
+    const btn = await screen.findByRole("button", { name: /Обновить статус/i });
+    fireEvent.click(btn);
+
+    await waitFor(() => {
+      expect(apiMock.browserStatus.mock.calls.length).toBeGreaterThan(startCalls + 1);
+    });
+  });
+
+  it("shows status row with badge and hint when session is running", async () => {
+    render(
+      <ToastProvider>
+        <InstagramBrowserPanel username="alice" adminToken="tok" />
+      </ToastProvider>
+    );
+
+    expect(await screen.findByText("Сейчас")).toBeInTheDocument();
+    expect(screen.getByText("В работе")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Можно переходить по разделам и сохранять сессию/i)
+    ).toBeInTheDocument();
+  });
+
+  it("shows VNC connecting overlay while status is starting", async () => {
+    apiMock.browserStatus.mockResolvedValueOnce({
+      username: "alice",
+      status: "starting",
+      awaiting_code: false,
+      vnc_path: "api/accounts/alice/browser/vnc/ws",
+      account_username: "alice",
+      account_login: "alice@mail.com",
+      account_password: "secret123",
+      account_notes: null,
+    });
+
+    render(
+      <ToastProvider>
+        <InstagramBrowserPanel username="alice" adminToken="tok" />
+      </ToastProvider>
+    );
+
+    expect(await screen.findByLabelText(/Подключение к VNC/i)).toBeInTheDocument();
+  });
+
+  it("re-enables save cookies after page_url changes post successful save", async () => {
+    let pageUrl = "https://www.instagram.com/a";
+    apiMock.browserStatus.mockImplementation(async () => ({
+      username: "alice",
+      status: "running",
+      awaiting_code: false,
+      vnc_path: "api/accounts/alice/browser/vnc/ws",
+      page_url: pageUrl,
+      account_username: "alice",
+      account_login: "alice@mail.com",
+      account_password: "secret123",
+      account_notes: null,
+    }));
+    apiMock.browserSave.mockResolvedValueOnce({
+      username: "alice",
+      status: "saved",
+      awaiting_code: false,
+      vnc_path: "api/accounts/alice/browser/vnc/ws",
+      session_imported: true,
+      session_id_saved: true,
+      overall_ok: true,
+      connection_test: { overall_ok: true, logs: [] },
+    });
+
+    render(
+      <ToastProvider>
+        <InstagramBrowserPanel username="alice" adminToken="tok" />
+      </ToastProvider>
+    );
+
+    const saveBtn = await screen.findByRole("button", { name: /Сохранить сессию и куки/i });
+    await waitFor(() => expect(saveBtn).not.toBeDisabled());
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => expect(apiMock.browserSave).toHaveBeenCalled());
+    await waitFor(() => expect(saveBtn).toBeDisabled());
+
+    pageUrl = "https://www.instagram.com/b";
+    fireEvent.click(screen.getByRole("button", { name: /Обновить статус/i }));
+
+    await waitFor(() => expect(saveBtn).not.toBeDisabled());
   });
 });

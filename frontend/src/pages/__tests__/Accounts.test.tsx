@@ -1292,7 +1292,7 @@ describe("Accounts page", () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
 
     renderAccounts();
-    await screen.findByText("Аккаунтов пока нет.");
+    await screen.findByText("Аккаунтов пока нет");
     await openProxiesTab();
 
     fireEvent.click(
@@ -1726,7 +1726,7 @@ describe("Accounts page", () => {
     apiMock.proxies.list.mockResolvedValue([]);
     apiMock.accounts.list.mockResolvedValue([]);
     renderAccounts();
-    await screen.findByText("Аккаунтов пока нет.");
+    await screen.findByText("Аккаунтов пока нет");
 
     fireEvent.click(screen.getByRole("button", { name: /добавить аккаунт/i }));
     const heading = await screen.findByRole("heading", { name: /добавить аккаунт/i });

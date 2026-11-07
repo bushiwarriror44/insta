@@ -79,4 +79,27 @@ describe("ask()", () => {
     });
     expect(steps).toEqual([doneEvent]);
   });
+
+  it("forwards cards SSE events before done", async () => {
+    const cardsStep: AssistantStep = {
+      type: "cards",
+      cards: [{ kind: "accounts", items: [{ id: 1, username: "bob", status: "active" }] }],
+    };
+    const steps: AssistantStep[] = [];
+    fetchSpy.mockResolvedValue(
+      new Response(
+        sseStream([
+          `data: ${JSON.stringify(cardsStep)}\n\n`,
+          `data: ${JSON.stringify({ ...doneEvent, cards: cardsStep.cards })}\n\n`,
+        ]),
+        { status: 200, headers: { "content-type": "text/event-stream" } }
+      )
+    );
+    await ask([{ role: "user", content: "привет" }], (step) => {
+      steps.push(step);
+    });
+    expect(steps).toHaveLength(2);
+    expect(steps[0]).toEqual(cardsStep);
+    expect(steps[1].type).toBe("done");
+  });
 });

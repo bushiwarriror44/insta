@@ -133,6 +133,10 @@ interface Props {
   emptyLabel?: string;
   maxHeightClass?: string;
   autoScroll?: boolean;
+  /** Label in the inner toolbar when lines are present (default «Лог»). */
+  headerTitle?: string;
+  /** When false, hide the inner «Копировать» row — use an external copy control. */
+  showHeaderCopy?: boolean;
 }
 
 export function DiagnosticLogPanel({
@@ -140,6 +144,8 @@ export function DiagnosticLogPanel({
   emptyLabel = "Записей в логе пока нет.",
   maxHeightClass = "max-h-56",
   autoScroll = true,
+  headerTitle = "Лог",
+  showHeaderCopy = true,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const [copyStatus, setCopyStatus] = useState<"idle" | "ok" | "fail">("idle");
@@ -163,7 +169,7 @@ export function DiagnosticLogPanel({
 
   if (lines.length === 0) {
     return (
-      <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-4 text-xs text-slate-500">
+      <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-4 text-xs text-slate-500 transition-colors duration-200">
         {emptyLabel}
       </div>
     );
@@ -177,20 +183,24 @@ export function DiagnosticLogPanel({
         : "Копировать";
 
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-950/60 overflow-hidden">
-      <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-slate-800/80 bg-slate-950/80">
-        <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Лог</span>
-        <button
-          type="button"
-          className={`btn-ghost text-[11px] py-0.5 px-2 h-auto ${
-            copyStatus === "fail" ? "text-rose-300" : ""
-          }`}
-          onClick={() => void copyLog()}
-        >
-          <Copy size={12} />
-          {copyLabel}
-        </button>
-      </div>
+    <div className="rounded-lg border border-slate-800 bg-slate-950/60 overflow-hidden transition-colors duration-200">
+      {showHeaderCopy ? (
+        <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-slate-800/80 bg-slate-950/80">
+          <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+            {headerTitle}
+          </span>
+          <button
+            type="button"
+            className={`btn-ghost text-[11px] py-0.5 px-2 h-auto ${
+              copyStatus === "fail" ? "text-rose-300" : ""
+            }`}
+            onClick={() => void copyLog()}
+          >
+            <Copy size={12} />
+            {copyLabel}
+          </button>
+        </div>
+      ) : null}
       <div className={`overflow-y-auto font-mono text-xs ${maxHeightClass}`}>
         <ul className="divide-y divide-slate-800/80">
           {lines.map((line, idx) => (
