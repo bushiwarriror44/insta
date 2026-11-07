@@ -327,6 +327,11 @@ class BrowserSessionOut(BaseModel):
     logs: list[DiagnosticLogLineOut] = Field(default_factory=list)
 
 
+class BrowserFreeStartIn(BaseModel):
+    proxy_label: str = Field(min_length=1, max_length=120)
+    initial_url: str = Field(default="https://www.google.com", max_length=2048)
+
+
 class BrowserCodeIn(BaseModel):
     code: Optional[str] = Field(default=None, max_length=64)
 

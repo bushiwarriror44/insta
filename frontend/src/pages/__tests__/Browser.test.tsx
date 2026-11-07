@@ -7,11 +7,15 @@ import { Browser } from "../Browser";
 
 const apiMock = vi.hoisted(() => ({
   accounts: { list: vi.fn() },
+  proxies: { list: vi.fn() },
 }));
 
 vi.mock("../../api/client", async () => {
   const actual = await vi.importActual<typeof import("../../api/client")>("../../api/client");
-  return { ...actual, api: apiMock };
+  return {
+    ...actual,
+    api: { ...actual.api, accounts: apiMock.accounts, proxies: apiMock.proxies },
+  };
 });
 
 vi.mock("../../context/AuthContext", () => ({
@@ -28,6 +32,10 @@ vi.mock("../../components/LazyInstagramBrowserPanel", () => ({
   ),
 }));
 
+vi.mock("../../components/FreeBrowserPanel", () => ({
+  FreeBrowserPanel: () => <div data-testid="free-browser-panel" />,
+}));
+
 function renderBrowser(path = "/browser") {
   return render(
     <MemoryRouter initialEntries={[path]}>
@@ -40,6 +48,8 @@ function renderBrowser(path = "/browser") {
 
 beforeEach(() => {
   apiMock.accounts.list.mockReset();
+  apiMock.proxies.list.mockReset();
+  apiMock.proxies.list.mockResolvedValue([]);
   localStorage.clear();
 });
 
@@ -99,6 +109,12 @@ describe("Browser page", () => {
     renderBrowser("/browser?username=noproxy");
 
     expect(await screen.findByText("Нужен прокси")).toBeInTheDocument();
+  });
+
+  it("shows free browser mode", async () => {
+    apiMock.accounts.list.mockResolvedValue([]);
+    renderBrowser("/browser?mode=free");
+    expect(await screen.findByTestId("free-browser-panel")).toBeInTheDocument();
   });
 
   it("switches account on click", async () => {

@@ -38,7 +38,10 @@ _FORBIDDEN_CHROME_FLAGS = frozenset(
 
 
 def native_chrome_profile_dir(username: str, platform: str) -> Path:
-    path = settings.playwright_dir / platform / username / "chrome_profile"
+    if username.startswith("adhoc-"):
+        path = settings.playwright_dir / "adhoc" / username / "chrome_profile"
+    else:
+        path = settings.playwright_dir / platform / username / "chrome_profile"
     path.mkdir(parents=True, exist_ok=True)
     return path
 

@@ -17,6 +17,7 @@ from app.api.routes import (
     assistant,
     auth,
     browser,
+    browser_free,
     dashboard,
     diagnostics,
     events,
@@ -149,6 +150,7 @@ def create_app() -> FastAPI:
     app.include_router(dashboard.router)
     app.include_router(accounts.router)
     app.include_router(browser.router)
+    app.include_router(browser_free.router)
     app.include_router(proxies.router)
     app.include_router(floppydata.router)
     app.include_router(hero_sms.router)

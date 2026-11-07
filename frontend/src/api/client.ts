@@ -854,6 +854,23 @@ export const api = {
       ),
   },
 
+  browserFree: {
+    start: (body: { proxy_label: string; initial_url?: string }) =>
+      request<import("./types").BrowserSessionOut>("/api/browser/free/start", {
+        method: "POST",
+        body,
+      }),
+    status: (sessionId: string) =>
+      request<import("./types").BrowserSessionOut>(
+        `/api/browser/free/${encodeURIComponent(sessionId)}/status`
+      ),
+    stop: (sessionId: string) =>
+      request<import("./types").BrowserSessionOut>(
+        `/api/browser/free/${encodeURIComponent(sessionId)}/stop`,
+        { method: "DELETE" }
+      ),
+  },
+
   floppydata: {
     status: () => request<import("./types").FloppydataStatusOut>("/api/floppydata/status"),
     setApiKey: (apiKey: string) =>

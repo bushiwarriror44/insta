@@ -9,7 +9,9 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from types import SimpleNamespace
 from typing import Any, Literal
+from uuid import uuid4
 
 import httpx
 from sqlalchemy.orm import Session
@@ -1014,6 +1016,141 @@ class BrowserSessionManager:
             await self._cleanup_session(session, remove=False)
             raise
 
+    async def start_free_session(
+        self,
+        proxy,
+        *,
+        initial_url: str = "https://www.google.com",
+    ) -> BrowserSessionState:
+        """Native Chrome VNC session without a panel account (adhoc profile)."""
+        if not settings.browser_vnc_enabled:
+            raise RuntimeError(
+                "интерактивный браузер отключён (задайте BROWSER_VNC_ENABLED=true)"
+            )
+        if not vnc_stack_available():
+            raise RuntimeError("Xvfb/x11vnc/websockify не установлены на сервере")
+        if not settings.studio_vnc_native_chrome or resolve_google_chrome_binary() is None:
+            raise RuntimeError(
+                "Свободный браузер требует native Google Chrome "
+                "(STUDIO_VNC_NATIVE_CHROME и google-chrome-stable в образе)"
+            )
+
+        open_url = (initial_url or "").strip() or "https://www.google.com"
+        if not open_url.startswith(("http://", "https://")):
+            raise RuntimeError("Стартовый URL должен начинаться с http:// или https://")
+
+        session_id = f"adhoc-{uuid4().hex[:12]}"
+        fake_account = SimpleNamespace(
+            username=session_id,
+            platform="youtube",
+            login_surface="desktop",
+        )
+        platform_value = "youtube"
+        resolved_surface: LoginSurface = "desktop"
+
+        async with self._lock:
+            active = [
+                s
+                for s in self._sessions.values()
+                if s.status
+                not in (
+                    BrowserSessionStatus.stopped,
+                    BrowserSessionStatus.error,
+                    BrowserSessionStatus.saved,
+                )
+            ]
+            if len(active) >= settings.browser_max_sessions:
+                names = ", ".join(s.username for s in active[:3])
+                raise RuntimeError(
+                    f"Уже открыт браузер ({names}). Закройте его — лимит "
+                    f"{settings.browser_max_sessions} сессия(й) для экономии RAM."
+                )
+
+            display = self._next_display()
+            rfb_port, ws_port = allocate_ports(display)
+            lightweight = settings.browser_lightweight
+            desktop_geometry = _studio_desktop_geometry(platform_value)
+            vnc = VncStack(
+                display=display,
+                rfb_port=rfb_port,
+                ws_port=ws_port,
+                screen=vnc_screen_size(
+                    resolved_surface,
+                    lightweight=lightweight,
+                    desktop_geometry=desktop_geometry,
+                ),
+                lightweight=lightweight,
+            )
+            session = BrowserSessionState(
+                username=session_id,
+                display=display,
+                ws_port=ws_port,
+                vnc_path=f"/api/browser/free/{session_id}/vnc/ws",
+                vnc_stack=vnc,
+                login_surface=resolved_surface,
+                proxy_label=getattr(proxy, "label", None),
+                proxy_url=getattr(proxy, "url", None),
+                proxy_country=getattr(proxy, "country", None),
+                proxy_timezone=normalize_playwright_timezone(
+                    getattr(proxy, "timezone", None),
+                    country=getattr(proxy, "country", None),
+                ),
+            )
+            session.log(
+                "info",
+                "start",
+                f"Свободный браузер (proxy={session.proxy_label}, url={open_url})",
+            )
+            self._sessions[session_id] = session
+
+        try:
+
+            async def _fetch_snapshot():
+                try:
+                    return await asyncio.to_thread(
+                        health_check_cached,
+                        proxy.url,
+                        force=False,
+                        scope=HealthCheckScope.MINIMAL,
+                    )
+                except ProxyError as exc:
+                    session.log("warn", "proxy", f"Предпроверка прокси не удалась: {exc}")
+                    return None
+                except Exception as exc:  # noqa: BLE001
+                    session.log("warn", "proxy", f"Предпроверка прокси: {exc}")
+                    return None
+
+            session.log("info", "vnc", "Старт VNC + предпроверка прокси…")
+            snap, _ = await asyncio.gather(_fetch_snapshot(), vnc.start())
+            if snap is not None:
+                self.apply_proxy_snapshot(session_id, snap)
+                session.log(
+                    "info",
+                    "proxy",
+                    f"Прокси ок ip={session.proxy_ip or '—'}",
+                )
+            session.log("info", "vnc", f"VNC готов (ws_port={ws_port})")
+
+            await self._launch_native_studio_browser(
+                session,
+                fake_account,
+                proxy,
+                platform_value=platform_value,
+                initial_url=open_url,
+            )
+            session.status = BrowserSessionStatus.running
+            session.poll_task = asyncio.create_task(self._poll_session(session, fake_account))
+            timeout_sec = settings.browser_session_timeout_min * 60
+            session.auto_stop_task = asyncio.create_task(self._auto_stop(session_id, timeout_sec))
+            return session
+        except Exception as exc:
+            session.status = BrowserSessionStatus.error
+            session.error = str(exc)
+            session.log("error", "start", f"Ошибка запуска: {exc}")
+            logger.error("browser_session.free_start_failed", username=session_id, error=str(exc))
+            await self._cleanup_session(session, remove=False)
+            raise
+
     async def _launch_native_studio_browser(
         self,
         session: BrowserSessionState,
@@ -1021,9 +1158,13 @@ class BrowserSessionManager:
         proxy,
         *,
         platform_value: str,
+        initial_url: str | None = None,
     ) -> None:
-        urls = _studio_url_ladder(platform_value)
-        initial_url = urls[0] if urls else _YOUTUBE_STUDIO_URL
+        if initial_url:
+            open_url = initial_url.strip()
+        else:
+            urls = _studio_url_ladder(platform_value)
+            open_url = urls[0] if urls else _YOUTUBE_STUDIO_URL
         profile_dir = native_chrome_profile_dir(account.username, platform_value)
         desktop_geometry = _studio_desktop_geometry(platform_value)
         upstream = parse_chrome_upstream(proxy.url)
@@ -1071,7 +1212,7 @@ class BrowserSessionManager:
             user_data_dir=profile_dir,
             proxy_server_value=proxy_server_value,
             display=vnc_stack_display(session),
-            initial_url=initial_url,
+            initial_url=open_url,
             desktop_geometry=desktop_geometry,
         )
         ok, ready_err = await wait_native_chrome_ready(
@@ -1091,8 +1232,8 @@ class BrowserSessionManager:
 
         session.native_chrome_mode = True
         session.native_studio_platform = platform_value
-        session.page_url = initial_url
-        session.last_logged_url = initial_url
+        session.page_url = open_url
+        session.last_logged_url = open_url
         pid = session.native_chrome_proc.pid if session.native_chrome_proc else "—"
         session.log(
             "info",

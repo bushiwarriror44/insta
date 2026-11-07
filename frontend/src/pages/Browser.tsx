@@ -5,6 +5,7 @@ import { useSearchParams } from "react-router-dom";
 import { api, formatApiError } from "../api/client";
 import type { AccountOut, LoginSurface } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
+import { FreeBrowserPanel } from "../components/FreeBrowserPanel";
 import { LazyInstagramBrowserPanel } from "../components/LazyInstagramBrowserPanel";
 import { Loader } from "../components/Loader";
 import { PageHeader } from "../components/PageHeader";
@@ -16,6 +17,7 @@ import { useToast } from "../context/ToastContext";
 const LS_KEY = "insta.browserPage.lastUsername";
 
 type PlatformFilter = "all" | "instagram" | "youtube" | "tiktok";
+type BrowserMode = "account" | "free";
 
 function accountPlatform(a: AccountOut): string {
   return (a.platform || "instagram").toLowerCase();
@@ -38,6 +40,20 @@ export function Browser() {
 
   const usernameFromUrl = searchParams.get("username")?.trim() || "";
   const [selectedUsername, setSelectedUsername] = useState(usernameFromUrl);
+  const modeFromUrl = searchParams.get("mode") === "free" ? ("free" as const) : ("account" as const);
+  const [mode, setMode] = useState<BrowserMode>(modeFromUrl);
+
+  useEffect(() => {
+    setMode(modeFromUrl);
+  }, [modeFromUrl]);
+
+  const setBrowserMode = (next: BrowserMode) => {
+    setMode(next);
+    const params = new URLSearchParams(searchParams);
+    if (next === "free") params.set("mode", "free");
+    else params.delete("mode");
+    setSearchParams(params, { replace: true });
+  };
 
   const loadAccounts = useCallback(async () => {
     setLoading(true);
@@ -105,7 +121,7 @@ export function Browser() {
   const loginSurface: LoginSurface =
     selected?.login_surface === "desktop" ? "desktop" : "mobile";
 
-  if (loading && !accounts.length) {
+  if (loading && !accounts.length && mode !== "free") {
     return (
       <PageShell>
         <PageHeader
@@ -126,6 +142,35 @@ export function Browser() {
         description="Запуск Chrome (native VNC) для YouTube/TikTok Studio или Instagram без модального окна в карточке."
       />
 
+      <div
+        className="flex flex-wrap gap-2 border-b border-slate-800 pb-2"
+        role="tablist"
+        aria-label="Режим браузера"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === "account"}
+          className={mode === "account" ? "btn-primary btn-compact" : "btn-ghost btn-compact"}
+          onClick={() => setBrowserMode("account")}
+        >
+          Аккаунт
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === "free"}
+          data-testid="browser-mode-free"
+          className={mode === "free" ? "btn-primary btn-compact" : "btn-ghost btn-compact"}
+          onClick={() => setBrowserMode("free")}
+        >
+          Свободный
+        </button>
+      </div>
+
+      {mode === "free" ? (
+        <FreeBrowserPanel adminToken={adminToken} />
+      ) : (
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
         <aside className="card w-full shrink-0 space-y-3 p-4 lg:w-72">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Площадка</p>
@@ -209,6 +254,7 @@ export function Browser() {
           )}
         </div>
       </div>
+      )}
     </PageShell>
   );
 }
