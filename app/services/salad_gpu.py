@@ -280,6 +280,9 @@ def _salad_wan_enabled(settings: Settings) -> bool:
 
 
 def _warmup_command_stale(settings: Settings, text: str) -> bool:
+    # A hand-written image entry already starts the container. Replacing it restarts the replica.
+    if "/opt/gpu/start.sh" in text:
+        return False
     if WARMUP_MARKER not in text or IPV6_MARKER not in text:
         return True
     if _salad_wan_enabled(settings):
@@ -385,10 +388,13 @@ def _command_text(state: GroupState) -> str:
 
 
 def target_gateway_port(settings: Settings) -> int:
-    """8080 when local Wan shares the group; 11434 for chat-only Ollama."""
-    if (settings.wan_base_url or "").strip():
-        return WAN_GATEWAY_PORT
-    return GATEWAY_PORT
+    """Public port of the Salad group. insta-gpu:ollama-vision serves nginx on 8080.
+
+    11434 is Ollama inside the container (127.0.0.1), not the access port.
+    Wan uses the same published port.
+    """
+    _ = (settings.wan_base_url or "").strip()
+    return WAN_GATEWAY_PORT
 
 
 def needs_gateway_patch(settings: Settings, state: GroupState) -> bool:
@@ -899,15 +905,13 @@ def prepare_for_chat(
         raise SaladProblem(exhausted)
 
     state = yield from fetch_group()
-    patch_after_pull = False
-    if needs_gateway_patch(settings, state):
-        if state.still_pulling:
-            patch_after_pull = True
-        else:
-            yield emit(PHASE_PATCH, 1, soft_s=60, force_milestone=True)
-            known = state
-            state = yield from call_action(lambda: patch_gateway(settings, known))
-            _touch(settings)
+    # Patch only a stopped group. A live or starting replica is replaced by Salad
+    # and the image plus the model are downloaded again.
+    if needs_gateway_patch(settings, state) and state.status in START_READY:
+        yield emit(PHASE_PATCH, 1, soft_s=60, force_milestone=True)
+        known = state
+        state = yield from call_action(lambda: patch_gateway(settings, known))
+        _touch(settings)
     if state.status != "running":
         if state.status in START_READY:
             yield emit(SEND_START, 2, soft_s=60, force_milestone=True)
@@ -994,11 +998,6 @@ def prepare_for_chat(
                     soft_s=START_WAIT_S,
                     extra=state.status,
                 )
-    if patch_after_pull and needs_gateway_patch(settings, state):
-        yield emit(PHASE_PATCH, 1, soft_s=60, force_milestone=True)
-        known = state
-        state = yield from call_action(lambda: patch_gateway(settings, known))
-        _touch(settings)
     origin = gateway_origin(state.dns)
     if not origin:
         raise SaladProblem("Salad не вернул адрес группы")

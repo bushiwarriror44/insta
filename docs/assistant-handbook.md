@@ -70,7 +70,7 @@ fal.ai: один из бэкендов рендера (`fal`, ключ `FAL_API_
 
 ### Оплата
 
-Панель не касса: деньги списывают кабинеты снаружи. `cost_usd` — оценка ролика fal (`0.05` USD/с Wan 2.5; 5 с = `0.25`, 10 с = `0.50`). huggingface / pollinations / local / hfspace пишут `0`; часы Salad, VPS и прокси туда не входят. Salad тарится, пока группа Running — не пользуешься, Stop с карточки GPU Salad на Администрировании (чат группу не стартует). $/час Salad не выдумывать. Graph / YouTube Data API / TikTok Content Posting не используются — им не платить. Карточка «Оплата» на Администрировании.
+Списания выполняются в кабинетах поставщиков. `cost_usd` — оценка ролика: fal Wan 2.5 `0.05` USD/с (5 с = `0.25`, 10 с = `0.50`), Qubax `0.50` USD за каждые 5 с. huggingface / pollinations / slideshow / local пишут `0`. Часы Salad, счёт VPS и прокси в `cost_usd` не входят. Salad тарифицируется, пока группа Running. Остановка — карточка GPU Salad на Администрировании (`GET /api/gpu`, `POST /api/gpu/start`, `POST /api/gpu/stop`); чат эти методы не вызывает. Ставка Salad за час в репозитории не задана. Graph / YouTube Data API / TikTok Content Posting не вызываются. Карточка «Оплата» на Администрировании.
 
 Каталоги `data/`: `sessions` (mobile dump Instagram), `devices` (fingerprint), `playwright/<username>/state.json`, `videos/source` и `out`, `screenshots`, `backups`, `app.log`.
 
@@ -124,12 +124,12 @@ FAQ:
 - «Как устроен API / неофициальный клиент?» — секция «Неофициальные клиенты» ниже.
 - «Что значит Агент работает?» — воркер очереди, не этот чат.
 - «Как отдать указание текстом без UI?» — `POST /api/assistant/run` или `python -m app.cli ask`.
-- «Сколько стоит ролик?» — если `backend=fal`: `cost_usd` (`0.05` USD/с Wan 2.5). Иначе в панели `0`; GPU-хост оплачивается отдельно.
-- «Что оплачивать?» — VPS, Salad или Clore/Vast, fal при ключе, прокси. Не официальные API площадок. Карточка «Оплата» на Администрировании.
+- «Сколько стоит ролик?» — `backend=fal`: `cost_usd` (`0.05` USD/с Wan 2.5). `backend=qubax`: `0.50` USD за каждые 5 с. Иначе в панели `0`; часы Salad оплачиваются отдельно.
+- «Что оплачивать?» — VPS, Salad либо Clore/Vast, fal и Qubax при ключе, прокси. Карточка «Оплата» на Администрировании.
 - «Почему не постит?» — секция «Если постинг сломался»: `diagnose`, затем `start_worker` / `approve_job` / `job_logs`.
 - «Почему не входит?» / «логин не работает» — секция «Если вход сломался»: `diagnose`, затем `ensure_account_session` / `account_logs` / `get_session`.
 - «Прокси не работает?» — секция «Если прокси сломался»: `diagnose`, затем `test_proxy`.
-- «Salad?» — кредиты USDC / EURC / RENDER в Solana, не USDT. Running = списание. Не пользуешься — Stop с карточки GPU Salad. Чат группу не стартует. $/час не выдумывать.
+- «Salad?» — кредиты USDC / EURC / RENDER в Solana. Статус Running входит в счёт. Остановка — карточка GPU Salad. Чат группу не запускает и не останавливает. Ставка за час в репозитории не задана.
 
 ## Неофициальные клиенты
 
@@ -213,4 +213,4 @@ TikTok: Playwright на `tiktok.com/tiktokstudio/upload`. Куки `tiktok.com`.
 
 ## Страница: Администрирование
 
-Путь `/administration` (владелец; в открытом режиме без пароля тоже). Оператору скрыта. Вкладки: «Обзор» — карточка «GPU Salad» Start/Stop группы (`/api/gpu`), не тумблер воркера; Running = GPU-часы; Start после Stop качает образ; чат Start/Stop группы не вызывает; карточка «Оплата»; блок «Реализация». «Блокнот» — одна заметка в SQLite, автосохранение; чат не читает и не пишет. «API» — Swagger: spec `GET /api/openapi.json` (`DocsOwnerDep`), `/api/docs` нет, Bearer из сессии. Чат схему не вызывает.
+Путь `/administration` (владелец; в открытом режиме без пароля тоже). Оператору скрыта. Вкладки: «Обзор» — карточка «GPU Salad» (`GET /api/gpu`, `POST /api/gpu/start`, `POST /api/gpu/stop`), не тумблер воркера; Running входит в счёт GPU; повторный запуск после остановки скачивает образ; чат эти методы не вызывает; карточка «Оплата»; блок «Реализация». «Блокнот» — одна заметка в SQLite, автосохранение; чат не читает и не пишет. «API» — Swagger по `GET /api/openapi.json`, `/api/docs` нет, Bearer из сессии. В схеме есть прогоны `/api/assistant/jobs`, отчёты `/api/agent-reports`, журнал `/api/agent-reports/logs`, `POST /mcp` и прокси `/llm/v1/{path}`. Чат схему не вызывает.

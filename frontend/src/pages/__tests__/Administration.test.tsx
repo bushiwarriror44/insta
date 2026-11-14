@@ -99,11 +99,30 @@ describe("Administration page", () => {
     expect(screen.getByRole("heading", { name: /gpu salad/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /реализация/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /^оплата$/i })).toBeInTheDocument();
-    expect(screen.getByText(/create_app/)).toBeInTheDocument();
-    expect(screen.getByText(/карточка gpu salad на этой странице/i)).toBeInTheDocument();
-    expect(screen.getByText(/0\.05 usd за секунду/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/карточкой GPU Salad/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/0,05 USD за секунду/)).toBeInTheDocument();
+    for (const link of screen.getAllByRole("link", { name: "GET /api/gpu" })) {
+      expect(link).toHaveAttribute("href", "#api");
+    }
+    expect(screen.getByRole("link", { name: "POST /mcp" })).toHaveAttribute("href", "#api");
     expect(screen.queryByTestId("swagger-host")).not.toBeInTheDocument();
     expect(swaggerMock).not.toHaveBeenCalled();
+  });
+
+  it("opens the API tab from a method link", async () => {
+    useAuthMock.mockReturnValue({
+      role: "owner",
+      state: { state: "authed", token: "owner-tok" },
+      authRequired: true,
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(screen.getAllByRole("link", { name: "GET /api/gpu" })[0]);
+    expect(await screen.findByTestId("swagger-host")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^api$/i })).toHaveAttribute("aria-selected", "true");
+    await waitFor(() => expect(swaggerMock).toHaveBeenCalled());
+    const opts = swaggerMock.mock.calls[0][0] as { deepLinking?: boolean };
+    expect(opts.deepLinking).toBe(false);
   });
 
   it("switches to the notebook tab", async () => {
@@ -151,6 +170,7 @@ describe("Administration page", () => {
       };
     };
     expect(opts.url).toBe("/api/openapi.json");
+    expect((opts as { deepLinking?: boolean }).deepLinking).toBe(false);
     const intercepted = opts.requestInterceptor({ headers: {} });
     expect(intercepted.headers?.Authorization).toBe("Bearer owner-tok");
   });

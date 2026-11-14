@@ -26,7 +26,14 @@ from app.services.salad_gpu import (
 
 HOST = "tabasco.example.salad.cloud"
 ORIGIN = f"https://{HOST}"
-_READY = ("gpu-warmup", "gateway-ipv6", "wan-dashscope", "wan-sdpa-attn")
+_READY = (
+    "gpu-warmup",
+    "gateway-ipv6",
+    "ollama-only-warmup",
+    "/opt/gpu/start.sh",
+    "wan-dashscope",
+    "wan-sdpa-attn",
+)
 
 
 def _titles(lines: list) -> list[str]:
@@ -42,7 +49,7 @@ def _enable(monkeypatch) -> None:
     monkeypatch.setattr(settings, "wan_base_url", "", raising=True)
 
 
-def _group(status: str, *, command: tuple[str, ...] = _READY, port: int = GATEWAY_PORT) -> GroupState:
+def _group(status: str, *, command: tuple[str, ...] = _READY, port: int = WAN_GATEWAY_PORT) -> GroupState:
     return GroupState(status=status, dns=HOST, port=port, command=command, running_count=1)
 
 
@@ -129,7 +136,7 @@ def test_prepare_starts_stopped_group_and_waits_until_the_model_is_loaded(app_en
 
 def test_prepare_patches_command_once_when_the_marker_is_missing(app_env, monkeypatch):
     _enable(monkeypatch)
-    bare = _group("running", command=(), port=8888)
+    bare = _group("stopped", command=(), port=8888)
     patched = _group("running")
     calls = {"n": 0}
 
@@ -165,8 +172,17 @@ def test_prepare_patches_command_once_when_the_marker_is_missing(app_env, monkey
 
 def test_prepare_continues_when_the_patch_is_415(app_env, monkeypatch):
     _enable(monkeypatch)
-    bare = _group("running", command=(), port=8888)
-    monkeypatch.setattr(salad_gpu, "get_group", lambda settings=None: bare)
+    bare = _group("stopped", command=(), port=8888)
+    calls = {"n": 0}
+
+    def sequence(settings=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return bare
+        return _group("running")
+
+    monkeypatch.setattr(salad_gpu, "get_group", sequence)
+    monkeypatch.setattr(salad_gpu, "request_start", lambda settings=None: None)
     with respx.mock:
         route = respx.patch(salad_gpu._group_url(settings)).mock(
             return_value=httpx.Response(
@@ -213,7 +229,7 @@ def test_prepare_does_not_patch_when_warmup_is_already_installed(app_env, monkey
 def test_prepare_patches_wan_gateway_port_when_wan_base_url_is_set(app_env, monkeypatch):
     _enable(monkeypatch)
     monkeypatch.setattr(settings, "wan_base_url", "https://gpu.example/generate", raising=True)
-    bare = _group("running", command=(), port=8888)
+    bare = _group("stopped", command=(), port=8888)
     patched = _group("running", port=WAN_GATEWAY_PORT)
     calls = {"n": 0}
 
@@ -271,7 +287,7 @@ def test_prepare_skips_patch_when_port_is_unknown_and_warmup_is_installed(app_en
 def test_prepare_patches_command_without_port_when_port_is_unknown(app_env, monkeypatch):
     _enable(monkeypatch)
     monkeypatch.setattr(settings, "wan_base_url", "https://gpu.example/generate", raising=True)
-    bare = _group("running", command=(), port=0)
+    bare = _group("stopped", command=(), port=0)
     patched = _group("running", port=0)
     calls = {"n": 0}
 
@@ -407,7 +423,7 @@ def test_prepare_keeps_the_pull_clock_from_salad_start_time(app_env, monkeypatch
         lambda settings=None: GroupState(
             status="deploying",
             dns=HOST,
-            port=GATEWAY_PORT,
+            port=WAN_GATEWAY_PORT,
             command=_READY,
             creating_count=1,
             start_time=started,
@@ -477,7 +493,7 @@ def test_prepare_emits_pull_restart_after_creating_dip(app_env, monkeypatch):
             return GroupState(
                 status="deploying",
                 dns=HOST,
-                port=GATEWAY_PORT,
+                port=WAN_GATEWAY_PORT,
                 command=_READY,
                 creating_count=1,
             )
@@ -485,7 +501,7 @@ def test_prepare_emits_pull_restart_after_creating_dip(app_env, monkeypatch):
             return GroupState(
                 status="deploying",
                 dns=HOST,
-                port=GATEWAY_PORT,
+                port=WAN_GATEWAY_PORT,
                 command=_READY,
                 creating_count=0,
                 allocating_count=1,
@@ -494,14 +510,14 @@ def test_prepare_emits_pull_restart_after_creating_dip(app_env, monkeypatch):
             return GroupState(
                 status="deploying",
                 dns=HOST,
-                port=GATEWAY_PORT,
+                port=WAN_GATEWAY_PORT,
                 command=_READY,
                 creating_count=1,
             )
         return GroupState(
             status="running",
             dns=HOST,
-            port=GATEWAY_PORT,
+            port=WAN_GATEWAY_PORT,
             command=_READY,
             running_count=1,
         )
@@ -534,16 +550,16 @@ def test_prepare_reports_deploying_and_model_phases(app_env, monkeypatch):
     def sequence(settings=None):
         calls["n"] += 1
         if calls["n"] == 1:
-            return GroupState(status="stopped", dns=HOST, port=GATEWAY_PORT, command=_READY)
+            return GroupState(status="stopped", dns=HOST, port=WAN_GATEWAY_PORT, command=_READY)
         if calls["n"] < 4:
             return GroupState(
                 status="deploying",
                 dns=HOST,
-                port=GATEWAY_PORT,
+                port=WAN_GATEWAY_PORT,
                 command=_READY,
                 creating_count=1,
             )
-        return GroupState(status="running", dns=HOST, port=GATEWAY_PORT, command=_READY, running_count=1)
+        return GroupState(status="running", dns=HOST, port=WAN_GATEWAY_PORT, command=_READY, running_count=1)
 
     ps = {"n": 0}
 
@@ -593,16 +609,16 @@ def test_prepare_waits_through_a_long_image_pull(app_env, monkeypatch):
     def sequence(settings=None):
         calls["n"] += 1
         if calls["n"] == 1:
-            return GroupState(status="stopped", dns=HOST, port=GATEWAY_PORT, command=_READY)
+            return GroupState(status="stopped", dns=HOST, port=WAN_GATEWAY_PORT, command=_READY)
         if clock["t"] < salad_gpu.PULL_WAIT_S - 60:
             return GroupState(
                 status="deploying",
                 dns=HOST,
-                port=GATEWAY_PORT,
+                port=WAN_GATEWAY_PORT,
                 command=_READY,
                 creating_count=1,
             )
-        return GroupState(status="running", dns=HOST, port=GATEWAY_PORT, command=_READY, running_count=1)
+        return GroupState(status="running", dns=HOST, port=WAN_GATEWAY_PORT, command=_READY, running_count=1)
 
     def pause(_s: float) -> None:
         clock["t"] += 10 * 60
@@ -640,7 +656,7 @@ def test_prepare_says_image_still_pulling_after_pull_budget(app_env, monkeypatch
         lambda settings=None: GroupState(
             status="deploying",
             dns=HOST,
-            port=GATEWAY_PORT,
+            port=WAN_GATEWAY_PORT,
             command=_READY,
             creating_count=1,
         ),
@@ -658,11 +674,11 @@ def test_prepare_leaves_pull_when_a_replica_is_already_running(app_env, monkeypa
     def sequence(settings=None):
         calls["n"] += 1
         if calls["n"] == 1:
-            return GroupState(status="stopped", dns=HOST, port=GATEWAY_PORT, command=_READY)
+            return GroupState(status="stopped", dns=HOST, port=WAN_GATEWAY_PORT, command=_READY)
         return GroupState(
             status="deploying",
             dns=HOST,
-            port=GATEWAY_PORT,
+            port=WAN_GATEWAY_PORT,
             command=_READY,
             running_count=1,
             creating_count=0,
@@ -693,12 +709,12 @@ def test_prepare_does_not_confirm_deploying_after_a_dropped_poll(app_env, monkey
     def sequence(settings=None):
         calls["n"] += 1
         if calls["n"] == 1:
-            return GroupState(status="stopped", dns=HOST, port=GATEWAY_PORT, command=_READY)
+            return GroupState(status="stopped", dns=HOST, port=WAN_GATEWAY_PORT, command=_READY)
         if calls["n"] == 2:
             return GroupState(
                 status="deploying",
                 dns=HOST,
-                port=GATEWAY_PORT,
+                port=WAN_GATEWAY_PORT,
                 command=_READY,
                 creating_count=1,
             )
@@ -739,7 +755,7 @@ def test_prepare_keeps_waiting_when_pull_polls_drop(app_env, monkeypatch):
     deploying = GroupState(
         status="deploying",
         dns=HOST,
-        port=GATEWAY_PORT,
+        port=WAN_GATEWAY_PORT,
         command=_READY,
         creating_count=1,
     )
@@ -784,7 +800,7 @@ def test_prepare_retries_salad_api_while_the_image_downloads(app_env, monkeypatc
             return GroupState(
                 status="deploying",
                 dns=HOST,
-                port=GATEWAY_PORT,
+                port=WAN_GATEWAY_PORT,
                 command=_READY,
                 creating_count=1,
             )
@@ -821,11 +837,11 @@ def test_prepare_defers_gateway_patch_until_the_node_is_running(app_env, monkeyp
             return GroupState(
                 status="deploying",
                 dns=HOST,
-                port=GATEWAY_PORT,
+                port=WAN_GATEWAY_PORT,
                 command=(),
                 creating_count=1,
             )
-        return GroupState(status="running", dns=HOST, port=GATEWAY_PORT, command=(), running_count=1)
+        return GroupState(status="running", dns=HOST, port=WAN_GATEWAY_PORT, command=(), running_count=1)
 
     def tracking_patch(settings, state):
         seen.append(state.status)
@@ -845,9 +861,36 @@ def test_prepare_defers_gateway_patch_until_the_node_is_running(app_env, monkeyp
                 lines.append(next(gen))
         except StopIteration as stop:
             base = stop.value
-    assert seen == ["running"]
+    assert seen == []
     titles = _titles(lines)
-    assert titles.index(PHASE_PULL) < titles.index(PHASE_PATCH)
+    assert PHASE_PATCH not in titles
+    assert base == f"{ORIGIN}/v1"
+
+
+def test_prepare_does_not_patch_a_running_group_that_already_starts_the_image(app_env, monkeypatch):
+    _enable(monkeypatch)
+    command = ("/bin/bash", "-c", "export AGENT_MODEL=qwen3:30b-a3b\n/opt/gpu/start.sh")
+    monkeypatch.setattr(
+        salad_gpu,
+        "get_group",
+        lambda settings=None: _group("running", command=command, port=WAN_GATEWAY_PORT),
+    )
+
+    def tracking_patch(settings, state):
+        raise AssertionError("patch_gateway")
+
+    monkeypatch.setattr(salad_gpu, "patch_gateway", tracking_patch)
+    with respx.mock:
+        respx.get(f"{ORIGIN}/").mock(return_value=httpx.Response(200, text="Ollama is running"))
+        respx.get(f"{ORIGIN}/api/ps").mock(
+            return_value=httpx.Response(200, json={"models": [{"name": "qwen3:32b"}]})
+        )
+        gen = salad_gpu.prepare_for_chat(settings, pause=lambda _s: None)
+        try:
+            while True:
+                next(gen)
+        except StopIteration as stop:
+            base = stop.value
     assert base == f"{ORIGIN}/v1"
 
 
@@ -899,8 +942,8 @@ def test_prepare_says_start_failed_when_salad_marks_failed(app_env, monkeypatch)
     def sequence(settings=None):
         calls["n"] += 1
         if calls["n"] == 1:
-            return GroupState(status="stopped", dns=HOST, port=GATEWAY_PORT, command=_READY)
-        return GroupState(status="failed", dns=HOST, port=GATEWAY_PORT, command=_READY)
+            return GroupState(status="stopped", dns=HOST, port=WAN_GATEWAY_PORT, command=_READY)
+        return GroupState(status="failed", dns=HOST, port=WAN_GATEWAY_PORT, command=_READY)
 
     monkeypatch.setattr(salad_gpu, "get_group", sequence)
     monkeypatch.setattr(salad_gpu, "request_start", lambda settings=None: None)

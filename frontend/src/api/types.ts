@@ -755,6 +755,8 @@ export interface AssistantJobOut {
   result: Record<string, unknown> | null;
   created_at: string;
   fresh: boolean;
+  acting: boolean;
+  activity: string;
 }
 
 export interface AgentRunLogGroup {

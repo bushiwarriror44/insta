@@ -28,6 +28,34 @@ def _client(app_env, holder: dict):
     return TestClient(app)
 
 
+def test_active_job_is_acting_only_after_a_panel_action(app_env):
+    holder = {"principal": AuthPrincipal(role="owner")}
+    client = _client(app_env, holder)
+    db = app_env.SessionLocal()
+    job = AssistantJob(actor="owner", prompt="открой аккаунты", status="running", note="Жду Ollama")
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    job_id = job.id
+    quiet = client.get("/api/assistant/jobs/active")
+    assert quiet.status_code == 200
+    assert quiet.json()["acting"] is False
+    assert quiet.json()["activity"] == ""
+    db.add(AgentRunLog(assistant_job_id=job_id, kind="need", text="нужен код"))
+    db.commit()
+    still = client.get("/api/assistant/jobs/active")
+    assert still.json()["acting"] is False
+    db.add(AgentRunLog(assistant_job_id=job_id, kind="tool", text="действие  list_accounts"))
+    db.add(AgentRunLog(assistant_job_id=job_id, kind="browser", text="браузер  клик 12,40"))
+    db.commit()
+    db.close()
+    acting = client.get("/api/assistant/jobs/active")
+    body = acting.json()
+    assert body["acting"] is True
+    assert body["prompt"] == "открой аккаунты"
+    assert body["activity"] == "браузер  клик 12,40"
+
+
 def test_tool_line_hides_secrets(app_env):
     db = app_env.SessionLocal()
     job = AssistantJob(actor="owner", prompt="войти", status="running")

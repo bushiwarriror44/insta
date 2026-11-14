@@ -1,50 +1,55 @@
 # Что, когда, где и в каком объёме оплачивать
 
-Панель не касса: списаний из UI нет. Деньги берут кабинеты снаружи. Ключи, GPU-URL, `entry_path` и токены в этот файл и в чат-ответы про оплату не копировать.
+Списания выполняются в кабинетах поставщиков. Панель сохраняет только оценку `cost_usd` в SQLite. Ключи, адреса GPU, `entry_path` и токены в этот файл не копируются.
 
-`cost_usd` в SQLite (колонка `$` на Рендерах и в прогонах Агента) — оценка **ролика fal**. Часы Salad, счёт VPS и прокси туда не попадают.
+Оценка показывается колонкой `$` на `/renders` и суммой прогона на `/agent`. Часы Salad, счёт VPS и оплата прокси в `cost_usd` не входят. Журнал действий прогона: `GET /api/agent-reports/logs`.
 
 ## Что
 
 | Система | Зачем панели | Платить |
 | --- | --- | --- |
-| Админ-VPS | `reels-frontend`, `reels-api`, `reels-worker`, SQLite в `data/` | да, хостеру. Ollama сюда не ставить (6 GB мало) |
-| Salad GPU | `AGENT_BASE_URL` + `WAN_BASE_URL`, образ [`docker/salad-gpu`](../docker/salad-gpu/README.md) | да, пока группа Running |
-| Clore / Vast | тот же `.env` вместо Salad, не оба сразу | да, кабинету GPU-хоста |
-| fal.ai | бэкенд `fal`, ключ `FAL_API_KEY` | да, за секунду ролика |
-| HuggingFace | `huggingface` / `hfspace`, `HF_TOKEN` | по кабинету HF; в `cost_usd` панель пишет 0 |
-| Pollinations | `pollinations`, ключ необязателен | 0 в панели |
-| Прокси | Instagram / YouTube / TikTok, не чат и не Ollama | да, продавцу прокси |
-| Telegram | алерты `TELEGRAM_BOT_TOKEN` | API бота бесплатный |
-| Docker Hub | публичный образ для Salad | обычно бесплатно |
-| Graph / YouTube Data API / TikTok Content Posting | не используются | не платить |
+| Админ-VPS | `reels-frontend`, `reels-api`, `reels-worker`, SQLite в `data/` | хостеру. Профиль `ollama` на этой машине не используется |
+| Salad GPU | чат и распознавание экрана, образ `takeoishchi31/insta-gpu:ollama-vision`, порт контейнера 8080 | пока группа Running |
+| Clore / Vast | тот же `.env` вместо Salad | кабинету GPU-хоста. Одновременно с Salad не используются |
+| fal.ai | бэкенд `fal`, ключ `FAL_API_KEY` | за секунду ролика, сумма пишется в `cost_usd` |
+| Qubax | бэкенд `qubax`, ключ на странице Qubax или `QUBAX_API_KEY` | 0,50 USD за каждые 5 с, сумма пишется в `cost_usd` |
+| Hugging Face | `huggingface` / `hfspace`, `HF_TOKEN` | по кабинету HF; в `cost_usd` записывается 0 |
+| Pollinations | `pollinations` | 0 в `cost_usd` |
+| slideshow | ffmpeg Ken Burns | 0 в `cost_usd` |
+| Локальный Wan | в интерфейсе отключён | 0 в `cost_usd` |
+| Прокси | Instagram / YouTube / TikTok | продавцу прокси |
+| Telegram | `TELEGRAM_BOT_TOKEN` | Bot API отдельной платы не требует |
+| Docker Hub | публичный образ для Salad | по тарифу Hub, публичный репозиторий обычно без платы |
+| Graph / YouTube Data API / TikTok Content Posting | не вызываются | отдельной платы нет |
+
+Чат на Salad — `qwen3:30b-a3b`, распознавание экрана — `qwen2.5vl:7b`. В память видеокарты одновременно загружается одна модель.
 
 ## Когда
 
-- VPS — по счёту хостера, пока машина жива.
-- Salad — с Ready до Stop. Простой в статусе Running тарится. Первый pull образа на узел — нет. Start после Stop снова качает образ на другой ПК. Start/Stop — карточка **GPU Salad** на `/administration` (`POST /api/gpu/start|stop`), не кабинет Salad и не тумблер воркера в шапке. Чат группу не стартует.
-- fal — успешный ролик с фактическим `backend=fal` (в т.ч. из цепочки `auto`).
-- `local` — часы GPU-хоста, не строка `$` в таблице.
-- Чат и PlanJob — пока нода `AGENT_BASE_URL` Running. Одна 24 GB карта: чат XOR видео (`gpu_slot.lock`).
-- Прокси — пока аккаунты ходят в площадки.
+- VPS оплачивается по счёту хостера, пока машина включена.
+- Salad тарифицируется с готовности группы до остановки. Простой в статусе Running входит в счёт. Первая загрузка образа на узел в счёт GPU не входит. Повторный запуск после остановки скачивает образ снова.
+- Запуск и остановка: карточка GPU Salad на `/administration`, методы `GET /api/gpu`, `POST /api/gpu/start`, `POST /api/gpu/stop`. Тумблер воркера в шапке эту группу не переключает. Чат эти методы не вызывает.
+- fal записывает `cost_usd` после успешного ролика с `backend=fal`, в том числе если ролик выбран цепочкой `auto`.
+- Qubax записывает свою оценку после успешного ролика.
+- Чат и PlanJob используют модель, пока адрес `AGENT_BASE_URL` отвечает.
+- Прокси оплачиваются, пока аккаунты ходят на площадки.
 
 ## Где
 
-- Salad: кабинет (кредиты USDC / EURC / RENDER в Solana, не USDT). Start/Stop группы — карточка GPU Salad на `/administration`.
-- fal: dashboard fal.ai.
-- HF: billing Hugging Face.
+- Salad: кабинет, кредиты USDC / EURC / RENDER в сети Solana. Запуск и остановка группы — карточка GPU Salad на `/administration`.
+- fal: кабинет fal.ai.
+- Hugging Face: billing Hugging Face.
+- Qubax: кабинет Qubax.
 - Прокси: кабинет продавца.
 - VPS: счёт хостера.
-- В панели: колонка `$` на `/renders` и прогоны `/agent`; карточка «Оплата» на `/administration`. Балансы кабинетов панель не читает.
+- В панели балансы кабинетов не запрашиваются. Карточка «Оплата» на `/administration`.
 
 ## Объём
 
-fal Wan 2.5 (`fal-ai/wan-25-preview/text-to-video` и `image-to-video`): `0.05` USD за секунду выхода — из кода [`app/generation/fal.py`](../app/generation/fal.py), не из кабинета. Клип 5 с = `0.25`, 10 с = `0.50`. Другая модель в таблице кода — свой коэффициент; неизвестная — `0.0`, не выдумывать.
+fal Wan 2.5 (`fal-ai/wan-25-preview/text-to-video` и `image-to-video`): `0.05` USD за секунду выхода, расчёт в [`app/generation/fal.py`](../app/generation/fal.py). Ролик 5 с — `0.25` USD, 10 с — `0.50` USD. Модель, которой нет в таблице коэффициентов, даёт `0.0`.
 
-Режим `image_slideshow` (бэкенд `slideshow`, ffmpeg Ken Burns): `cost_usd=0`, без fal/GPU-модели.
+Qubax: `0.50` USD за каждые 5 с, расчёт в [`app/generation/qubax.py`](../app/generation/qubax.py).
 
-Salad $/час в репозиторий не зашит: смотри баланс в кабинете. Не пользуешься — Stop группы с карточки GPU Salad.
+Ставка Salad за час в репозитории не задана. Остановка неиспользуемой группы выполняется карточкой GPU Salad.
 
-`huggingface` / `pollinations` / `local` / `hfspace`: `cost_usd=0`. Если цепочка дошла до `local` на Salad — идут GPU-часы.
-
-Не поднимать `reels-ollama` на админ-VPS. Не держать Salad Running «на всякий случай».
+`huggingface`, `pollinations`, `slideshow` и локальный Wan: `cost_usd=0`.

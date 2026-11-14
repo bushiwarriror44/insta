@@ -1,7 +1,9 @@
+import { apiLink, type DocSpan } from "./docText";
+
 export type ArchitectureSection = {
   id: string;
   title: string;
-  body: string[];
+  body: DocSpan[][];
 };
 
 export const ARCHITECTURE_SECTIONS: ArchitectureSection[] = [
@@ -9,57 +11,112 @@ export const ARCHITECTURE_SECTIONS: ArchitectureSection[] = [
     id: "processes",
     title: "Процессы",
     body: [
-      "Compose по умолчанию: reels-frontend (nginx, SPA), reels-api (FastAPI create_app, Python 3.11), reels-worker (python -m app.cli run-worker). Общий том ./data.",
-      "reels-ollama и reels-ollama-pull в профиле compose ollama; на админ-VPS не поднимаются. Чат ходит на AGENT_BASE_URL (OpenAI-совместимый хост), не на localhost панели. Карточка GPU Salad на Администрировании запускает и останавливает группу через Salad Public API — это не тумблер воркера и не автостарт при буте API.",
+      [
+        "Compose по умолчанию поднимает reels-frontend (nginx и SPA), reels-api (FastAPI, Python 3.11) и reels-worker (python -m app.cli run-worker). Каталог ./data общий.",
+      ],
+      [
+        "reels-ollama и reels-ollama-pull входят в профиль compose ollama и на админ-VPS не запускаются. Чат обращается к AGENT_BASE_URL, OpenAI-совместимому адресу, а не к localhost панели. Карточка GPU Salad вызывает ",
+        apiLink("GET /api/gpu"),
+        ", ",
+        apiLink("POST /api/gpu/start"),
+        " и ",
+        apiLink("POST /api/gpu/stop"),
+        ". Это не тумблер воркера и не запуск группы при старте API.",
+      ],
     ],
   },
   {
     id: "ui",
     title: "UI",
     body: [
-      "React 18, Vite, React Router, Tailwind. Маршруты: frontend/src/App.tsx. Сборка — статика за nginx.",
-      "nginx (frontend/nginx.conf): /api/ проксируется на reels-api:8000; остальное — index.html. Vite dev: proxy /api → :8000.",
+      [
+        "Интерфейс собран на React 18, Vite, React Router и Tailwind. Маршруты заданы в frontend/src/App.tsx. В проде nginx отдаёт статическую сборку.",
+      ],
+      [
+        "frontend/nginx.conf проксирует /api/ на reels-api:8000, остальные пути отдают index.html. В режиме Vite запросы /api уходят на порт 8000.",
+      ],
     ],
   },
   {
     id: "api-data",
     title: "API и данные",
     body: [
-      "FastAPI + SQLAlchemy, SQLite в data/. Сессии аккаунтов, клипы, логи, gpu_slot.lock — тот же каталог.",
-      "Авторизация: Authorization Bearer (мастер-пароль / ADMIN_TOKEN или пароль оператора). Если ни токена, ни хеша нет — открытый режим, principal = owner. Секретный путь панели — PanelSettings.entry_path; корень без пути отдаёт 500.",
-      "Схема: GET /api/openapi.json, зависимость DocsOwnerDep (открытый режим или роль owner). /api/docs отключён (docs_url=None).",
+      [
+        "API написан на FastAPI и SQLAlchemy. SQLite, сессии аккаунтов, клипы, логи и gpu_slot.lock лежат в каталоге data/.",
+      ],
+      [
+        "Заголовок Authorization: Bearer принимает мастер-пароль, ADMIN_TOKEN или пароль оператора. Если ни токена, ни хеша пароля нет, режим открытый и principal равен owner. Секретный путь хранится в PanelSettings.entry_path. Запрос корня без этого пути отвечает 500.",
+      ],
+      [
+        "Схема доступна методом ",
+        apiLink("GET /api/openapi.json"),
+        " для открытого режима или роли owner. Маршрут /api/docs отключён.",
+      ],
     ],
   },
   {
     id: "queues",
     title: "Очереди",
     body: [
-      "PostJob: uniquify (ffmpeg) → клиент площадки. Instagram: instagrapi. YouTube Shorts / TikTok: Playwright Studio (state.json), не Graph/Data API/OAuth.",
-      "GenerationJob — рендер по VIDEO_BACKEND / VIDEO_BACKEND_CHAIN. Composition — склейка клипов библиотеки. PlanJob — контент-план со страницы /agent.",
-      "Тумблер шапки «Агент работает» — процесс воркера, не нижний чат и не страница Агент.",
+      [
+        "PostJob проходит uniquify через ffmpeg и затем клиент площадки. Instagram публикуется через instagrapi. YouTube Shorts и TikTok — через Playwright Studio и файл state.json.",
+      ],
+      [
+        "GenerationJob запускает рендер по VIDEO_BACKEND и VIDEO_BACKEND_CHAIN. Composition склеивает клипы библиотеки. PlanJob ставит контент-план со страницы агента.",
+      ],
+      [
+        "Тумблер «Агент работает» в шапке включает процесс воркера. Нижний чат и страница агента этим тумблером не управляются.",
+      ],
     ],
   },
   {
     id: "generation",
     title: "Генерация",
     body: [
-      "Бэкенды: fal, huggingface, pollinations, local (WAN_BASE_URL), hfspace. auto перебирает VIDEO_BACKEND_CHAIN до первого успешного ролика.",
-      "local перед POST на WAN_BASE_URL вызывает Ollama keep_alive: 0 и держит data/gpu_slot.lock. Чат в это время не грузит модель. На одной 24 GB карте чат и видео не живут в VRAM одновременно.",
+      [
+        "Цепочка auto перебирает VIDEO_BACKEND_CHAIN до первого готового ролика. В цепочке есть Qubax, fal, Hugging Face, Pollinations и hfspace. Локальный Wan в интерфейсе отключён и в cost_usd пишет 0.",
+      ],
+      [
+        "На видеокарте 24 ГБ чат qwen3:30b-a3b и модель экрана qwen2.5vl:7b в память одновременно не загружаются. Файл data/gpu_slot.lock удерживается на время локального рендера, если он снова включён.",
+      ],
     ],
   },
   {
     id: "chat",
     title: "Чат",
     body: [
-      "Нижний чат: POST /api/assistant и /api/assistant/stream. Модель: AGENT_BASE_URL + /v1/chat/completions, tools пишут в ту же SQLite. Справочник: docs/assistant-handbook.md. Playwright из нижнего чата не стартует.",
-      "POST /api/assistant/run и python -m app.cli ask — те же tools плюс browser-tools (start_browser). think: false в теле чата.",
+      [
+        "Нижний чат ставит фоновый прогон методом ",
+        apiLink("POST /api/assistant/jobs"),
+        ". Состояние читается через ",
+        apiLink("GET /api/assistant/jobs/active"),
+        ". Модель вызывается по AGENT_BASE_URL, инструменты пишут в ту же SQLite. Справочник инструментов — docs/assistant-handbook.md.",
+      ],
+      [
+        "Внешний клиент вызывает агента панели методом ",
+        apiLink("POST /mcp"),
+        ", инструмент chat. Адрес ",
+        apiLink("GET /llm/v1/{path}"),
+        " только пересылает запрос модели и агента не запускает. Отчёты отдаёт ",
+        apiLink("GET /api/agent-reports"),
+        ", журнал прогона — ",
+        apiLink("GET /api/agent-reports/logs"),
+        ".",
+      ],
     ],
   },
   {
     id: "this-page",
     title: "Эта страница",
     body: [
-      "Маршрут /administration. Вкладки Обзор (GPU Salad, Оплата, Реализация), Блокнот (SQLite, чат не читает), API (swagger-ui-dist, spec /api/openapi.json только на этой вкладке). requestInterceptor добавляет Authorization Bearer из сессии, если state=authed. persistAuthorization включён. Оператору маршрут редиректит на /.",
+      [
+        "Маршрут /administration доступен владельцу. Оператору открывается редирект на /. Вкладки: обзор, блокнот и API. Блокнот хранит одну заметку в SQLite, чат её не читает и не изменяет.",
+      ],
+      [
+        "Вкладка API показывает схему ",
+        apiLink("GET /api/openapi.json"),
+        ". Запросы из неё уходят с Bearer текущей сессии. Якоря Swagger отключены, чтобы они не сбрасывали выбранную вкладку.",
+      ],
     ],
   },
 ];

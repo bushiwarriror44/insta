@@ -6,9 +6,20 @@ import { showAssistant } from "../lib/uiEvents";
 
 type ActiveJob = AssistantJobOut;
 
+function elapsedLabel(createdAt: string, now: number): string {
+  const start = Date.parse(createdAt);
+  if (!Number.isFinite(start)) return "";
+  const total = Math.max(0, Math.floor((now - start) / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  if (minutes <= 0) return `${seconds} с`;
+  return `${minutes} мин ${String(seconds).padStart(2, "0")} с`;
+}
+
 export function AgentRunOverlay() {
   const [job, setJob] = useState<ActiveJob | null>(null);
   const [pending, setPending] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     let stop = false;
@@ -28,9 +39,11 @@ export function AgentRunOverlay() {
     };
     void tick();
     const timer = window.setInterval(() => void tick(), 500);
+    const clock = window.setInterval(() => setNow(Date.now()), 1000);
     return () => {
       stop = true;
       window.clearInterval(timer);
+      window.clearInterval(clock);
     };
   }, []);
 
@@ -130,19 +143,35 @@ export function AgentRunOverlay() {
     );
   }
 
+  if (!job.acting) return null;
+
+  const elapsed = elapsedLabel(job.created_at, now);
+
   return (
     <div
       className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/75 backdrop-blur-sm"
       data-testid="agent-run-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="агент выполняет задачу"
+      aria-label="агент работает в панели"
     >
-      <div className="mx-4 w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 px-6 py-8 text-center shadow-2xl">
-        <div className="mx-auto h-12 w-12 animate-spin rounded-full border-2 border-slate-600 border-t-brand-400" />
-        <p className="mt-5 text-lg font-medium text-white">агент выполняет задачу</p>
-        {job.note ? <p className="mt-2 text-sm text-slate-400">{job.note}</p> : null}
-        <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-center">
+      <div className="mx-4 w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 px-6 py-8 text-left shadow-2xl">
+        <div className="flex items-start gap-4">
+          <div className="mt-1 h-10 w-10 shrink-0 animate-spin rounded-full border-2 border-slate-600 border-t-brand-400" />
+          <div className="min-w-0 flex-1">
+            <p className="text-lg font-medium text-white">Агент работает в панели</p>
+            {elapsed ? <p className="mt-1 text-xs text-slate-500">идёт {elapsed}</p> : null}
+          </div>
+        </div>
+        {job.prompt ? (
+          <p className="mt-5 line-clamp-4 text-sm leading-relaxed text-slate-200">{job.prompt}</p>
+        ) : null}
+        {job.activity ? (
+          <p className="mt-4 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-300">
+            {job.activity}
+          </p>
+        ) : null}
+        <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
           <button
             type="button"
             className="btn-primary"

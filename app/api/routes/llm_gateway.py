@@ -99,7 +99,12 @@ def _credentials(request: Request, db: Session) -> LlmGatewayCredentialsOut:
     )
 
 
-@credentials_router.get("/credentials", response_model=LlmGatewayCredentialsOut)
+@credentials_router.get(
+    "/credentials",
+    response_model=LlmGatewayCredentialsOut,
+    summary="Ключ шлюза",
+    description="Базовый адрес, ключ MCP и признак доступности модели. Ключ панели сюда не входит.",
+)
 def get_credentials(
     request: Request,
     db: Session = Depends(get_db),
@@ -107,7 +112,12 @@ def get_credentials(
     return _credentials(request, db)
 
 
-@credentials_router.post("/rotate", response_model=LlmGatewayCredentialsOut)
+@credentials_router.post(
+    "/rotate",
+    response_model=LlmGatewayCredentialsOut,
+    summary="Новый ключ шлюза",
+    description="Выпускает новый ключ шлюза. Предыдущий перестаёт приниматься.",
+)
 def rotate_credentials(
     request: Request,
     db: Session = Depends(get_db),
@@ -116,7 +126,12 @@ def rotate_credentials(
     return _credentials(request, db)
 
 
-@credentials_router.post("/enabled", response_model=LlmGatewayCredentialsOut)
+@credentials_router.post(
+    "/enabled",
+    response_model=LlmGatewayCredentialsOut,
+    summary="Включение шлюза",
+    description="Включает или выключает /llm/v1 и /mcp. Выключенный шлюз отвечает 503.",
+)
 def set_enabled(
     payload: LlmGatewayEnabledIn,
     request: Request,
@@ -190,10 +205,23 @@ async def _forward(request: Request, path: str) -> tuple[Response, str]:
     )
 
 
-@proxy_router.api_route(
+_PROXY_SUMMARY = "Прокси модели"
+_PROXY_DESCRIPTION = (
+    "Пересылает OpenAI-совместимый запрос на AGENT_BASE_URL. Агент панели при этом не запускается."
+)
+
+
+@proxy_router.post(
     "/{path:path}",
-    methods=["GET", "POST"],
-    include_in_schema=False,
+    summary=_PROXY_SUMMARY,
+    description=_PROXY_DESCRIPTION,
+    operation_id="llm_proxy_post",
+)
+@proxy_router.get(
+    "/{path:path}",
+    summary=_PROXY_SUMMARY,
+    description=_PROXY_DESCRIPTION,
+    operation_id="llm_proxy_get",
 )
 async def openai_proxy(
     path: str,
@@ -392,7 +420,11 @@ async def _handle_mcp_method(method: str, params: dict[str, Any] | None, req_id:
     return _mcp_error(req_id, -32601, f"method not found: {method}")
 
 
-@mcp_router.post("/mcp")
+@mcp_router.post(
+    "/mcp",
+    summary="Вызов MCP",
+    description="JSON-RPC. Инструмент chat запускает прогон агента владельца.",
+)
 async def mcp_post(
     request: Request,
     _key: str = LlmGatewayDep,
@@ -445,9 +477,12 @@ async def mcp_post(
     return response
 
 
-@mcp_router.get("/mcp")
+@mcp_router.get(
+    "/mcp",
+    summary="Поток MCP",
+    description="Короткий SSE, чтобы клиент мог открыть соединение.",
+)
 async def mcp_get(request: Request, _key: str = LlmGatewayDep) -> StreamingResponse:
-    """Minimal SSE stream so clients that open GET /mcp stay connected briefly."""
 
     async def events() -> AsyncIterator[bytes]:
         yield b"event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\",\"params\":{\"level\":\"info\",\"data\":\"ok\"}}\n\n"

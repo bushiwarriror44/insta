@@ -8,6 +8,7 @@ import { SaladGpuCard } from "../components/SaladGpuCard";
 import { useAuth } from "../context/AuthContext";
 import { ARCHITECTURE_SECTIONS } from "./architecture";
 import { COST_SECTIONS } from "./costs";
+import type { DocSpan } from "./docText";
 
 import "swagger-ui-dist/swagger-ui.css";
 import "./administration.css";
@@ -28,6 +29,30 @@ function tabFromHash(hash: string): AdminTab {
 
 function hashForTab(tab: AdminTab): string {
   return tab === "overview" ? "" : `#${tab}`;
+}
+
+function DocParagraphs({ paragraphs }: { paragraphs: DocSpan[][] }) {
+  return (
+    <div className="mt-2 space-y-2 text-sm leading-relaxed text-slate-400">
+      {paragraphs.map((parts, index) => (
+        <p key={index}>
+          {parts.map((part, partIndex) =>
+            typeof part === "string" ? (
+              <span key={partIndex}>{part}</span>
+            ) : (
+              <a
+                key={partIndex}
+                href={part.href}
+                className="text-sky-300 underline decoration-sky-300/40 underline-offset-2"
+              >
+                {part.text}
+              </a>
+            ),
+          )}
+        </p>
+      ))}
+    </div>
+  );
 }
 
 export function Administration() {
@@ -71,7 +96,7 @@ export function Administration() {
         url: "/api/openapi.json",
         tryItOutEnabled: true,
         filter: true,
-        deepLinking: true,
+        deepLinking: false,
         docExpansion: "list",
         defaultModelsExpandDepth: -1,
         displayRequestDuration: true,
@@ -101,7 +126,7 @@ export function Administration() {
       <PageHeader
         icon={BookOpen}
         title="Администрирование"
-        description="Обзор (GPU и оплата), блокнот владельца и живая схема API. Try it out вызывает те же эндпоинты, что и панель; токен сессии подставляется сам."
+        description="Обзор GPU и оплаты, блокнот владельца и схема API. Запросы со вкладки API выполняются с токеном текущей сессии."
       />
       <div className="admin-tabs" role="tablist" aria-label="Разделы администрирования">
         {TABS.map((item) => (
@@ -129,11 +154,7 @@ export function Administration() {
             {COST_SECTIONS.map((section) => (
               <details key={section.id} open className="rounded-lg border border-slate-800 bg-slate-950/50 px-3 py-2">
                 <summary className="cursor-pointer text-sm font-medium text-slate-200">{section.title}</summary>
-                <div className="mt-2 space-y-2 text-sm leading-relaxed text-slate-400">
-                  {section.body.map((paragraph) => (
-                    <p key={paragraph}>{paragraph}</p>
-                  ))}
-                </div>
+                <DocParagraphs paragraphs={section.body} />
               </details>
             ))}
           </section>
@@ -144,11 +165,7 @@ export function Administration() {
             {ARCHITECTURE_SECTIONS.map((section) => (
               <details key={section.id} open className="rounded-lg border border-slate-800 bg-slate-950/50 px-3 py-2">
                 <summary className="cursor-pointer text-sm font-medium text-slate-200">{section.title}</summary>
-                <div className="mt-2 space-y-2 text-sm leading-relaxed text-slate-400">
-                  {section.body.map((paragraph) => (
-                    <p key={paragraph}>{paragraph}</p>
-                  ))}
-                </div>
+                <DocParagraphs paragraphs={section.body} />
               </details>
             ))}
           </section>

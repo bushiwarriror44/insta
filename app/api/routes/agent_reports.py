@@ -42,7 +42,12 @@ def _out(row: AgentReport, settings: Settings) -> AgentReportOut:
     )
 
 
-@router.get("", response_model=list[AgentReportOut])
+@router.get(
+    "",
+    response_model=list[AgentReportOut],
+    summary="Список отчётов",
+    description="Сохранённые задачи агента и ссылки на снимки экрана.",
+)
 def list_reports(
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
@@ -59,7 +64,12 @@ class AgentRunLogGroup(BaseModel):
     text: str
 
 
-@router.get("/logs", response_model=list[AgentRunLogGroup])
+@router.get(
+    "/logs",
+    response_model=list[AgentRunLogGroup],
+    summary="Журнал прогонов",
+    description="Строки действий текущего входа. Чужой прогон не возвращается.",
+)
 def list_run_logs(
     db: Session = Depends(get_db),
     principal: AuthPrincipal = AuthDep,
@@ -92,7 +102,12 @@ def list_run_logs(
     return groups
 
 
-@router.delete("/{report_id}", status_code=204)
+@router.delete(
+    "/{report_id}",
+    status_code=204,
+    summary="Удаление отчёта",
+    description="Удаляет отчёт и связанные снимки экрана.",
+)
 def delete_report(
     report_id: int,
     db: Session = Depends(get_db),
