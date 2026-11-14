@@ -1,7 +1,9 @@
 """LLM gateway: OpenAI-compatible proxy + minimal MCP, separate from panel auth."""
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from typing import Any, AsyncIterator
 from urllib.parse import urljoin
 
@@ -23,7 +25,6 @@ from app.panel.settings_store import (
     set_llm_gateway_enabled,
 )
 from app.services.gateway_probe import ollama_reachable
-from app.services.http import client as http_client
 from app.api.request_origin import public_origin
 from app.services.llm_gateway_activity import list_activity, record_activity
 from app.services.llm_gateway_errors import explain_llm_upstream_error
@@ -210,21 +211,98 @@ async def openai_proxy(
     return response
 
 
-def _chat_completion(messages: list[dict[str, str]]) -> dict[str, Any]:
-    url = _upstream_url("chat/completions")
-    payload = {
-        "model": settings.agent_model,
-        "messages": messages,
-        "stream": False,
-    }
+BUSY_TEXT = "агент уже выполняет задачу"
+CHAT_TOOL_DESCRIPTION = (
+    "Выполняет задачу агентом панели: аккаунты, прокси, рендеры и внутренний браузер. "
+    "Передайте prompt или messages."
+)
+
+
+def _panel_messages(arguments: dict[str, Any]) -> list[dict[str, str]]:
+    raw = arguments.get("messages")
+    cleaned: list[dict[str, str]] = []
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "").strip()
+            content = str(item.get("content") or "").strip()
+            if role and content:
+                cleaned.append({"role": role, "content": content})
+    if cleaned:
+        return cleaned
+    prompt = str(arguments.get("prompt") or "").strip()
+    if not prompt:
+        return []
+    return [{"role": "user", "content": prompt}]
+
+
+def _job_text(job: Any) -> tuple[str, bool]:
+    reply = (getattr(job, "reply", None) or "").strip()
+    error = (getattr(job, "error", None) or "").strip()
+    used: list[str] = []
+    raw_json = getattr(job, "result_json", None) or ""
+    if raw_json:
+        try:
+            parsed = json.loads(raw_json)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            if not reply:
+                reply = str(parsed.get("reply") or "").strip()
+            raw_used = parsed.get("used") or []
+            if isinstance(raw_used, list):
+                used = [str(item) for item in raw_used if str(item).strip()]
+    lines: list[str] = []
+    if reply:
+        lines.append(reply)
+    if error and error not in reply:
+        lines.append(f"Ошибка: {error}")
+    if used:
+        lines.append("Инструменты: " + ", ".join(used))
+    text = "\n".join(lines).strip() or "(empty)"
+    return text, getattr(job, "status", "") == "failed"
+
+
+async def _run_owner_agent(messages: list[dict[str, str]]) -> tuple[str, bool]:
+    """Start the owner panel agent and wait until it stops. The gateway key is not the panel token."""
+    from app.assistant.job_control import read_status, start_job
+    from app.db.models import AssistantJob
+    from app.db.session import SessionLocal
+
+    db = SessionLocal()
     try:
-        with http_client(settings, timeout=settings.agent_timeout_seconds) as client:
-            response = client.post(url, json=payload, headers=_upstream_headers())
-    except httpx.RequestError as exc:
-        raise RuntimeError(explain_llm_upstream_error(exc)) from exc
-    if response.status_code >= 400:
-        raise RuntimeError(f"Модель ответила HTTP {response.status_code}")
-    return response.json()
+        row, fresh = start_job(
+            db,
+            "owner",
+            messages,
+            token=(settings.admin_token or None),
+            allow_browser=True,
+            viewer_role="owner",
+        )
+        job_id = row.id
+    finally:
+        db.close()
+    if not fresh:
+        return BUSY_TEXT, False
+
+    deadline = time.monotonic() + max(float(settings.agent_timeout_seconds), 60.0) * 12
+    while time.monotonic() < deadline:
+        status = read_status(job_id) or ""
+        if status not in ("running", "paused"):
+            break
+        await asyncio.sleep(0.4)
+    else:
+        return "прогон ещё выполняется", False
+
+    db = SessionLocal()
+    try:
+        job = db.get(AssistantJob, job_id)
+        if job is None:
+            return "прогон не найден", True
+        return _job_text(job)
+    finally:
+        db.close()
 
 
 def _mcp_result(req_id: Any, result: Any) -> dict[str, Any]:
@@ -239,7 +317,7 @@ def _mcp_error(req_id: Any, code: int, message: str) -> dict[str, Any]:
     }
 
 
-def _handle_mcp_method(method: str, params: dict[str, Any] | None, req_id: Any) -> dict[str, Any] | None:
+async def _handle_mcp_method(method: str, params: dict[str, Any] | None, req_id: Any) -> dict[str, Any] | None:
     params = params or {}
     if method == "initialize":
         return _mcp_result(
@@ -261,7 +339,7 @@ def _handle_mcp_method(method: str, params: dict[str, Any] | None, req_id: Any) 
                 "tools": [
                     {
                         "name": "chat",
-                        "description": "Chat with the panel Salad/Ollama model (OpenAI-compatible).",
+                        "description": CHAT_TOOL_DESCRIPTION,
                         "inputSchema": {
                             "type": "object",
                             "properties": {
@@ -292,18 +370,11 @@ def _handle_mcp_method(method: str, params: dict[str, Any] | None, req_id: Any) 
         arguments = params.get("arguments") or {}
         if name != "chat":
             return _mcp_error(req_id, -32602, f"unknown tool: {name}")
-        messages = arguments.get("messages")
-        if not isinstance(messages, list) or not messages:
-            prompt = str(arguments.get("prompt") or "").strip()
-            if not prompt:
-                return _mcp_error(req_id, -32602, "prompt or messages required")
-            messages = [{"role": "user", "content": prompt}]
+        messages = _panel_messages(arguments if isinstance(arguments, dict) else {})
+        if not messages:
+            return _mcp_error(req_id, -32602, "prompt or messages required")
         try:
-            data = _chat_completion(messages)
-            text = (
-                ((data.get("choices") or [{}])[0].get("message") or {}).get("content")
-                or ""
-            )
+            text, failed = await _run_owner_agent(messages)
         except Exception as exc:  # noqa: BLE001 — surface to MCP client
             return _mcp_result(
                 req_id,
@@ -312,10 +383,10 @@ def _handle_mcp_method(method: str, params: dict[str, Any] | None, req_id: Any) 
                     "isError": True,
                 },
             )
-        return _mcp_result(
-            req_id,
-            {"content": [{"type": "text", "text": text or "(empty)"}]},
-        )
+        body: dict[str, Any] = {"content": [{"type": "text", "text": text or "(empty)"}]}
+        if failed:
+            body["isError"] = True
+        return _mcp_result(req_id, body)
     if req_id is None:
         return None
     return _mcp_error(req_id, -32601, f"method not found: {method}")
@@ -341,7 +412,7 @@ async def mcp_post(
         for item in payload:
             if not isinstance(item, dict):
                 continue
-            handled = _handle_mcp_method(
+            handled = await _handle_mcp_method(
                 str(item.get("method") or ""),
                 item.get("params") if isinstance(item.get("params"), dict) else {},
                 item.get("id"),
@@ -360,7 +431,7 @@ async def mcp_post(
         _record(request, channel="mcp", path="/mcp", status=response.status_code)
         return response
 
-    handled = _handle_mcp_method(
+    handled = await _handle_mcp_method(
         str(payload.get("method") or ""),
         payload.get("params") if isinstance(payload.get("params"), dict) else {},
         payload.get("id"),

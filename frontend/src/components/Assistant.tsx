@@ -1791,7 +1791,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
             <p className="text-xs text-slate-400">
               Вставьте в Cursor → Settings → MCP (или{" "}
               <code className="text-slate-300">~/.cursor/mcp.json</code>). Инструмент{" "}
-              <code className="text-slate-300">chat</code> ходит в ту же модель.
+              <code className="text-slate-300">chat</code> запускает агента панели: аккаунты, браузер и остальные задачи.
             </p>
             {gatewayError ? <p className="text-sm text-rose-300">{gatewayError}</p> : null}
             {gatewayBusy && !gateway ? (

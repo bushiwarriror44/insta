@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -176,38 +176,107 @@ def test_mcp_initialize_and_tools_list(auth_client):
         json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
     )
     assert tools.status_code == 200
-    names = [t["name"] for t in tools.json()["result"]["tools"]]
+    listed = tools.json()["result"]["tools"]
+    names = [t["name"] for t in listed]
     assert names == ["chat"]
+    assert "агентом панели" in listed[0]["description"]
 
 
-def test_mcp_chat_tool(auth_client):
+def test_mcp_chat_tool(auth_client, monkeypatch):
+    from app.assistant.chat import Answer
+    from app.assistant.job_control import start_job as real_start
+
+    seen: dict = {}
+
+    def wrapped_start(*args, **kwargs):
+        seen["actor"] = args[1] if len(args) > 1 else kwargs.get("actor")
+        seen["token"] = kwargs.get("token")
+        seen["allow_browser"] = kwargs.get("allow_browser")
+        seen["viewer_role"] = kwargs.get("viewer_role")
+        return real_start(*args, **kwargs)
+
+    def fake_stream(*_args, **_kwargs):
+        yield Answer(reply="аккаунтов: 1", used=["list_accounts"])
+
+    monkeypatch.setattr("app.assistant.job_control.start_job", wrapped_start)
+    monkeypatch.setattr("app.assistant.chat.stream", fake_stream)
+    monkeypatch.setattr("app.assistant.reports.notify_telegram", lambda *_a, **_k: None)
     with patch("app.api.routes.llm_gateway.ollama_reachable", return_value=True):
         key = auth_client.get("/api/llm-gateway/credentials", headers=_owner()).json()["api_key"]
 
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = {
-        "choices": [{"message": {"content": "salad reply"}}]
-    }
-    mock_cm = MagicMock()
-    mock_cm.__enter__.return_value = mock_cm
-    mock_cm.__exit__.return_value = None
-    mock_cm.post.return_value = mock_response
+    res = auth_client.post(
+        "/mcp",
+        headers={"Authorization": f"Bearer {key}"},
+        json={
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "chat", "arguments": {"prompt": "сколько аккаунтов"}},
+        },
+    )
+    assert res.status_code == 200, res.text
+    text = res.json()["result"]["content"][0]["text"]
+    assert "аккаунтов: 1" in text
+    assert "Инструменты: list_accounts" in text
+    assert res.json()["result"].get("isError") is not True
+    assert seen["actor"] == "owner"
+    assert seen["allow_browser"] is True
+    assert seen["viewer_role"] == "owner"
+    assert seen["token"] == "secret-token"
+    assert seen["token"] != key
 
-    with patch("app.api.routes.llm_gateway.http_client", return_value=mock_cm):
+
+def test_mcp_chat_refuses_a_second_run(auth_client, app_env, monkeypatch):
+    import threading
+
+    from app.assistant.chat import Answer
+    from app.assistant.job_control import start_job
+
+    gate = threading.Event()
+    release = threading.Event()
+
+    def fake_stream(*_args, **_kwargs):
+        gate.set()
+        assert release.wait(3)
+        yield Answer(reply="готово")
+
+    monkeypatch.setattr("app.assistant.chat.stream", fake_stream)
+    monkeypatch.setattr("app.assistant.reports.notify_telegram", lambda *_a, **_k: None)
+    with patch("app.api.routes.llm_gateway.ollama_reachable", return_value=True):
+        key = auth_client.get("/api/llm-gateway/credentials", headers=_owner()).json()["api_key"]
+
+    db = app_env.SessionLocal()
+    job_id = 0
+    try:
+        row, fresh = start_job(
+            db,
+            "owner",
+            [{"role": "user", "content": "первый"}],
+            allow_browser=True,
+            viewer_role="owner",
+        )
+        job_id = row.id
+        assert fresh
+        assert gate.wait(2)
         res = auth_client.post(
             "/mcp",
             headers={"Authorization": f"Bearer {key}"},
             json={
                 "jsonrpc": "2.0",
-                "id": 3,
+                "id": 4,
                 "method": "tools/call",
-                "params": {"name": "chat", "arguments": {"prompt": "hello"}},
+                "params": {"name": "chat", "arguments": {"prompt": "ещё"}},
             },
         )
-    assert res.status_code == 200
-    text = res.json()["result"]["content"][0]["text"]
-    assert text == "salad reply"
+    finally:
+        release.set()
+        db.close()
+    from tests.unit.test_assistant_jobs import _wait_thread
+
+    if job_id:
+        _wait_thread(job_id)
+    assert res.status_code == 200, res.text
+    assert res.json()["result"]["content"][0]["text"] == "агент уже выполняет задачу"
 
 
 def test_open_mode_credentials(open_client):
