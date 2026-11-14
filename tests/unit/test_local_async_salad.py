@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.util
-import subprocess
 import time
 from contextlib import contextmanager
 from pathlib import Path

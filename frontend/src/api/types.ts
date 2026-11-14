@@ -743,6 +743,39 @@ export interface PublicationOut {
 
 export type EventLevel = "info" | "warn" | "error" | "critical";
 
+export interface AssistantJobOut {
+  id: number;
+  status: string;
+  actor: string;
+  client_chat_id: string;
+  prompt: string;
+  reply: string;
+  error: string | null;
+  note: string;
+  result: Record<string, unknown> | null;
+  created_at: string;
+  fresh: boolean;
+}
+
+export interface AgentRunLogGroup {
+  job_id: number;
+  prompt: string;
+  status: string;
+  created_at: string;
+  text: string;
+}
+
+export interface AgentReportOut {
+  id: number;
+  source: string;
+  status: string;
+  prompt: string;
+  reply: string;
+  error: string | null;
+  screenshots: string[];
+  created_at: string;
+}
+
 export interface EventOut {
   id: number;
   account_id: number | null;

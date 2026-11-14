@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1
+# Ollama runtime without baked models (models pulled to host bind-mount, then committed).
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+
+ARG AGENT_MODEL=qwen3:8b
+ARG AGENT_VISION_MODEL=qwen2.5vl:7b
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    OLLAMA_HOST=0.0.0.0:11434 \
+    OLLAMA_KEEP_ALIVE=30m \
+    OLLAMA_MODELS=/opt/ollama/models \
+    AGENT_MODEL=${AGENT_MODEL} \
+    AGENT_VISION_MODEL=${AGENT_VISION_MODEL}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl nginx zstd \
+      python3 python3-pip python-is-python3 \
+    && python -m pip install --no-cache-dir dashscope \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY ollama-linux-amd64.tar.zst /tmp/ollama-linux-amd64.tar.zst
+RUN mkdir -p /usr/local/lib/ollama /opt/ollama/models \
+ && zstd -d -c /tmp/ollama-linux-amd64.tar.zst | tar -C /usr/local -xf - \
+ && ln -sf /usr/local/bin/ollama /usr/bin/ollama \
+ && rm -f /tmp/ollama-linux-amd64.tar.zst \
+ && ollama --version
+
+COPY nginx.ollama-only.conf /etc/nginx/conf.d/salad.conf
+COPY start-ollama-only.sh /opt/gpu/start.sh
+RUN rm -f /etc/nginx/sites-enabled/default \
+ && sed -i 's/\r$//' /opt/gpu/start.sh \
+ && chmod +x /opt/gpu/start.sh
+
+WORKDIR /opt/gpu
+EXPOSE 8080
+CMD ["/opt/gpu/start.sh"]

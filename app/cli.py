@@ -683,6 +683,21 @@ def cmd_run_api(
     )
 
 
+@app.command("telegram-bot")
+def cmd_telegram_bot(
+    once: bool = typer.Option(False, "--once", help="Process one poll batch and exit (tests)"),
+) -> None:
+    """Run Telegram agent bot (long polling). Requires TELEGRAM_AGENT_ENABLED."""
+    _bootstrap()
+    from app.telegram.bot import run_polling
+
+    console.print("[green]Telegram agent bot[/green] (Ctrl+C to stop)")
+    try:
+        run_polling(once=once)
+    except KeyboardInterrupt:
+        console.print("[yellow]Stopped[/yellow]")
+
+
 @app.command("ask")
 def cmd_ask(prompt: str = typer.Argument(..., help="Text instruction for the local LLM")) -> None:
     """Send one prompt to the local LLM with browser tools (same as POST /api/assistant/run)."""

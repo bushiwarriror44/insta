@@ -126,7 +126,7 @@ def app_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(app_db, "SessionLocal", SessionLocal, raising=True)
 
     # Modules that captured ``SessionLocal`` at import time need patching too.
-    for module_name in ("app.alerts.telegram", "app.scheduler.worker", "app.cli"):
+    for module_name in ("app.alerts.telegram", "app.scheduler.worker", "app.cli", "app.telegram.bot"):
         if module_name in sys.modules:
             mod = sys.modules[module_name]
             if hasattr(mod, "SessionLocal"):

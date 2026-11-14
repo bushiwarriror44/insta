@@ -12,7 +12,7 @@ import clsx from "clsx";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { api, formatApiError } from "../api/client";
-import type { GpuLogsOut, GpuOut, LlmGatewayCredentialsOut } from "../api/types";
+import type { AssistantJobOut, GpuLogsOut, GpuOut, LlmGatewayCredentialsOut } from "../api/types";
 import { GpuConnectBar } from "./GpuConnectBar";
 import { LazyInstagramBrowserPanel } from "./LazyInstagramBrowserPanel";
 import {
@@ -461,9 +461,9 @@ function writeStore(chats: Chat[], activeId: string) {
 
 function readAllowBrowserRun(): boolean {
   try {
-    return window.localStorage.getItem(ALLOW_BROWSER_KEY) === "1";
+    return window.localStorage.getItem(ALLOW_BROWSER_KEY) !== "0";
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -576,6 +576,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const cardsRef = useRef<Record<string, AssistantCardBlock[]>>({});
   const stops = useRef<Record<string, AbortController>>({});
   const busyIds = useRef(new Set<string>());
+  const resumeEpoch = useRef(0);
   const chatsRef = useRef(chats);
   const activeRef = useRef(activeId);
   chatsRef.current = chats;
@@ -733,6 +734,74 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
   const patchLive = useCallback((id: string, patch: Partial<Live>) => {
     setLive((prev) => ({ ...prev, [id]: { ...(prev[id] ?? emptyLive()), ...patch } }));
   }, []);
+
+  useEffect(() => {
+    const token = { current: true };
+    const resumeToken = ++resumeEpoch.current;
+    void (async () => {
+      let job: AssistantJobOut | null = null;
+      try {
+        job = await api.assistantJobs.active();
+      } catch {
+        return;
+      }
+      if (!token.current || resumeEpoch.current !== resumeToken || !job) return;
+      if (job.status === "needs_user") {
+        const chatId = job.client_chat_id;
+        if (!chatId || !chatsRef.current.some((item) => item.id === chatId)) return;
+        const fromResult =
+          job.result && typeof job.result.reply === "string" ? job.result.reply : "";
+        const text = fromResult || job.note || job.reply;
+        if (!text) return;
+        setActiveId(chatId);
+        setChats((prev) =>
+          prev.map((item) => {
+            if (item.id !== chatId) return item;
+            const last = item.messages[item.messages.length - 1];
+            if (last?.role === "assistant" && last.content === text) return item;
+            return withAutoTitle(item, [...item.messages, { role: "assistant", content: text }]);
+          })
+        );
+        return;
+      }
+      if (job.status !== "running" && job.status !== "paused") return;
+      const chatId = job.client_chat_id;
+      if (!chatId || !chatsRef.current.some((item) => item.id === chatId)) return;
+      setActiveId(chatId);
+      busyIds.current.add(chatId);
+      patchLive(chatId, { busy: true });
+      let snap = job;
+      while (
+        token.current &&
+        resumeEpoch.current === resumeToken &&
+        (snap.status === "running" || snap.status === "paused")
+      ) {
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
+        if (!token.current || resumeEpoch.current !== resumeToken) return;
+        try {
+          snap = await api.assistantJobs.get(snap.id);
+        } catch {
+          break;
+        }
+      }
+      if (!token.current || resumeEpoch.current !== resumeToken) return;
+      const fromResult = snap.result && typeof snap.result.reply === "string" ? snap.result.reply : "";
+      const text = fromResult || snap.reply || (snap.error ? `Ошибка: ${snap.error}` : "Ответа не было.");
+      setChats((prev) =>
+        prev.map((item) => {
+          if (item.id !== chatId) return item;
+          const last = item.messages[item.messages.length - 1];
+          if (last?.role === "assistant" && last.content === text) return item;
+          return withAutoTitle(item, [...item.messages, { role: "assistant", content: text }]);
+        })
+      );
+      busyIds.current.delete(chatId);
+      patchLive(chatId, { busy: false });
+    })();
+    return () => {
+      token.current = false;
+    };
+  }, [patchLive]);
 
   const send = useCallback(
     async (text: string, opts?: { retry?: boolean }) => {
@@ -1026,7 +1095,7 @@ export function Assistant({ onHiddenChange }: AssistantProps) {
           controller.signal,
           page,
           { account_id: accountId, job_id: jobId },
-          { allowBrowser: owner && allowBrowserRun }
+          { allowBrowser: owner && allowBrowserRun, clientChatId: id }
         );
       } catch (err) {
         if (!controller.signal.aborted) {

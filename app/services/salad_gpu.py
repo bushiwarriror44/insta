@@ -44,6 +44,7 @@ WARMUP_MARKER = "gpu-warmup"
 IPV6_MARKER = "gateway-ipv6"
 WAN_DEPS_MARKER = "wan-dashscope"
 WAN_SDPA_MARKER = "wan-sdpa-attn"
+OLLAMA_ONLY_MARKER = "ollama-only-warmup"
 SEND_START = "Отправляю Start в Salad…"
 LAUNCH_STATUS = "Запускаю видеокарту, подождите"
 START_NOT_SENT = "Не удалось отправить Start в Salad, группа осталась остановленной."
@@ -274,15 +275,19 @@ def _model_name(settings: Settings) -> str:
     return name
 
 
+def _salad_wan_enabled(settings: Settings) -> bool:
+    return bool((settings.wan_base_url or "").strip())
+
+
 def _warmup_command_stale(settings: Settings, text: str) -> bool:
-    if (
-        WARMUP_MARKER not in text
-        or IPV6_MARKER not in text
-        or WAN_DEPS_MARKER not in text
-        or WAN_SDPA_MARKER not in text
-    ):
+    if WARMUP_MARKER not in text or IPV6_MARKER not in text:
         return True
-    if patch_configured(settings) and WAN_ASYNC_PATCH_MARKER not in text:
+    if _salad_wan_enabled(settings):
+        if WAN_DEPS_MARKER not in text or WAN_SDPA_MARKER not in text:
+            return True
+        if patch_configured(settings) and WAN_ASYNC_PATCH_MARKER not in text:
+            return True
+    elif OLLAMA_ONLY_MARKER not in text:
         return True
     return False
 
@@ -301,10 +306,15 @@ def _wan_sdpa_shell() -> str:
 def warmup_script(model: str, settings: Settings | None = None) -> str:
     """In-container warmup. The public gateway cuts requests at ~100s."""
     settings = settings or get_settings()
-    curl_patch = patch_curl_shell(settings)
-    header = f"# {WARMUP_MARKER} {IPV6_MARKER} {WAN_DEPS_MARKER} {WAN_SDPA_MARKER}"
-    if curl_patch:
-        header += f" {WAN_ASYNC_PATCH_MARKER}"
+    wan = _salad_wan_enabled(settings)
+    curl_patch = patch_curl_shell(settings) if wan else ""
+    header = f"# {WARMUP_MARKER} {IPV6_MARKER}"
+    if wan:
+        header += f" {WAN_DEPS_MARKER} {WAN_SDPA_MARKER}"
+        if curl_patch:
+            header += f" {WAN_ASYNC_PATCH_MARKER}"
+    else:
+        header += f" {OLLAMA_ONLY_MARKER}"
     body = json.dumps(
         {"model": model, "prompt": "hi", "stream": False, "keep_alive": "30m"}
     )
@@ -315,15 +325,18 @@ def warmup_script(model: str, settings: Settings | None = None) -> str:
         + json.dumps(body)
         + '.encode(), headers={"Content-Type": "application/json"}), timeout=600).read()'
     )
-    if curl_patch:
-        install = (
-            "python -m pip install -q dashscope &\n"
-            "pip_pid=$!\n"
-            f"{curl_patch}\n"
-            'wait "$pip_pid" || true\n'
-        )
+    if wan:
+        if curl_patch:
+            install = (
+                "python -m pip install -q dashscope &\n"
+                "pip_pid=$!\n"
+                f"{curl_patch}\n"
+                'wait "$pip_pid" || true\n'
+            )
+        else:
+            install = "python -m pip install -q dashscope\n"
     else:
-        install = "python -m pip install -q dashscope\n"
+        install = ""
     # Retry generate until /api/ps lists the model; tee so Salad container logs see it.
     warm_loop = (
         "(\n"
@@ -359,7 +372,7 @@ def warmup_script(model: str, settings: Settings | None = None) -> str:
         "  sed -i 's/listen 8080 default_server;/listen [::]:8080 default_server ipv6only=off;/' \"$conf\"\n"
         "fi\n"
         f"{install}"
-        f"{_wan_sdpa_shell()}"
+        f"{_wan_sdpa_shell() if wan else ''}"
         "/opt/gpu/start.sh &\n"
         "spid=$!\n"
         f"{warm_loop}"

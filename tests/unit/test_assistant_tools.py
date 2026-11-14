@@ -1933,23 +1933,20 @@ def test_create_render_without_prompt_asks(db_session):
 
 def test_generate_wan_queues_local(db_session, monkeypatch):
     from app.assistant.chat import run_tool
+    from app.assistant.tools import ToolError
     from app.config import settings
-    from app.db.models import GenerationJob
 
     monkeypatch.setattr(settings, "wan_base_url", "http://wan/generate")
-    result, opened = run_tool(
-        db_session,
-        "generate_wan",
-        {"prompt": "туман над лесом", "seed": 7, "duration_s": 5},
-    )
-    job = db_session.get(GenerationJob, result["id"])
-    assert job is not None
-    assert job.backend == "local"
-    assert job.seed == 7
-    assert job.prompt == "туман над лесом"
-    assert result["page"] == "/renders"
-    assert opened is not None
-    assert opened.path == "/renders"
+    try:
+        run_tool(
+            db_session,
+            "generate_wan",
+            {"prompt": "туман над лесом", "seed": 7, "duration_s": 5},
+        )
+    except ToolError as exc:
+        assert "локальный Wan отключён" in str(exc)
+    else:
+        raise AssertionError("expected ToolError")
 
 
 def test_generate_wan_without_prompt_asks(db_session):

@@ -18,6 +18,7 @@ import { Maintenance } from "./pages/Maintenance";
 import { Operators } from "./pages/Operators";
 import { Publishing } from "./pages/Publishing";
 import { Renders } from "./pages/Renders";
+import { Reports } from "./pages/Reports";
 import { Settings } from "./pages/Settings";
 
 export default function App() {
@@ -66,6 +67,7 @@ export default function App() {
         <Route path="/publishing" element={<Publishing />} />
         <Route path="/upload" element={<Navigate to="/publishing" replace />} />
         <Route path="/agent" element={<Agent />} />
+        <Route path="/reports" element={<Reports />} />
         <Route path="/renders" element={<Renders />} />
         <Route path="/calendar" element={<Calendar />} />
         <Route path="/activity" element={<Activity />} />

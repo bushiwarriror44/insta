@@ -434,14 +434,19 @@ def test_run_chain_proxy_account_browser_render_publish(
 
     monkeypatch.setattr("app.assistant.tools.wait_render", fake_wait)
 
-    def fake_conn(account, db, probe_mobile=False):
+    def fake_conn(account, db, probe_mobile=False, probe_studio=False, probe_web=False):
         return SimpleNamespace(
             username=account.username,
             overall_ok=True,
+            proxy_assigned=True,
             proxy_label="px",
-            proxy_health=SimpleNamespace(ok=True, error=None),
+            proxy_health=SimpleNamespace(ok=True, error=None, geo_mismatch=False),
             instagram_auth=SimpleNamespace(ok=True, error=None),
+            session_storage=SimpleNamespace(ok=True, error=None),
             run_id=1,
+            logs=[],
+            studio_liveness_ok=True if probe_studio else None,
+            studio_liveness_error=None,
         )
 
     monkeypatch.setattr("app.accounts.connection_test.run_account_connection_test", fake_conn)

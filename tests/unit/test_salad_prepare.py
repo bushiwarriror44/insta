@@ -52,15 +52,17 @@ def test_safe_detail_hides_a_415_body():
     assert "Unsupported" not in text
 
 
-def test_warmup_script_marks_itself_and_names_the_model():
+def test_warmup_script_ollama_only_without_wan_url(app_env, monkeypatch):
+    from app.config import Settings
+
+    monkeypatch.setattr("app.services.salad_gpu.get_settings", lambda: Settings(_env_file=None))
     script = warmup_script("qwen3:32b")
     assert "gpu-warmup" in script
     assert "gateway-ipv6" in script
-    assert "wan-dashscope" in script
-    assert "wan-sdpa-attn" in script
-    assert "pip install -q dashscope" in script
-    assert "attention as flash_attention" in script
-    assert "/opt/wan/wan/modules/model.py" in script
+    assert "ollama-only-warmup" in script
+    assert "wan-dashscope" not in script
+    assert "pip install -q dashscope" not in script
+    assert "/opt/wan/wan/modules/model.py" not in script
     assert "[::]:8080" in script
     assert "qwen3:32b" in script
     assert "127.0.0.1:11434" in script
@@ -68,6 +70,19 @@ def test_warmup_script_marks_itself_and_names_the_model():
     assert "gpu-warmup: generate attempt" in script
     assert "gpu-warmup: model in memory" in script
     assert "/api/ps" in script
+
+
+def test_warmup_script_includes_wan_when_wan_base_url_set(monkeypatch):
+    from app.config import Settings
+
+    cfg = Settings(_env_file=None, wan_base_url="https://gpu.salad.cloud/generate")
+    monkeypatch.setattr("app.services.salad_gpu.get_settings", lambda: cfg)
+    script = warmup_script("qwen3:32b", cfg)
+    assert "wan-dashscope" in script
+    assert "wan-sdpa-attn" in script
+    assert "pip install -q dashscope" in script
+    assert "attention as flash_attention" in script
+    assert "/opt/wan/wan/modules/model.py" in script
 
 
 def test_prepare_starts_stopped_group_and_waits_until_the_model_is_loaded(app_env, monkeypatch):

@@ -404,7 +404,7 @@ def test_studio_login_cli_force_and_service(cli_app, db_session, make_account, m
     from app.db import Platform
     from app.api.schemas import FirstLoginOut
 
-    account = make_account(
+    make_account(
         username="ytcli",
         password="google-pass",
         email="yt@example.com",

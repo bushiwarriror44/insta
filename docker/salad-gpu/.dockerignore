@@ -1,5 +1,11 @@
 *
 !Dockerfile
+!Dockerfile.ollama-only
+!Dockerfile.ollama-base
 !nginx.conf
+!nginx.ollama-only.conf
 !start.sh
+!start-ollama-only.sh
+!ollama-pull.sh
+!ollama-linux-amd64.tar.zst
 !generate_server.py

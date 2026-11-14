@@ -331,6 +331,7 @@ class PanelSettings(Base):
     hero_sms_last_form: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     qubax_api_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     qubax_last_form: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    telegram_allowed_chats: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
@@ -501,6 +502,55 @@ class AgentRun(Base):
     @property
     def questions(self) -> list:
         return _loads(self.questions_json, [])  # type: ignore[return-value]
+
+
+class AssistantJob(Base):
+    """One in-flight assistant task, scoped to the signed-in owner or operator."""
+
+    __tablename__ = "assistant_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    actor: Mapped[str] = mapped_column(String(40), index=True)
+    client_chat_id: Mapped[str] = mapped_column(String(80), default="")
+    prompt: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(16), default="running", index=True)
+    reply: Mapped[str] = mapped_column(Text, default="")
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+    result_json: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+class AgentRunLog(Base):
+    """One line of an assistant run: a panel action, a browser click, or a request for help."""
+
+    __tablename__ = "agent_run_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    assistant_job_id: Mapped[int] = mapped_column(Integer, index=True)
+    kind: Mapped[str] = mapped_column(String(16), default="tool")
+    text: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+class AgentReport(Base):
+    """One autonomous agent task, with the screenshots sent to the operator."""
+
+    __tablename__ = "agent_reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(String(16), default="panel", index=True)
+    status: Mapped[str] = mapped_column(String(16), default="done", index=True)
+    prompt: Mapped[str] = mapped_column(Text, default="")
+    reply: Mapped[str] = mapped_column(Text, default="")
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    screenshots_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+    @property
+    def screenshots(self) -> list:
+        return _loads(self.screenshots_json, [])  # type: ignore[return-value]
 
 
 class Clarification(Base):

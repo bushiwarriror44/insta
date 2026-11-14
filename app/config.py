@@ -36,6 +36,17 @@ class Settings(BaseSettings):
 
     telegram_bot_token: Optional[str] = Field(default=None)
     telegram_chat_id: Optional[str] = Field(default=None)
+    telegram_agent_enabled: bool = Field(default=False)
+    # Empty → reuse telegram_bot_token (prefer a dedicated bot in production).
+    telegram_agent_bot_token: str = Field(default="")
+    telegram_agent_poll_timeout_s: int = Field(default=50, ge=5, le=120)
+    telegram_agent_max_message_len: int = Field(default=4000, ge=200, le=4096)
+    telegram_agent_rate_limit_s: float = Field(default=2.0, ge=0.0, le=60.0)
+    telegram_agent_worker_threads: int = Field(default=2, ge=1, le=8)
+    agent_vision_enabled: bool = Field(default=False)
+    agent_vision_model: str = Field(default="qwen2.5vl:7b")
+    agent_vision_base_url: str = Field(default="")
+    browser_vision_max_steps: int = Field(default=10, ge=1, le=30)
 
     default_daily_post_cap: int = Field(default=3, ge=1, le=20)
     default_min_gap_hours: float = Field(default=4.0, ge=0.5, le=24.0)
@@ -106,7 +117,7 @@ class Settings(BaseSettings):
     fal_model_v2v: str = Field(default="fal-ai/wan-25-preview/image-to-video")
     video_backend: str = Field(default="auto")
     video_backend_chain: str = Field(
-        default="fal,huggingface,pollinations,local,hfspace"
+        default="qubax,fal,huggingface,pollinations,hfspace"
     )
     hf_token: str = Field(default="")
     hf_video_model: str = Field(default="Wan-AI/Wan2.1-T2V-1.3B")

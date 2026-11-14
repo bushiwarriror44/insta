@@ -2,6 +2,7 @@ import {
   BookOpen,
   CalendarDays,
   Clapperboard,
+  ClipboardList,
   Film,
   Sparkles,
   Activity as ActivityIcon,
@@ -28,6 +29,7 @@ import { useHotkeys } from "../hooks/useHotkeys";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { usePollWhenVisible } from "../hooks/usePollWhenVisible";
 import { focusPageSearch, REFRESH_NAV_BADGES, showAssistant } from "../lib/uiEvents";
+import { AgentRunOverlay } from "./AgentRunOverlay";
 import { AgentToggle } from "./AgentToggle";
 import { ConnectionMenu } from "./ConnectionMenu";
 import { Assistant } from "./Assistant";
@@ -42,6 +44,7 @@ const NAV = [
   { to: "/browser", label: "Браузер", icon: MonitorPlay, testId: "nav-browser" },
   { to: "/publishing", label: "Библиотека", icon: Library, testId: "nav-publishing" },
   { to: "/agent", label: "Агент", icon: Sparkles, testId: "nav-agent", badge: "questions" as const },
+  { to: "/reports", label: "Отчёты", icon: ClipboardList, testId: "nav-reports" },
   { to: "/renders", label: "Рендеры", icon: Clapperboard, testId: "nav-renders" },
   { to: "/calendar", label: "Календарь", icon: CalendarDays, testId: "nav-calendar" },
   { to: "/activity", label: "Активность", icon: ActivityIcon, testId: "nav-activity", badge: "review" as const },
@@ -278,6 +281,7 @@ export function Layout() {
         </div>
       </main>
       <Assistant onHiddenChange={setDockHidden} />
+      <AgentRunOverlay />
       {paletteOpen ? <CommandPalette onClose={() => setPaletteOpen(false)} /> : null}
       <Modal open={helpOpen} onClose={() => setHelpOpen(false)} title="Клавиши" trapFocus>
         <ul className="space-y-2 text-sm text-slate-300">

@@ -324,6 +324,10 @@ export function Renders() {
 
   const queueRender = async () => {
     if (!prompt.trim() || uploadingReference || uploadingAudio) return;
+    if (backend === "local") {
+      push("локальный Wan временно недоступен", "error");
+      return;
+    }
     const mismatch = referenceMismatch(references, inputMode);
     if (mismatch) {
       push(mismatch, "error");
@@ -468,31 +472,41 @@ export function Renders() {
           <div className="space-y-2">
             <div className="text-sm text-slate-200">Движок</div>
             <div className="flex flex-wrap gap-2">
-              {backends.map((engine) => (
-                <button
-                  key={engine.name}
-                  type="button"
-                  title={
-                    engine.name === "local"
-                      ? "10–25 мин на Salad · Wan 480p"
-                      : engine.output_note || engine.detail || engine.licence
-                  }
-                  aria-pressed={backend === engine.name}
-                  onClick={() => setBackend(engine.name)}
-                  className={clsx(
-                    "rounded-full px-2.5 py-1 text-xs ring-1 transition-colors",
-                    backend === engine.name
-                      ? "bg-brand-600/20 text-brand-200 ring-brand-500/40"
-                      : engine.healthy
-                        ? "text-emerald-400 ring-emerald-500/30 hover:bg-emerald-500/10"
-                        : "text-slate-500 ring-slate-700 hover:bg-slate-800/60"
-                  )}
-                >
-                  {backendLabel(engine.name)}
-                  {engine.experimental ? " · exp" : ""}
-                  {engine.healthy ? " · ок" : " · нет"}
-                </button>
-              ))}
+              {backends.map((engine) => {
+                const localPaused = engine.name === "local";
+                return (
+                  <button
+                    key={engine.name}
+                    type="button"
+                    disabled={localPaused}
+                    aria-disabled={localPaused || undefined}
+                    title={
+                      localPaused
+                        ? "локальный Wan временно недоступен"
+                        : engine.output_note || engine.detail || engine.licence
+                    }
+                    aria-pressed={localPaused ? false : backend === engine.name}
+                    onClick={() => {
+                      if (localPaused) return;
+                      setBackend(engine.name);
+                    }}
+                    className={clsx(
+                      "rounded-full px-2.5 py-1 text-xs ring-1 transition-colors",
+                      localPaused
+                        ? "cursor-not-allowed text-slate-500 opacity-40 ring-slate-700"
+                        : backend === engine.name
+                          ? "bg-brand-600/20 text-brand-200 ring-brand-500/40"
+                          : engine.healthy
+                            ? "text-emerald-400 ring-emerald-500/30 hover:bg-emerald-500/10"
+                            : "text-slate-500 ring-slate-700 hover:bg-slate-800/60"
+                    )}
+                  >
+                    {backendLabel(engine.name)}
+                    {engine.experimental ? " · exp" : ""}
+                    {engine.healthy ? " · ок" : " · нет"}
+                  </button>
+                );
+              })}
             </div>
             {!qubaxConfigured ? (
               <p className="text-xs text-slate-500">

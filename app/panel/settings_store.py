@@ -361,3 +361,74 @@ def auth_is_required(db: Optional[Session] = None) -> bool:
 def gate_is_enabled(db: Session) -> bool:
     """Secret-path gate runs whenever panel auth is required."""
     return auth_is_required(db)
+
+
+def _telegram_allowed_raw(db: Session) -> list[dict[str, Any]]:
+    row = get_or_create_panel_settings(db)
+    raw = row.telegram_allowed_chats
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in data:
+        if isinstance(item, dict) and item.get("chat_id") is not None:
+            out.append(item)
+    return out
+
+
+def get_telegram_allowed_chats(db: Session) -> list[dict[str, Any]]:
+    return list(_telegram_allowed_raw(db))
+
+
+def telegram_chat_role(db: Session, chat_id: int) -> str | None:
+    for item in _telegram_allowed_raw(db):
+        try:
+            cid = int(item.get("chat_id"))
+        except (TypeError, ValueError):
+            continue
+        if cid == chat_id:
+            role = str(item.get("role") or "owner").strip().lower()
+            return role if role in ("owner", "operator") else "owner"
+    return None
+
+
+def telegram_chat_is_allowed(db: Session, chat_id: int) -> bool:
+    return telegram_chat_role(db, chat_id) is not None
+
+
+def verify_telegram_auth(db: Session, chat_id: int, token: str) -> bool:
+    expected = (settings.admin_token or "").strip()
+    if not expected:
+        return False
+    if not secrets.compare_digest((token or "").strip(), expected):
+        return False
+    from datetime import datetime, timezone
+
+    rows = [r for r in _telegram_allowed_raw(db) if int(r.get("chat_id", -1)) != chat_id]
+    rows.append(
+        {
+            "chat_id": chat_id,
+            "role": "owner",
+            "verified_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    row = get_or_create_panel_settings(db)
+    row.telegram_allowed_chats = json.dumps(rows, ensure_ascii=False)
+    db.commit()
+    return True
+
+
+def revoke_telegram_chat(db: Session, chat_id: int) -> bool:
+    before = _telegram_allowed_raw(db)
+    after = [r for r in before if int(r.get("chat_id", -1)) != chat_id]
+    if len(after) == len(before):
+        return False
+    row = get_or_create_panel_settings(db)
+    row.telegram_allowed_chats = json.dumps(after, ensure_ascii=False) if after else None
+    db.commit()
+    return True

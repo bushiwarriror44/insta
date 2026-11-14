@@ -79,7 +79,6 @@ from app.browser.studio_native_chrome import (
     resolve_google_chrome_binary,
     stop_native_chrome,
     summarize_native_chrome_stderr,
-    tail_native_chrome_stderr,
     wait_native_chrome_ready,
 )
 from app.browser.vnc_stack import VncStack, allocate_ports, vnc_stack_available
@@ -678,6 +677,9 @@ class BrowserSessionState:
     browser: Any = None
     context: Any = None
     page: Any = None
+    loop: Any = None
+    run_job_id: int | None = None
+    run_clicks_armed: bool = False
     poll_task: asyncio.Task | None = None
     auto_stop_task: asyncio.Task | None = None
     studio_nav_task: asyncio.Task | None = None
@@ -702,6 +704,43 @@ class BrowserSessionState:
         log_fn("browser_session.action", username=self.username, step=step, level=level, message=message)
 
 
+async def _arm_run_clicks(session: BrowserSessionState) -> None:
+    """Record clicks on the in-app browser while an assistant run owns the session."""
+    if session.run_clicks_armed or session.context is None:
+        return
+    session.run_clicks_armed = True
+
+    async def _on_click(_source: Any, payload: Any) -> None:
+        job_id = session.run_job_id
+        if job_id is None or not isinstance(payload, dict):
+            return
+        from app.assistant.run_log import append_for
+
+        label = str(payload.get("label") or "элемент").strip()[:120] or "элемент"
+        url = str(payload.get("url") or "").strip()[:300]
+        append_for(job_id, "browser", f"клик «{label}» на {url}".strip())
+
+    try:
+        await session.context.expose_binding("agentRunClick", _on_click)
+        await session.context.add_init_script(
+            """
+            document.addEventListener("click", (event) => {
+              const el = event.target;
+              if (!el || typeof agentRunClick !== "function") return;
+              const label = (el.getAttribute && (el.getAttribute("aria-label") || ""))
+                || (el.innerText || "")
+                || (el.tagName || "");
+              agentRunClick({
+                label: String(label).replace(/\\s+/g, " ").trim().slice(0, 120),
+                url: location.href
+              });
+            }, true);
+            """
+        )
+    except Exception:
+        session.run_clicks_armed = False
+
+
 class BrowserSessionManager:
     def __init__(self) -> None:
         self._sessions: dict[str, BrowserSessionState] = {}
@@ -715,7 +754,15 @@ class BrowserSessionManager:
         return self._display_counter
 
     def get(self, username: str) -> BrowserSessionState | None:
-        return self._sessions.get(username)
+        session = self._sessions.get(username)
+        if session is None:
+            return None
+        from app.assistant.run_log import current_job_id
+
+        job_id = current_job_id()
+        if job_id is not None:
+            session.run_job_id = job_id
+        return session
 
     def set_login_orchestration(self, username: str, active: bool = True) -> None:
         session = self._sessions.get(username)
@@ -822,6 +869,7 @@ class BrowserSessionManager:
         surface: LoginSurface | str | None = None,
         proxy_snapshot: Any = None,
         studio_autofill: bool = False,
+        run_job_id: int | None = None,
     ) -> BrowserSessionState:
         username = account.username
         platform_value = _account_platform_value(account)
@@ -838,6 +886,8 @@ class BrowserSessionManager:
                 BrowserSessionStatus.error,
                 BrowserSessionStatus.saved,
             ):
+                if run_job_id is not None:
+                    existing.run_job_id = run_job_id
                 return existing
 
             if existing:
@@ -931,6 +981,8 @@ class BrowserSessionManager:
                 session.launch_warning = " ".join(surface_warnings)
                 for note in surface_warnings:
                     session.log("warn", "surface", note)
+            session.loop = asyncio.get_running_loop()
+            session.run_job_id = run_job_id
             self._sessions[username] = session
 
         try:
@@ -1378,6 +1430,7 @@ class BrowserSessionManager:
 
         session.context = await session.browser.new_context(**context_kwargs)
         await _apply_stealth_context(session.context, surface)
+        await _arm_run_clicks(session)
         session.page = await session.context.new_page()
         if stealth_apply is not None:
             try:
@@ -1588,6 +1641,21 @@ class BrowserSessionManager:
             except Exception as exc:
                 session.log("warn", "autofill", f"Автозаполнение не удалось: {exc}")
                 logger.warning("browser_session.autofill_failed", username=account.username, error=str(exc))
+                try:
+                    from app.behavior.browser_vision import vision_enabled, vision_login_fallback
+
+                    if vision_enabled():
+                        session.log("info", "vision", "Пробую vision-fallback…")
+                        await vision_login_fallback(
+                            page,
+                            goal="fill and submit Instagram login if visible",
+                        )
+                except Exception as vis_exc:
+                    logger.warning(
+                        "browser_session.vision_fallback_failed",
+                        username=account.username,
+                        error=str(vis_exc),
+                    )
 
         session.page_url = page.url
 

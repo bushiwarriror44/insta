@@ -15,6 +15,8 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.assistant import tools
+from app.assistant.run_log import append as log_append
+from app.assistant.run_log import intervention_text, log_tool
 from app.assistant.tools import Opened, ToolError
 from app.config import Settings, get_settings
 from app.logging_setup import get_logger
@@ -77,7 +79,7 @@ fingerprint только для Instagram, `get_session`, проверить п�
 опубликовать ролик (`publish_now`, `enqueue_publish`; тип из площадки аккаунта, поля title / caption / description / tags / when), \
 перенести слот (`reschedule_job`), править лимиты и проверку (`update_account`: daily_post_cap, hold_for_review, login_surface), \
 поставить план (`plan_account`: duration_s / auto_schedule; список — `list_plans` / `list_questions` / `list_sources` / `list_presets`, пресет — `apply_preset`), превью (`preview_plan`), \
-поставить рендер (`create_render`, по умолчанию цепочка `auto`) и склейку (`compose`), \
+поставить рендер (`create_render`, по умолчанию `auto` — цепочка с **Qubax** первым, затем fal/HF) и склейку (`compose`), \
 статусы движков — `list_render_backends`, \
 ролик на Wan — `generate_wan` (бэкенд local). После каждого `create_render` и `generate_wan` **всегда** вызывай `wait_render` с job_id: \
 пока рендер идёт, чат занят, видеокарта под ролик (чат-модель выгружается). Дождись done или failed, затем ответь оператору. \
@@ -125,7 +127,8 @@ RUN_PROMPT = """\
 Можно стартовать живой Playwright (`start_browser`) для Instagram, YouTube и TikTok, \
 смотреть статус (`browser_status`), сохранить cookies (`save_browser_session`), \
 передать код 2FA (`submit_login_code` или `submit_browser_code` при login-сессии). Без сессии — `ensure_account_session` / `login_account`; \
-не выдумывай код. При ошибке — `account_logs` по run_id. \
+не выдумывай код. При ошибке процитируй её дословно — снимок браузера или карточка ошибки уйдёт сам. `capture_browser_shot` снимает текущий экран. При ошибке — `account_logs` по run_id. \
+При `backend=auto` первый движок — Qubax (ключ в панели); Wan только через `generate_wan` / `backend=local`. \
 После `create_render` дождись `wait_render`, затем `publish_now`. После `plan_account` — `wait_plan`, потом `wait_render` по generation_ids. Удаления, операторы, секретный путь и мастер-пароль — нельзя."""
 
 
@@ -938,9 +941,11 @@ BROWSER_TOOL_NAMES = frozenset(
     {
         "start_browser",
         "browser_status",
+        "browser_observe",
         "save_browser_session",
         "submit_browser_code",
         "wait_plan",
+        "capture_browser_shot",
     }
 )
 
@@ -959,6 +964,23 @@ BROWSER_TOOLS = [
         "browser_status",
         "Статус живого Playwright-сеанса аккаунта.",
         {"account_id": {"type": "integer"}, "username": {"type": "string"}},
+        [],
+    ),
+    schema(
+        "capture_browser_shot",
+        "Снять PNG текущего внутреннего браузера и приложить его к ответу.",
+        {"account_id": {"type": "integer"}, "username": {"type": "string"}},
+        [],
+    ),
+    schema(
+        "browser_observe",
+        "Снимок экрана браузера + локальная VL-модель (нужен AGENT_VISION_ENABLED). apply=true — выполнить предложенное действие.",
+        {
+            "account_id": {"type": "integer"},
+            "username": {"type": "string"},
+            "goal": {"type": "string"},
+            "apply": {"type": "boolean"},
+        },
         [],
     ),
     schema(
@@ -1144,6 +1166,7 @@ class Answer:
     offer_local_switch: dict[str, Any] | None = None
     cards: list[dict[str, Any]] = field(default_factory=list)
     browser_target: dict[str, Any] | None = None
+    tool_errors: list[str] = field(default_factory=list)
 
 
 def _browser_target_from_start(result: Any) -> dict[str, Any] | None:
@@ -1615,12 +1638,37 @@ def run_tool(
             ),
             None,
         )
+    if name == "capture_browser_shot":
+        from app.assistant.browser_shots import evidence_url
+
+        url = evidence_url(
+            db,
+            username=_optional_text(args, "username"),
+            settings=settings,
+            token=token,
+            allow_panel=False,
+        )
+        if not url:
+            raise ToolError("Нет открытого внутреннего браузера для снимка. Сначала start_browser.")
+        opened = tools.Opened(path="/browser", what="снимок браузера", screenshot_url=url)
+        return {"снимок": "готов", "username": _optional_text(args, "username")}, opened
     if name == "browser_status":
         return (
             tools.browser_status(
                 db,
                 account_id=_optional_id(args, "account_id"),
                 username=_optional_text(args, "username"),
+            ),
+            None,
+        )
+    if name == "browser_observe":
+        return (
+            tools.browser_observe(
+                db,
+                account_id=_optional_id(args, "account_id"),
+                username=_optional_text(args, "username"),
+                goal=str(args.get("goal") or "observe login screen"),
+                apply=bool(args.get("apply")),
             ),
             None,
         )
@@ -2136,6 +2184,7 @@ def stream(
     allow_browser: bool = False,
     rounds: int | None = None,
     viewer_role: str | None = None,
+    control: Any = None,
 ) -> Iterator[Step | Answer]:
     settings = settings or get_settings()
     if salad_configured(settings):
@@ -2199,6 +2248,7 @@ def stream(
     last_operator_message: str | None = None
     cards: list[dict[str, Any]] = []
     browser_target: dict[str, Any] | None = None
+    tool_errors: list[str] = []
 
     with http_client(
         settings,
@@ -2206,6 +2256,8 @@ def stream(
         headers=_headers(settings),
     ) as client:
         for _ in range(limit):
+            if control is not None:
+                control()
             said: list[str] = []
             message = yield from _complete(
                 client,
@@ -2267,6 +2319,7 @@ def stream(
                     cut=cut,
                     cards=list(cards),
                     browser_target=browser_target,
+                    tool_errors=list(tool_errors),
                 )
                 return
 
@@ -2311,6 +2364,8 @@ def stream(
                                 ],
                             }
                         )
+                    if control is not None:
+                        control()
                     used.append(work_name)
                     yield Step(
                         kind="tool", text=describe(work_name, work_args), name=work_name
@@ -2332,6 +2387,46 @@ def stream(
                     if outcome is None:
                         continue
                     result, went = outcome.result, outcome.went
+                    from app.assistant.browser_shots import shot_for_tool
+
+                    shot = shot_for_tool(
+                        db,
+                        work_name,
+                        work_args,
+                        result,
+                        settings=settings,
+                        token=token,
+                    )
+                    if shot:
+                        if not isinstance(result, dict):
+                            result = {"результат": result, "снимок": shot}
+                        else:
+                            result["снимок"] = shot
+                        if went is None or not went.screenshot_url:
+                            went = Opened(
+                                path=went.path if went is not None else "/browser",
+                                query=went.query if went is not None else None,
+                                what=(went.what if went is not None else "") or "браузер",
+                                screenshot_url=shot,
+                            )
+                    if isinstance(result, dict) and result.get("ошибка"):
+                        tool_errors.append(str(result["ошибка"]))
+                    log_tool(describe(work_name, work_args), work_args, result)
+                    blocked = intervention_text(result)
+                    if blocked:
+                        log_append("need", blocked)
+                        yield Answer(
+                            reply=blocked,
+                            opened=opened,
+                            used=used,
+                            images=images,
+                            asks=[blocked],
+                            created=created,
+                            cards=list(cards),
+                            browser_target=browser_target,
+                            tool_errors=list(tool_errors),
+                        )
+                        return
                     om = _operator_message_from_tool_result(result)
                     if om:
                         last_operator_message = om
@@ -2396,8 +2491,14 @@ def stream(
                             fields=fields,
                             form_kind=form_kind,
                         )
+                        asked = [str(item).strip() for item in questions if str(item).strip()]
+                        need = (why or "Нужны уточнения, чтобы продолжить.").strip()
+                        for question in asked:
+                            if question not in need:
+                                need = f"{need}\n{question}"
+                        log_append("need", need)
                         yield Answer(
-                            reply=why or "Нужны уточнения, чтобы продолжить.",
+                            reply=need,
                             opened=opened,
                             used=used,
                             images=images,
@@ -2407,6 +2508,7 @@ def stream(
                             created=created,
                             cards=list(cards),
                             browser_target=browser_target,
+                            tool_errors=list(tool_errors),
                         )
                         return
                     if isinstance(result, dict) and result.get("offer_local_switch"):
@@ -2424,6 +2526,7 @@ def stream(
                             offer_local_switch={"job_id": job_id, "message": msg},
                             cards=list(cards),
                             browser_target=browser_target,
+                            tool_errors=list(tool_errors),
                         )
                         return
 
@@ -2435,6 +2538,7 @@ def stream(
         created=created,
         cards=list(cards),
         browser_target=browser_target,
+        tool_errors=list(tool_errors),
     )
 
 

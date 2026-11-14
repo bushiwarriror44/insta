@@ -274,7 +274,7 @@ def test_create_generation_local_blocked_without_async(api_client, monkeypatch):
         json={"prompt": "mist", "backend": "local"},
     )
     assert res.status_code == 409
-    assert "async API" in res.json()["detail"]
+    assert "локальный Wan отключён" in res.json()["detail"]
 
 
 def test_api_generations_reference_filename_sanitized(api_client, db_session, monkeypatch):
@@ -457,7 +457,7 @@ def test_generations_list_offer_local_only_with_marker(api_client, db_session, m
     rows = api_client.get("/api/generations").json()
     by_id = {row["id"]: row for row in rows}
     assert by_id[plain.id]["offer_local_switch"] is False
-    assert by_id[offered.id]["offer_local_switch"] is True
+    assert by_id[offered.id]["offer_local_switch"] is False
 
 
 def test_retry_generation_can_set_backend_local(api_client, db_session, monkeypatch):
@@ -482,10 +482,11 @@ def test_retry_generation_can_set_backend_local(api_client, db_session, monkeypa
         ),
     )
     res = api_client.post(f"/api/generations/{job.id}/retry", json={"backend": "local"})
-    assert res.status_code == 200
+    assert res.status_code == 409
+    assert "локальный Wan отключён" in res.json()["detail"]
     db_session.refresh(job)
-    assert job.backend == "local"
-    assert job.status == PipelineStatus.queued
+    assert job.backend == "auto"
+    assert job.status == PipelineStatus.failed
 
 
 def test_create_composition_rejects_removed_asset(api_client, db_session, app_env):

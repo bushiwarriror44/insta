@@ -13,8 +13,10 @@ from fastapi.staticfiles import StaticFiles
 from app.api.deps import AuthPrincipal, DocsOwnerDep
 from app.api.routes import (
     accounts,
+    agent_reports,
     admin_notes,
     assistant,
+    assistant_jobs,
     auth,
     browser,
     browser_free,
@@ -99,6 +101,9 @@ async def _salad_idle_loop() -> None:
 async def lifespan(app: FastAPI):
     configure_logging()
     init_db()
+    from app.assistant.job_control import fail_interrupted
+
+    fail_interrupted()
     db = SessionLocal()
     try:
         row = get_or_create_panel_settings(db)
@@ -168,6 +173,8 @@ def create_app() -> FastAPI:
     app.include_router(admin_notes.router)
     app.include_router(worker.router)
     app.include_router(assistant.router)
+    app.include_router(assistant_jobs.router)
+    app.include_router(agent_reports.router)
     app.include_router(llm_gateway.credentials_router)
     app.include_router(llm_gateway.proxy_router)
     app.include_router(llm_gateway.mcp_router)

@@ -2741,6 +2741,10 @@ def create_render(
         name = one_word(backend)
     if name not in available_backends():
         raise ToolError(f"неизвестный бэкенд {name!r}")
+    if name == "local":
+        from app.generation.local_offer import LOCAL_WAN_DISABLED_DETAIL
+
+        raise ToolError(LOCAL_WAN_DISABLED_DETAIL)
     if name == "local" and (settings.wan_base_url or "").strip():
         from app.generation.wan_remote import local_async_required_detail
         from app.services.gateway_probe import wan_async_capable
@@ -2978,6 +2982,9 @@ def start_browser(
     resolved = resolve_playwright_surface(login_surface or account.login_surface)
     account.login_surface = resolved
     db.commit()
+    from app.assistant.run_log import current_job_id
+
+    run_job_id = current_job_id()
     try:
         _run_async(
             browser_session_manager.start_session(
@@ -2985,6 +2992,7 @@ def start_browser(
                 proxy,
                 surface=resolved,
                 proxy_snapshot=None,
+                run_job_id=run_job_id,
             )
         )
     except RuntimeError as exc:
@@ -3001,6 +3009,69 @@ def start_browser(
         "error": status.get("error"),
         "vnc_path": status.get("vnc_path"),
     }
+
+
+def browser_observe(
+    db: Session,
+    *,
+    account_id: int | None = None,
+    username: str | None = None,
+    goal: str = "describe the page and next login step",
+    apply: bool = False,
+) -> dict[str, Any]:
+    from app.behavior.browser_vision import (
+        apply_vision_action,
+        capture_viewport_png,
+        vision_enabled,
+        vision_plan,
+    )
+    from app.browser.session_manager import browser_session_manager
+
+    if not vision_enabled():
+        return {
+            "ok": False,
+            "hint": "Включите AGENT_VISION_ENABLED и задайте AGENT_VISION_MODEL",
+        }
+    account = _account_lookup(db, account_id=account_id, username=username)
+    session = browser_session_manager.get(account.username)
+    if session is None or session.page is None:
+        raise ToolError("Сначала start_browser для этого аккаунта")
+
+    async def _observe() -> dict[str, Any]:
+        png = await capture_viewport_png(session.page)
+        action = vision_plan(png, goal=(goal or "").strip() or "observe")
+        applied = False
+        if apply and action.action not in ("unknown", "done"):
+            await apply_vision_action(session.page, action)
+            applied = True
+        return {
+            "ok": True,
+            "username": account.username,
+            "action": action.action,
+            "reason": action.reason,
+            "selector_hint": action.selector_hint,
+            "x": action.x,
+            "y": action.y,
+            "text": action.text,
+            "applied": applied,
+            "page_url": session.page.url if session.page else None,
+        }
+
+    observed = _run_async(_observe())
+    if observed.get("applied"):
+        from app.assistant.run_log import append
+
+        action = str(observed.get("action") or "")
+        if action == "click":
+            append(
+                "browser",
+                f"клик по координатам {observed.get('x')},{observed.get('y')}",
+            )
+        elif action == "type":
+            typed = observed.get("text") or ""
+            target = observed.get("selector_hint") or "поле"
+            append("browser", f"ввод текста ({len(str(typed))} симв.) в {target}")
+    return observed
 
 
 def browser_status(

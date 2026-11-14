@@ -28,7 +28,7 @@ def test_should_offer_local_switch_on_marker(monkeypatch):
         "app.generation.registry.get_backend",
         lambda *_a, **_k: SimpleNamespace(healthcheck=lambda: True),
     )
-    assert should_offer_local_switch(job, settings) is True
+    assert should_offer_local_switch(job, settings) is False
 
 
 def test_should_not_offer_cloud_fail_without_marker(monkeypatch):

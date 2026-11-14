@@ -2,13 +2,41 @@
 
 Не входит в `docker compose` админ-VPS. Сборка на своём ПК, публикация на Docker Hub, одна Container Group на Salad.
 
+**По умолчанию на панели:** Salad нужен для **Ollama (чат)** — `AGENT_BASE_URL` на порт Ollama группы. **Wan/local-рендер** только если в `.env` задан `WAN_BASE_URL` и в `VIDEO_BACKEND_CHAIN` есть `local` (legacy; основной рендер — Qubax). Command warmup на Utah без `WAN_BASE_URL` не тянет dashscope/SDPA-патч Wan.
+
 Внутри: Ollama `qwen3:32b` (в каталоге Qwen3 нет 20B; 32B — следующий размер после 8B/14B), Wan 2.1 T2V 1.3B, nginx `:8080` (`/v1` и `/api` → Ollama, `/generate` → видео). На 24 GB VRAM чат и ролик по очереди: 32B Q4 занимает ~20 GB, перед Wan панель делает `keep_alive: 0`.
 
 **Attention:** пакет `flash-attn` в образ не ставится (тяжёлые CUDA-wheels на Salad). В Dockerfile и в Command панели (`wan-sdpa-attn`) `model.py` переключается на `attention()` → PyTorch SDPA. Без этого Wan падает с `assert FLASH_ATTN_2_AVAILABLE`. После обновления панели сделайте Stop/Start группы, чтобы применился новый Command (полная пересборка образа нужна только для узлов с нуля).
 
+## Профили сборки
+
+| Профиль | Dockerfile | Назначение |
+| --- | --- | --- |
+| `ollama-only` | `Dockerfile.ollama-only` | Ollama на `:8080`: чат (`AGENT_MODEL`, default `qwen3:32b`) + VL (`AGENT_VISION_MODEL`, default `qwen2.5vl:7b`) для browser vision; Qubax в облаке. VRAM: модели по очереди, не параллельно (~60–90 ГБ на диске образа) |
+| `wan` | `Dockerfile` | Ollama + Wan 1.3B + `/generate` (legacy local) |
+
+```powershell
+cd C:\Users\PC\Desktop\insta\docker\salad-gpu
+docker compose -f compose.build.yml --profile ollama-only build
+docker compose -f compose.build.yml --profile wan build
+```
+
+Сборка с **сохранением прогресса** (кэш BuildKit на `D:\docker-cache\buildkit`, повтор при обрыве, лог с дописыванием):
+
+```powershell
+# Если на C: мало места — сначала перенесите диск Docker на D: (сохраняет кэш сборки):
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\PC\Desktop\insta\scripts\migrate-docker-disk-to-d.ps1
+
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\PC\Desktop\insta\scripts\build-ollama-vision-d.ps1
+# состояние: D:\docker-export\build-state.json ; лог: D:\docker-export\build-ollama-vision.log
+# или одна сборка: scripts\resume-ollama-vision-build.ps1
+```
+
+Тег для Hub: `docker tag insta-gpu:ollama-only ТВОЙ_ЛОГИН/insta-gpu:ollama-only` (или `:chat-wan` для wan).
+
 ## Сборка (Windows, Docker Desktop)
 
-Свободно ~70 ГБ диска (32B тяжелее 8B). Сборка 2–4 часа (качает модель и веса).
+Свободно ~70 ГБ диска для **wan** (32B + веса Wan). **ollama-only** — меньше, без Wan-слоёв. Сборка wan 2–4 часа.
 
 ```powershell
 cd C:\Users\PC\Desktop\insta\docker\salad-gpu

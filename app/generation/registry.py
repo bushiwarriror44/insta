@@ -13,7 +13,7 @@ from app.generation.pollinations import PollinationsVideoBackend
 from app.generation.qubax import QubaxVideoBackend
 from app.generation.slideshow import SlideshowVideoBackend
 
-DEFAULT_CHAIN = "fal,huggingface,pollinations,local,hfspace"
+DEFAULT_CHAIN = "qubax,fal,huggingface,pollinations,hfspace"
 
 _BACKENDS: dict[str, type[VideoBackend]] = {
     FalVideoBackend.name: FalVideoBackend,

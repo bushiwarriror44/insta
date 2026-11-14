@@ -29,7 +29,16 @@ export function RenderLocalSwitchModal({
           <button type="button" className="btn-ghost" disabled={busy} onClick={onCancel}>
             Отмена
           </button>
-          <button type="button" className="btn-primary" disabled={busy} onClick={onConfirm}>
+          <button
+            type="button"
+            className="btn-primary cursor-not-allowed text-slate-500 opacity-40"
+            disabled
+            aria-disabled
+            title="локальный Wan временно недоступен"
+            onClick={() => {
+              void onConfirm;
+            }}
+          >
             Переключай
           </button>
         </>

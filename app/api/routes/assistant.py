@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import AuthDep, AuthPrincipal, get_db
 from app.assistant.chat import Answer, AssistantError, Step, ask, stream
+from app.assistant.reports import record_agent_report, report_screenshot_urls, notify_telegram
 from app.config import Settings, get_settings
 from app.logging_setup import get_logger
 
@@ -68,6 +69,46 @@ class AssistantOut(BaseModel):
     browser_target: Optional[dict] = None
 
 
+def _user_prompt(messages: list[AssistantMessage] | list[dict]) -> str:
+    for message in reversed(messages):
+        role = message.role if isinstance(message, AssistantMessage) else message.get("role")
+        content = message.content if isinstance(message, AssistantMessage) else message.get("content")
+        if role == "user" and str(content or "").strip():
+            return str(content).strip()
+    return ""
+
+
+def _publish_report(
+    db: Session,
+    *,
+    prompt: str,
+    answer: Answer | None = None,
+    error: str | None = None,
+    settings: Settings | None = None,
+    token: str | None = None,
+) -> None:
+    tool_errors = list(answer.tool_errors) if answer is not None else []
+    err = (error or "").strip() or ("; ".join(tool_errors) if tool_errors else None)
+    reply = answer.reply if answer is not None else ""
+    shown = reply
+    if err and err not in shown:
+        shown = f"Ошибка: {err}\n\n{shown}".strip()
+    try:
+        row = record_agent_report(
+            db,
+            source="panel",
+            prompt=prompt,
+            reply=shown,
+            error=err,
+            images=list(answer.images) if answer is not None else [],
+            settings=settings,
+            token=token,
+        )
+        notify_telegram(shown, report_screenshot_urls(row, settings), settings=settings)
+    except Exception:
+        log.exception("assistant.report_failed")
+
+
 def _ensure_user_turn(messages: list[AssistantMessage]) -> None:
     for message in messages:
         if message.role != "user":
@@ -104,7 +145,21 @@ def talk(
             viewer_role=principal.role,
         )
     except AssistantError as exc:
+        _publish_report(
+            db,
+            prompt=_user_prompt(payload.messages),
+            error=str(exc),
+            settings=settings,
+            token=_bearer(authorization),
+        )
         raise HTTPException(status_code=503 if exc.retryable else 409, detail=str(exc)) from exc
+    _publish_report(
+        db,
+        prompt=_user_prompt(payload.messages),
+        answer=answer,
+        settings=settings,
+        token=_bearer(authorization),
+    )
     return _answer_out(answer)
 
 
@@ -143,7 +198,21 @@ def run_prompt(
             viewer_role=principal.role,
         )
     except AssistantError as exc:
+        _publish_report(
+            db,
+            prompt=payload.prompt,
+            error=str(exc),
+            settings=settings,
+            token=_bearer(authorization),
+        )
         raise HTTPException(status_code=503 if exc.retryable else 409, detail=str(exc)) from exc
+    _publish_report(
+        db,
+        prompt=payload.prompt,
+        answer=answer,
+        settings=settings,
+        token=_bearer(authorization),
+    )
     return _answer_out(answer)
 
 
@@ -161,6 +230,8 @@ def talk_streaming(
     allow_browser = bool(payload.allow_browser and principal.role == "owner")
 
     def events() -> Iterator[str]:
+        final: Answer | None = None
+        failed: str | None = None
         try:
             for step in stream(
                 db,
@@ -174,6 +245,7 @@ def talk_streaming(
                 viewer_role=viewer_role,
             ):
                 if isinstance(step, Answer):
+                    final = step
                     done_payload: dict = {
                         "type": "done",
                         "reply": step.reply,
@@ -211,15 +283,26 @@ def talk_streaming(
                         payload_step["ratio"] = step.ratio
                     yield _event(payload_step)
         except AssistantError as exc:
+            failed = str(exc)
             yield _event({"type": "error", "detail": str(exc), "retryable": exc.retryable})
         except Exception:
             log.exception("assistant.stream_failed")
+            failed = "Связь с чатом оборвалась. Напишите ещё раз."
             yield _event(
                 {
                     "type": "error",
-                    "detail": "Связь с чатом оборвалась. Напишите ещё раз.",
+                    "detail": failed,
                     "retryable": True,
                 }
+            )
+        finally:
+            _publish_report(
+                db,
+                prompt=_user_prompt(payload.messages),
+                answer=final,
+                error=failed,
+                settings=settings,
+                token=token,
             )
 
     return StreamingResponse(

@@ -1,0 +1,53 @@
+# syntax=docker/dockerfile:1
+# Salad / GPU replica: Ollama chat + VL for browser vision (no Wan).
+# BuildKit cache id=insta-ollama-models keeps partial pulls across failed builds.
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+
+ARG AGENT_MODEL=qwen3:8b
+ARG AGENT_VISION_MODEL=qwen2.5vl:7b
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    OLLAMA_HOST=0.0.0.0:11434 \
+    OLLAMA_KEEP_ALIVE=30m \
+    AGENT_MODEL=${AGENT_MODEL} \
+    AGENT_VISION_MODEL=${AGENT_VISION_MODEL}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl nginx zstd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Local archive avoids hung curl|sh during build (download once on host).
+COPY ollama-linux-amd64.tar.zst /tmp/ollama-linux-amd64.tar.zst
+RUN mkdir -p /usr/local/lib/ollama \
+ && zstd -d -c /tmp/ollama-linux-amd64.tar.zst | tar -C /usr/local -xf - \
+ && ln -sf /usr/local/bin/ollama /usr/bin/ollama \
+ && rm -f /tmp/ollama-linux-amd64.tar.zst \
+ && ollama --version
+
+ENV OLLAMA_MODELS=/opt/ollama/models
+
+ARG AGENT_MODEL=qwen3:8b
+ARG AGENT_VISION_MODEL=qwen2.5vl:7b
+
+COPY ollama-pull.sh /tmp/ollama-pull.sh
+RUN sed -i 's/\r$//' /tmp/ollama-pull.sh && chmod +x /tmp/ollama-pull.sh
+
+RUN --mount=type=cache,id=insta-ollama-models,target=/ollama-cache \
+    OLLAMA_MODELS=/ollama-cache/models /tmp/ollama-pull.sh "${AGENT_MODEL}" \
+ && mkdir -p /opt/ollama/models \
+ && cp -a /ollama-cache/models/. /opt/ollama/models/
+
+RUN --mount=type=cache,id=insta-ollama-models,target=/ollama-cache \
+    OLLAMA_MODELS=/ollama-cache/models /tmp/ollama-pull.sh "${AGENT_VISION_MODEL}" \
+ && mkdir -p /opt/ollama/models \
+ && cp -a /ollama-cache/models/. /opt/ollama/models/
+
+COPY nginx.ollama-only.conf /etc/nginx/conf.d/salad.conf
+COPY start-ollama-only.sh /opt/gpu/start.sh
+RUN rm -f /etc/nginx/sites-enabled/default \
+ && sed -i 's/\r$//' /opt/gpu/start.sh \
+ && chmod +x /opt/gpu/start.sh
+
+WORKDIR /opt/gpu
+EXPOSE 8080
+CMD ["/opt/gpu/start.sh"]

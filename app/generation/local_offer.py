@@ -7,6 +7,9 @@ from app.config import Settings, get_settings
 from app.db.models import GenerationJob, PipelineStatus
 
 LOCAL_SWITCH_OFFER_MARKER = "LOCAL_SWITCH_OFFER:"
+LOCAL_WAN_DISABLED_DETAIL = "локальный Wan отключён"
+# Pause offers and new local jobs. The checks below stay so the switch can be turned back on.
+_LOCAL_WAN_PAUSED = True
 
 _WAN_HEALTH_CACHE: tuple[float, bool] | None = None
 _WAN_HEALTH_TTL_S = 60.0
@@ -43,6 +46,8 @@ def local_wan_available(settings: Settings | None = None) -> bool:
 
 
 def should_offer_local_switch(job: GenerationJob, settings: Settings | None = None) -> bool:
+    if _LOCAL_WAN_PAUSED:
+        return False
     settings = settings or get_settings()
     if job.status not in (PipelineStatus.failed, PipelineStatus.dead):
         return False

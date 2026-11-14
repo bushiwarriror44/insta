@@ -1,0 +1,19 @@
+# Local build helpers (not part of admin VPS docker compose).
+# Example:
+#   docker compose -f compose.build.yml --profile ollama-only build
+#   docker compose -f compose.build.yml --profile wan build
+
+services:
+  salad-gpu-ollama-only:
+    profiles: ["ollama-only"]
+    build:
+      context: .
+      dockerfile: Dockerfile.ollama-only
+    image: insta-gpu:ollama-only
+
+  salad-gpu-wan:
+    profiles: ["wan"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: insta-gpu:chat-wan

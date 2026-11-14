@@ -40,6 +40,10 @@ from app.services.retry import NotRetriable, revive
 
 def _block_local_without_async(backend: str) -> None:
     name = (backend or "").strip().lower()
+    if name == "local":
+        from app.generation.local_offer import LOCAL_WAN_DISABLED_DETAIL
+
+        raise HTTPException(status_code=409, detail=LOCAL_WAN_DISABLED_DETAIL)
     if name != "local" or not (settings.wan_base_url or "").strip():
         return
     from app.services.gateway_probe import wan_async_capable

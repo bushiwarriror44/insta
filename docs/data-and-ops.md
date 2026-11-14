@@ -49,6 +49,14 @@ Docker: `python -m app.cli` не подменяет compose. Логи серви
 
 ## Telegram
 
-Необязательно. `TELEGRAM_BOT_TOKEN` и `TELEGRAM_CHAT_ID` в `.env`. Если оба заданы, воркер шлёт короткие алерты (челлендж, blocked, мёртвый прокси и т.п.) и пишет `Event` в БД даже при сбое доставки. Токен в документы не копировать. Это не чат панели и не «подключить Ollama к Telegram».
+**Алерты (воркер):** необязательно. `TELEGRAM_BOT_TOKEN` и `TELEGRAM_CHAT_ID` в `.env`. Если оба заданы, воркер шлёт короткие алерты (челлендж, blocked, мёртвый прокси и т.п.) и пишет `Event` в БД даже при сбое доставки.
 
-События также на Панели («Последние события»).
+**Агент-бот:** `TELEGRAM_AGENT_ENABLED=true`, токен `TELEGRAM_AGENT_BOT_TOKEN` (или тот же `TELEGRAM_BOT_TOKEN`; лучше отдельный бот). Запуск: `python -m app.cli telegram-bot`. В чате: `/auth <ADMIN_TOKEN>`, затем задание текстом — тот же ассистент, что `POST /api/assistant/run`. Привязка `chat_id` в `panel_settings.telegram_allowed_chats`. Долгие задания идут в пуле (`TELEGRAM_AGENT_WORKER_THREADS`, по умолчанию 2) — разные chat_id не блокируют long-poll. Уточнения агента (`asks`) — inline-кнопки; ответ — следующим сообщением (префикс «Уточнения:»).
+
+Токены в документы не копировать. События также на Панели («Последние события»): завершённые задания — `telegram_agent` (chat, used, asks); сбой run — `telegram_agent_error`.
+
+## Browser vision (опционально)
+
+`AGENT_VISION_ENABLED=true`, VL-модель в Ollama (`AGENT_VISION_MODEL`, напр. `qwen2.5vl:7b`). Скриншот viewport → подсказка click/type — **fallback** после селекторов и autofill в Playwright, не замена штатного логина.
+
+Ограничения: капча и 2FA — вручную (`submit_login_code`, оператор в VNC); vision не гарантирует обход Meta. На одной GPU держите **по очереди** чат-модель и VL (`keep_alive: 0` / выгрузка), не параллельно.

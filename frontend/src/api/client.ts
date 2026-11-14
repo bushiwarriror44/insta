@@ -14,6 +14,9 @@ import type {
   DashboardSummary,
   DiagnosticRunOut,
   EnqueueIn,
+  AgentReportOut,
+  AgentRunLogGroup,
+  AssistantJobOut,
   EventOut,
   FirstLoginOut,
   Health,
@@ -760,6 +763,26 @@ export const api = {
       limit?: number;
     }) => request<DiagnosticRunOut[]>("/api/diagnostic-runs", { query: params }),
     get: (id: number) => request<DiagnosticRunOut>(`/api/diagnostic-runs/${id}`),
+  },
+
+  agentReports: {
+    list: () => request<AgentReportOut[]>("/api/agent-reports"),
+    logs: () => request<AgentRunLogGroup[]>("/api/agent-reports/logs"),
+    remove: (id: number) =>
+      request<void>(`/api/agent-reports/${id}`, { method: "DELETE" }),
+  },
+
+  assistantJobs: {
+    active: () => request<AssistantJobOut | null>("/api/assistant/jobs/active"),
+    get: (id: number) => request<AssistantJobOut>(`/api/assistant/jobs/${id}`),
+    ack: (id: number) =>
+      request<AssistantJobOut>(`/api/assistant/jobs/${id}/ack`, { method: "POST" }),
+    pause: (id: number) =>
+      request<AssistantJobOut>(`/api/assistant/jobs/${id}/pause`, { method: "POST" }),
+    resume: (id: number) =>
+      request<AssistantJobOut>(`/api/assistant/jobs/${id}/resume`, { method: "POST" }),
+    stop: (id: number) =>
+      request<AssistantJobOut>(`/api/assistant/jobs/${id}/stop`, { method: "POST" }),
   },
 
   events: {

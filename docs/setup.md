@@ -132,20 +132,23 @@ CLI внутри стека: `docker compose exec reels-api python -m app.cli st
 
 | Переменная | Смысл |
 | --- | --- |
-| `VIDEO_BACKEND` | `auto` или одно имя: `fal` / `huggingface` / `pollinations` / `local` / `hfspace` |
-| `VIDEO_BACKEND_CHAIN` | порядок failover для `auto` |
+| `VIDEO_BACKEND` | `auto` или одно имя: `qubax` / `fal` / `huggingface` / `pollinations` / `local` / `hfspace` |
+| `VIDEO_BACKEND_CHAIN` | порядок failover для `auto`; по умолчанию `qubax,fal,huggingface,pollinations,hfspace` (без `local`) |
+| `QUBAX_API_KEY` | Qubax Market — основной облачный рендер; ключ в панели Qubax |
 | `FAL_API_KEY` | fal; без ключа этот движок выключен |
 | `FAL_MODEL` | модель fal (Wan 2.5 по умолчанию) |
 | `HF_TOKEN` / `HF_VIDEO_MODEL` | Hugging Face Inference |
 | `POLLINATIONS_VIDEO_URL` | T2V endpoint; пусто — движок выключен |
 | `POLLINATIONS_API_KEY` | Bearer для Pollinations; **битый ключ → 403** `rejected the credentials`. Удалите строку или задайте ключ из кабинета Pollinations |
-| `WAN_BASE_URL` | свой GPU HTTP, не compose панели. Сборка образа чат+Wan: `docker/salad-gpu` |
+| `WAN_BASE_URL` | **legacy:** свой GPU HTTP для `backend=local`. Не входит в цепочку по умолчанию; Salad/Ollama для чата — без Wan warm-up |
 | `SALAD_API_KEY` | ключ Salad Public API для Start/Stop группы с `/administration`. В чат и логи не копировать |
 | `SALAD_ORGANIZATION` / `SALAD_PROJECT` / `SALAD_CONTAINER_GROUP` | slug-имена из кабинета Salad, не URL |
 | `SALAD_IDLE_STOP_MINUTES` | авто-Stop группы после простоя (чат или local-рендер); по умолчанию 120; `0` выключает. Start снова качает образ |
 | `HF_SPACE_ID` | optional Gradio Space, experimental |
 | `DEFAULT_DAILY_POST_CAP` и часы | дефолты новых аккаунтов |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | алерты (необязательно) |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | алерты воркера (необязательно) |
+| `TELEGRAM_AGENT_ENABLED` / `TELEGRAM_AGENT_BOT_TOKEN` | бот-агент: `python -m app.cli telegram-bot`, в чате `/auth <ADMIN_TOKEN>` |
+| `AGENT_VISION_ENABLED` / `AGENT_VISION_MODEL` | опционально: VL в Ollama для fallback логина по скриншоту |
 
 ### Рендер: диагностика `.env` (VPS)
 
@@ -163,6 +166,6 @@ docker compose up -d
 docker compose exec reels-worker python scripts/probe_pollinations.py
 ```
 
-Типичная ошибка `pollinations rejected the credentials (generate)` — HTTP 401/403: нет `FAL_API_KEY` / `HF_TOKEN`, цепочка дошла до Pollinations. Решения: **`FAL_API_KEY`** (рекомендуется), исправить/убрать `POLLINATIONS_API_KEY`, **`WAN_BASE_URL`** + Salad Running, или `VIDEO_BACKEND_CHAIN=fal,local` без pollinations.
+Типичная ошибка `pollinations rejected the credentials (generate)` — HTTP 401/403: нет `QUBAX_API_KEY` / `FAL_API_KEY` / `HF_TOKEN`, цепочка дошла до Pollinations. Решения: **`QUBAX_API_KEY`**, **`FAL_API_KEY`**, исправить `POLLINATIONS_API_KEY`, или `VIDEO_BACKEND_CHAIN=fal,huggingface` без pollinations. Wan/local — явно `VIDEO_BACKEND_CHAIN=...,local` и `WAN_BASE_URL`.
 
 Дальше: [panel.md](panel.md).

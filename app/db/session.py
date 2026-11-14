@@ -101,6 +101,7 @@ _PENDING_COLUMNS: list[tuple[str, str, str]] = [
     ("panel_settings", "hero_sms_last_form", "TEXT"),
     ("panel_settings", "qubax_api_key", "VARCHAR(500)"),
     ("panel_settings", "qubax_last_form", "TEXT"),
+    ("panel_settings", "telegram_allowed_chats", "TEXT"),
     ("generation_jobs", "input_mode", "VARCHAR(32) DEFAULT 'text_only'"),
     ("generation_jobs", "reference_json", "TEXT"),
     ("generation_jobs", "audio_mode", "VARCHAR(16) DEFAULT 'none'"),
