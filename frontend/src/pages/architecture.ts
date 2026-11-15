@@ -1,4 +1,4 @@
-import { apiLink, type DocSpan } from "./docText";
+import { apiLink, connectionsLink, type DocSpan } from "./docText";
 
 export type ArchitectureSection = {
   id: string;
@@ -101,6 +101,8 @@ export const ARCHITECTURE_SECTIONS: ArchitectureSection[] = [
         apiLink("GET /api/agent-reports"),
         ", журнал прогона — ",
         apiLink("GET /api/agent-reports/logs"),
+        ". Подробнее — вкладка ",
+        connectionsLink("Подключения"),
         ".",
       ],
     ],
@@ -110,7 +112,12 @@ export const ARCHITECTURE_SECTIONS: ArchitectureSection[] = [
     title: "Эта страница",
     body: [
       [
-        "Маршрут /administration доступен владельцу. Оператору открывается редирект на /. Вкладки: обзор, блокнот и API. Блокнот хранит одну заметку в SQLite, чат её не читает и не изменяет.",
+        "Маршрут /administration доступен владельцу. Оператору открывается редирект на /. Вкладки: обзор, блокнот, подключения и API. Блокнот хранит одну заметку в SQLite, чат её не читает и не изменяет.",
+      ],
+      [
+        "Вкладка «Подключения» описывает MCP и шлюз /llm/v1, выдаёт ключ и тумблер включения. Текст в безличной форме, данные — ",
+        connectionsLink("Подключения"),
+        ".",
       ],
       [
         "Вкладка API показывает схему ",

@@ -1,4 +1,6 @@
 # Host nginx in front of docker-compose (port 80 -> reels-frontend :3000).
+# MCP (/mcp) and LLM proxy (/llm/) are forwarded inside reels-frontend nginx to reels-api;
+# the host proxy only needs to pass through to :3000 like any other path.
 #
 # Copy to /etc/nginx/sites-available/insta and reload nginx.
 # REQUIRED for noVNC: WebSocket Upgrade headers on the outer proxy.

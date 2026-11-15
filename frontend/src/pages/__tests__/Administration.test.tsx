@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { api } from "../../api/client";
 import { Administration } from "../Administration";
 
 const swaggerMock = vi.hoisted(() => vi.fn(() => ({ destroy: vi.fn() })));
@@ -19,6 +20,17 @@ vi.mock("../../context/AuthContext", () => ({
 vi.mock("../../context/ToastContext", () => ({
   useToast: () => ({ push: vi.fn() }),
 }));
+
+const gatewayFixture = {
+  base_url: "http://localhost/llm/v1",
+  api_key: "gw-admin-key",
+  mcp_url: "http://localhost/mcp",
+  mcp_json: "{}",
+  model: "qwen3:8b",
+  upstream_ok: true,
+  enabled: true,
+  recent: [] as Array<{ at: string; channel: "llm" | "mcp"; method: string; path: string; client_ip: string; user_agent: string; status: number }>,
+};
 
 vi.mock("../../api/client", () => ({
   api: {
@@ -40,6 +52,11 @@ vi.mock("../../api/client", () => ({
     adminNotes: {
       get: vi.fn().mockResolvedValue({ content: "", updated_at: null }),
       update: vi.fn(),
+    },
+    llmGateway: {
+      credentials: vi.fn(),
+      rotate: vi.fn(),
+      setEnabled: vi.fn(),
     },
   },
   formatApiError: (err: unknown) => String(err),
@@ -73,6 +90,8 @@ beforeEach(() => {
   swaggerMock.mockClear();
   useAuthMock.mockReset();
   window.location.hash = "";
+  vi.mocked(api.llmGateway.credentials).mockResolvedValue(gatewayFixture);
+  vi.mocked(api.llmGateway.setEnabled).mockResolvedValue({ ...gatewayFixture, enabled: false });
 });
 
 describe("Administration page", () => {
@@ -105,6 +124,9 @@ describe("Administration page", () => {
       expect(link).toHaveAttribute("href", "#api");
     }
     expect(screen.getByRole("link", { name: "POST /mcp" })).toHaveAttribute("href", "#api");
+    for (const link of screen.getAllByRole("link", { name: "Подключения" })) {
+      expect(link).toHaveAttribute("href", "#connections");
+    }
     expect(screen.queryByTestId("swagger-host")).not.toBeInTheDocument();
     expect(swaggerMock).not.toHaveBeenCalled();
   });
@@ -138,6 +160,40 @@ describe("Administration page", () => {
     expect(screen.getByTestId("admin-hash")).toHaveTextContent("#notes");
     expect(screen.getByLabelText(/текст блокнота/i)).toBeInTheDocument();
     expect(swaggerMock).not.toHaveBeenCalled();
+  });
+
+  it("opens the connections tab with credentials and docs", async () => {
+    useAuthMock.mockReturnValue({
+      role: "owner",
+      state: { state: "authed", token: "owner-tok" },
+      authRequired: true,
+    });
+    const user = userEvent.setup();
+    renderPage("/administration#connections");
+    expect(screen.getByRole("tab", { name: /подключения/i })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByTestId("admin-connections-panel")).toBeInTheDocument();
+    expect(screen.getAllByText(/ключ шлюза/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/инструмент.*chat/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/агента в панели/i).length).toBeGreaterThan(0);
+    await waitFor(() => expect(api.llmGateway.credentials).toHaveBeenCalled());
+    expect(screen.getByLabelText("API Key")).toHaveValue("gw-admin-key");
+    expect(screen.getByLabelText("MCP JSON")).toBeInTheDocument();
+    await user.click(screen.getByLabelText("Шлюз включён"));
+    await waitFor(() => expect(api.llmGateway.setEnabled).toHaveBeenCalledWith(false));
+    expect(swaggerMock).not.toHaveBeenCalled();
+  });
+
+  it("switches to connections from overview link", async () => {
+    useAuthMock.mockReturnValue({
+      role: "owner",
+      state: { state: "authed", token: "owner-tok" },
+      authRequired: true,
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(screen.getAllByRole("link", { name: "Подключения" })[0]);
+    expect(screen.getByTestId("admin-hash")).toHaveTextContent("#connections");
+    expect(await screen.findByTestId("admin-connections-panel")).toBeInTheDocument();
   });
 
   it("opens the API tab from the #api hash", async () => {

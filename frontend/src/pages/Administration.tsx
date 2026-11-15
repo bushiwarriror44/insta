@@ -2,6 +2,7 @@ import { BookOpen } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 
+import { AdministrationConnections } from "../components/AdministrationConnections";
 import { AdministrationNotebook } from "../components/AdministrationNotebook";
 import { PageHeader } from "../components/PageHeader";
 import { SaladGpuCard } from "../components/SaladGpuCard";
@@ -13,17 +14,18 @@ import type { DocSpan } from "./docText";
 import "swagger-ui-dist/swagger-ui.css";
 import "./administration.css";
 
-type AdminTab = "overview" | "notes" | "api";
+type AdminTab = "overview" | "notes" | "connections" | "api";
 
 const TABS: { id: AdminTab; label: string }[] = [
   { id: "overview", label: "Обзор" },
   { id: "notes", label: "Блокнот" },
+  { id: "connections", label: "Подключения" },
   { id: "api", label: "API" },
 ];
 
 function tabFromHash(hash: string): AdminTab {
   const key = hash.replace(/^#/, "");
-  if (key === "notes" || key === "api" || key === "overview") return key;
+  if (key === "notes" || key === "connections" || key === "api" || key === "overview") return key;
   return "overview";
 }
 
@@ -126,7 +128,7 @@ export function Administration() {
       <PageHeader
         icon={BookOpen}
         title="Администрирование"
-        description="Обзор GPU и оплаты, блокнот владельца и схема API. Запросы со вкладки API выполняются с токеном текущей сессии."
+        description="Обзор GPU и оплаты, блокнот, подключения MCP и OpenAI-совместимого API, схема REST. Запросы со вкладки API выполняются с токеном текущей сессии."
       />
       <div className="admin-tabs" role="tablist" aria-label="Разделы администрирования">
         {TABS.map((item) => (
@@ -174,6 +176,15 @@ export function Administration() {
       {tab === "notes" ? (
         <div id="admin-panel-notes" role="tabpanel" aria-labelledby="admin-tab-notes">
           <AdministrationNotebook />
+        </div>
+      ) : null}
+      {tab === "connections" ? (
+        <div
+          id="admin-panel-connections"
+          role="tabpanel"
+          aria-labelledby="admin-tab-connections"
+        >
+          <AdministrationConnections />
         </div>
       ) : null}
       {tab === "api" ? (
